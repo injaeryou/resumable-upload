@@ -13,6 +13,12 @@ from resumable_upload.server import TusHTTPRequestHandler, TusServer
 from resumable_upload.storage import SQLiteStorage, Storage
 from resumable_upload.url_storage import FileURLStorage, URLStorage
 
+# Optional S3 storage (requires boto3)
+try:
+    from resumable_upload.storage_s3 import S3Storage
+except ImportError:
+    S3Storage = None  # type: ignore[assignment,misc]
+
 __all__ = [
     "TusServer",
     "TusHTTPRequestHandler",
@@ -21,6 +27,7 @@ __all__ = [
     "UploadStats",
     "Storage",
     "SQLiteStorage",
+    "S3Storage",
     "TusCommunicationError",
     "TusUploadFailed",
     "Fingerprint",
