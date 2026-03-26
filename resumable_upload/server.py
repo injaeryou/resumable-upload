@@ -10,8 +10,9 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from email.utils import formatdate
 from http.server import BaseHTTPRequestHandler
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
+from resumable_upload.exceptions import TusHookError
 from resumable_upload.storage import SQLiteStorage, Storage
 
 logger = logging.getLogger(__name__)
@@ -77,6 +78,10 @@ class TusServer:
         cors_allow_origins: Optional[str] = None,
         cleanup_interval: int = 60,
         request_timeout: int = 30,
+        on_incoming_request: Optional[Callable[..., None]] = None,
+        on_upload_create: Optional[Callable[..., Optional[dict]]] = None,
+        on_upload_complete: Optional[Callable[..., None]] = None,
+        on_upload_terminate: Optional[Callable[..., None]] = None,
     ):
         """Initialize TUS server.
 
@@ -88,6 +93,19 @@ class TusServer:
             cors_allow_origins: CORS allowed origins (None = no CORS headers)
             cleanup_interval: Minimum seconds between expired-upload cleanup runs (default: 60)
             request_timeout: Socket read timeout in seconds for HTTP handler (default: 30)
+            on_incoming_request: Called before processing any request.
+                Signature: (method: str, path: str, headers: dict) -> None.
+                Raise TusHookError to reject the request.
+            on_upload_create: Called before creating an upload.
+                Signature: (upload_id: str, metadata: dict, upload_length: int) -> Optional[dict].
+                Return a dict to replace metadata, None to keep original.
+                Raise TusHookError to reject creation.
+            on_upload_complete: Called after an upload is fully completed.
+                Signature: (upload_id: str, metadata: dict, file_info: dict) -> None.
+                Exceptions are logged but do not affect the client response.
+            on_upload_terminate: Called after an upload is deleted.
+                Signature: (upload_id: str) -> None.
+                Exceptions are logged but do not affect the client response.
         """
         self.storage = storage or SQLiteStorage()
         self.base_path = base_path.rstrip("/")
@@ -98,6 +116,31 @@ class TusServer:
         self.request_timeout = request_timeout
         self._last_cleanup: Optional[datetime] = None
         self._cleanup_lock = threading.Lock()
+        self._on_incoming_request = on_incoming_request
+        self._on_upload_create = on_upload_create
+        self._on_upload_complete = on_upload_complete
+        self._on_upload_terminate = on_upload_terminate
+
+    def _invoke_pre_hook(self, hook: Callable, *args: Any) -> Any:
+        """Invoke a pre-hook, converting exceptions to HTTP error responses.
+
+        Returns the hook's return value on success, or raises to signal
+        that the caller should return an error response.
+        """
+        try:
+            return hook(*args)
+        except TusHookError:
+            raise
+        except Exception:
+            logger.exception("Unexpected error in pre-hook %s", hook.__name__)
+            raise TusHookError("Internal Server Error", status_code=500) from None
+
+    def _invoke_post_hook(self, hook: Callable, *args: Any) -> None:
+        """Invoke a post-hook, catching and logging all exceptions."""
+        try:
+            hook(*args)
+        except Exception:
+            logger.exception("Error in post-hook %s", hook.__name__)
 
     def _validate_upload_id(self, upload_id: str) -> bool:
         """Validate that upload_id is a valid UUID to prevent path traversal."""
@@ -138,6 +181,17 @@ class TusServer:
 
         # Normalize headers to lowercase
         headers = {k.lower(): v for k, v in headers.items()}
+
+        # Invoke on_incoming_request hook before any processing
+        if self._on_incoming_request:
+            try:
+                self._invoke_pre_hook(self._on_incoming_request, method, path, headers)
+            except TusHookError as e:
+                return (
+                    e.status_code,
+                    self._add_cors_headers({"Tus-Resumable": self.TUS_VERSION}),
+                    e.body.encode(),
+                )
 
         # Check TUS version (required by TUS spec for all non-OPTIONS requests)
         if method != "OPTIONS":
@@ -263,6 +317,21 @@ class TusServer:
         # Generate upload ID
         upload_id = str(uuid.uuid4())
 
+        # Invoke on_upload_create hook (may modify metadata or reject)
+        if self._on_upload_create:
+            try:
+                result = self._invoke_pre_hook(
+                    self._on_upload_create, upload_id, metadata, upload_length,
+                )
+                if isinstance(result, dict):
+                    metadata = result
+            except TusHookError as e:
+                return (
+                    e.status_code,
+                    {"Tus-Resumable": self.TUS_VERSION},
+                    e.body.encode(),
+                )
+
         # Compute expiry
         expires_at = None
         if self.upload_expiry:
@@ -288,6 +357,13 @@ class TusServer:
             initial_offset = len(body)
             self.storage.update_offset(upload_id, initial_offset)
             logger.info(f"creation-with-upload: wrote {initial_offset} bytes for {upload_id}")
+
+            # Fire on_upload_complete if creation-with-upload completed the upload
+            if initial_offset >= upload_length and self._on_upload_complete:
+                file_info = self.storage.get_file_info(upload_id)
+                self._invoke_post_hook(
+                    self._on_upload_complete, upload_id, metadata, file_info,
+                )
 
         # Return response
         response_headers = {
@@ -422,6 +498,16 @@ class TusServer:
             f"new offset: {new_offset}/{upload['upload_length']}"
         )
 
+        # Fire on_upload_complete if this PATCH completed the upload
+        if new_offset >= upload["upload_length"] and self._on_upload_complete:
+            file_info = self.storage.get_file_info(upload_id)
+            self._invoke_post_hook(
+                self._on_upload_complete,
+                upload_id,
+                upload.get("metadata", {}),
+                file_info,
+            )
+
         # Return response
         response_headers = {
             "Tus-Resumable": self.TUS_VERSION,
@@ -444,6 +530,10 @@ class TusServer:
 
         self.storage.delete_upload(upload_id)
         logger.info(f"Deleted upload {upload_id}")
+
+        # Fire on_upload_terminate after successful deletion
+        if self._on_upload_terminate:
+            self._invoke_post_hook(self._on_upload_terminate, upload_id)
 
         response_headers = {
             "Tus-Resumable": self.TUS_VERSION,

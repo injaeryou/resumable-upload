@@ -69,10 +69,23 @@ class Storage(ABC):
         """Read the complete uploaded file."""
         pass
 
-    @abstractmethod
     def get_file_path(self, upload_id: str) -> str:
-        """Get the file path for an upload."""
-        pass
+        """Get the file path for an upload.
+
+        Only meaningful for local storage backends. Cloud backends
+        should raise NotImplementedError.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support local file paths"
+        )
+
+    def get_file_info(self, upload_id: str) -> dict[str, Any]:
+        """Get backend-specific file location info.
+
+        Returns a dict with at least 'upload_id'. Backends add their own
+        keys (e.g. 'file_path' for local, 'bucket'/'key' for S3).
+        """
+        return {"upload_id": upload_id}
 
     @abstractmethod
     def get_expired_uploads(self) -> list[str]:
@@ -267,6 +280,13 @@ class SQLiteStorage(Storage):
     def get_file_path(self, upload_id: str) -> str:
         """Get the file path for an upload."""
         return os.path.join(self.upload_dir, upload_id)
+
+    def get_file_info(self, upload_id: str) -> dict[str, Any]:
+        """Get file location info for local storage."""
+        return {
+            "upload_id": upload_id,
+            "file_path": self.get_file_path(upload_id),
+        }
 
     def get_expired_uploads(self) -> list[str]:
         """Get list of expired upload IDs."""

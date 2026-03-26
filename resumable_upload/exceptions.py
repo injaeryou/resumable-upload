@@ -28,3 +28,20 @@ class TusUploadFailed(TusCommunicationError):
     """Exception raised when an attempted upload fails."""
 
     pass
+
+
+class TusHookError(Exception):
+    """Exception raised in server hooks to reject a request with a specific HTTP status.
+
+    Pre-hooks (on_incoming_request, on_upload_create) can raise this to abort
+    the request and return the given status code and message to the client.
+
+    Attributes:
+        status_code: HTTP status code to return (default: 403)
+        body: Response body string
+    """
+
+    def __init__(self, body: str = "Forbidden", status_code: int = 403):
+        super().__init__(body)
+        self.status_code = status_code
+        self.body = body
