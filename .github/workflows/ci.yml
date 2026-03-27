@@ -20,7 +20,7 @@ jobs:
       uses: actions/setup-python@v5
       with:
         python-version: ${{ matrix.python-version }}
-        allow-prereleases: false
+        allow-prereleases: true
 
     - name: Install dependencies
       run: |
@@ -40,22 +40,59 @@ jobs:
         pytest --cov=resumable_upload --cov-report=xml --cov-report=term -k "not test_flask and not test_fastapi and not test_django"
 
     - name: Upload coverage to Codecov
-      uses: codecov/codecov-action@v3
+      uses: codecov/codecov-action@v4
       with:
         file: ./coverage.xml
         fail_ci_if_error: false
 
     - name: Test Flask integration
-      continue-on-error: true
       run: |
-        pytest tests/test_flask_integration.py -v --tb=short || true
+        pytest tests/test_flask_integration.py -v --tb=short
 
     - name: Test FastAPI integration
-      continue-on-error: true
       run: |
-        pytest tests/test_fastapi_integration.py -v --tb=short || true
+        pytest tests/test_fastapi_integration.py -v --tb=short
 
     - name: Test Django integration
-      continue-on-error: true
       run: |
-        pytest tests/test_django_integration.py -v --tb=short || true
+        pytest tests/test_django_integration.py -v --tb=short
+
+  test-cloud:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev,test,s3]"
+        pip install moto[s3]
+
+    - name: Test S3 storage backend
+      run: |
+        pytest tests/test_storage_s3.py -v --tb=short
+
+  lint-types:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -e ".[dev]"
+        pip install mypy
+
+    - name: Type check with mypy
+      run: |
+        mypy resumable_upload/ --ignore-missing-imports
