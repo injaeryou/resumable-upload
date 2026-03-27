@@ -601,3 +601,86 @@ class TestTusServer:
         )
         assert status == 204
         assert resp_headers["Upload-Offset"] == str(len(data))
+
+
+def test_max_chunk_size_rejects_large_chunk():
+    """Test that chunks exceeding max_chunk_size are rejected."""
+    tmp = tempfile.mkdtemp()
+    storage = SQLiteStorage(
+        db_path=os.path.join(tmp, "test.db"), upload_dir=os.path.join(tmp, "uploads")
+    )
+    server = TusServer(storage=storage, max_chunk_size=512)
+
+    # Create an upload
+    status, headers, _ = server.handle_request(
+        "POST",
+        "/files",
+        {"tus-resumable": "1.0.0", "upload-length": "2048"},
+        b"",
+    )
+    assert status == 201
+    upload_id = headers["Location"].split("/")[-1]
+
+    # Try to send a chunk larger than max_chunk_size
+    large_chunk = b"x" * 1024
+    status, _, body = server.handle_request(
+        "PATCH",
+        f"/files/{upload_id}",
+        {
+            "tus-resumable": "1.0.0",
+            "upload-offset": "0",
+            "content-type": "application/offset+octet-stream",
+        },
+        large_chunk,
+    )
+    assert status == 413
+    assert b"Chunk exceeds maximum chunk size" in body
+
+    # A small chunk should succeed
+    small_chunk = b"x" * 256
+    status, _, _ = server.handle_request(
+        "PATCH",
+        f"/files/{upload_id}",
+        {
+            "tus-resumable": "1.0.0",
+            "upload-offset": "0",
+            "content-type": "application/offset+octet-stream",
+        },
+        small_chunk,
+    )
+    assert status == 204
+
+
+def test_zero_byte_upload_marked_completed():
+    """Test that zero-byte uploads are correctly marked as completed in DB."""
+    temp_dir = tempfile.mkdtemp()
+    try:
+        storage = SQLiteStorage(db_path=os.path.join(temp_dir, "test.db"), upload_dir=temp_dir)
+        hook_called = []
+        server = TusServer(
+            storage=storage,
+            on_upload_complete=lambda uid, meta, info: hook_called.append(uid),
+        )
+
+        # Create a zero-length upload
+        status, headers, _ = server.handle_request(
+            "POST",
+            "/files",
+            {"tus-resumable": "1.0.0", "upload-length": "0"},
+            b"",
+        )
+        assert status == 201
+        upload_id = headers["Location"].split("/")[-1]
+
+        # Verify the upload is marked completed in storage
+        upload = storage.get_upload(upload_id)
+        assert upload is not None
+        assert upload["completed"] is True
+        assert upload["offset"] == 0
+        assert upload["upload_length"] == 0
+
+        # Verify on_upload_complete hook was called
+        assert len(hook_called) == 1
+        assert hook_called[0] == upload_id
+    finally:
+        shutil.rmtree(temp_dir)

@@ -74,6 +74,7 @@ class TusServer:
         storage: Optional[Storage] = None,
         base_path: str = "/files",
         max_size: int = 0,
+        max_chunk_size: int = 0,
         upload_expiry: Optional[int] = None,
         cors_allow_origins: Optional[str] = None,
         cleanup_interval: int = 60,
@@ -89,6 +90,7 @@ class TusServer:
             storage: Storage backend (defaults to SQLiteStorage)
             base_path: Base URL path for uploads
             max_size: Maximum upload size in bytes (0 = unlimited)
+            max_chunk_size: Maximum individual chunk size in bytes (0 = unlimited)
             upload_expiry: Upload expiry in seconds (None = no expiry)
             cors_allow_origins: CORS allowed origins (None = no CORS headers)
             cleanup_interval: Minimum seconds between expired-upload cleanup runs (default: 60)
@@ -110,6 +112,7 @@ class TusServer:
         self.storage = storage or SQLiteStorage()
         self.base_path = base_path.rstrip("/")
         self.max_size = max_size
+        self.max_chunk_size = max_chunk_size
         self.upload_expiry = upload_expiry
         self.cors_allow_origins = cors_allow_origins
         self.cleanup_interval = cleanup_interval
@@ -177,10 +180,14 @@ class TusServer:
         Returns:
             Tuple of (status_code, response_headers, response_body)
         """
-        logger.info(f"Received {method} request for {path}")
+        logger.info("Received %s request for %s", method, path)
 
         # Normalize headers to lowercase
         headers = {k.lower(): v for k, v in headers.items()}
+
+        # Early body-size gate for direct API callers (frameworks that pre-read the body)
+        if method == "PATCH" and self.max_chunk_size > 0 and len(body) > self.max_chunk_size:
+            return self._error_response(413, "Chunk exceeds maximum chunk size")
 
         # Invoke on_incoming_request hook before any processing
         if self._on_incoming_request:
@@ -197,7 +204,9 @@ class TusServer:
         if method != "OPTIONS":
             tus_version = headers.get("tus-resumable")
             if tus_version != self.TUS_VERSION:
-                logger.warning(f"Invalid TUS version: {tus_version}, expected {self.TUS_VERSION}")
+                logger.warning(
+                    "Invalid TUS version: %s, expected %s", tus_version, self.TUS_VERSION
+                )
                 status, resp_headers, resp_body = (
                     412,
                     {"Tus-Resumable": self.TUS_VERSION},
@@ -229,7 +238,7 @@ class TusServer:
             else:
                 result = self._handle_delete(upload_id, headers)
         else:
-            logger.warning(f"Route not found: {method} {path}")
+            logger.warning("Route not found: %s %s", method, path)
             result = self._error_response(404, "Not Found")
 
         status, resp_headers, resp_body = result
@@ -251,7 +260,7 @@ class TusServer:
                         self._last_cleanup = now
                         count = self.storage.cleanup_expired_uploads()
                         if count:
-                            logger.info(f"Cleaned up {count} expired upload(s)")
+                            logger.info("Cleaned up %s expired upload(s)", count)
 
         return (status, self._add_cors_headers(resp_headers), resp_body)
 
@@ -284,15 +293,15 @@ class TusServer:
         try:
             upload_length = int(upload_length_str)
         except ValueError:
-            logger.error(f"Invalid Upload-Length header: {upload_length_str}")
+            logger.error("Invalid Upload-Length header: %s", upload_length_str)
             return self._error_response(400, "Invalid Upload-Length header")
 
         if upload_length < 0:
-            logger.error(f"Negative Upload-Length header: {upload_length}")
+            logger.error("Negative Upload-Length header: %s", upload_length)
             return self._error_response(400, "Upload-Length must not be negative")
 
         if self.max_size > 0 and upload_length > self.max_size:
-            logger.warning(f"Upload size {upload_length} exceeds maximum {self.max_size}")
+            logger.warning("Upload size %s exceeds maximum %s", upload_length, self.max_size)
             return self._error_response(413, "Upload exceeds maximum size")
 
         # Parse metadata
@@ -342,7 +351,12 @@ class TusServer:
 
         # Create upload
         self.storage.create_upload(upload_id, upload_length, metadata, expires_at)
-        logger.info(f"Created upload {upload_id} with length {upload_length}, metadata: {metadata}")
+        logger.info(
+            "Created upload %s with length %s, metadata: %s",
+            upload_id,
+            upload_length,
+            metadata,
+        )
 
         # Handle creation-with-upload: process initial data if provided
         initial_offset = 0
@@ -359,10 +373,11 @@ class TusServer:
             self.storage.write_chunk(upload_id, 0, body)
             initial_offset = len(body)
             self.storage.update_offset(upload_id, initial_offset)
-            logger.info(f"creation-with-upload: wrote {initial_offset} bytes for {upload_id}")
+            logger.info("creation-with-upload: wrote %s bytes for %s", initial_offset, upload_id)
 
-            # Fire on_upload_complete if creation-with-upload completed the upload
-            if initial_offset >= upload_length and self._on_upload_complete:
+        # Handle upload completion (zero-length upload or creation-with-upload)
+        if initial_offset >= upload_length and self.storage.complete_upload(upload_id):  # noqa: SIM102
+            if self._on_upload_complete:
                 file_info = self.storage.get_file_info(upload_id)
                 self._invoke_post_hook(
                     self._on_upload_complete,
@@ -389,18 +404,20 @@ class TusServer:
         """Handle HEAD request to get upload offset."""
         upload = self.storage.get_upload(upload_id)
         if not upload:
-            logger.warning(f"Upload not found: {upload_id}")
+            logger.warning("Upload not found: %s", upload_id)
             return self._error_response(404, "Upload not found")
 
         # Check expiration
         expires_at = upload.get("expires_at")
         if expires_at and expires_at < datetime.now(timezone.utc):
-            logger.warning(f"Upload expired: {upload_id}")
+            logger.warning("Upload expired: %s", upload_id)
             return self._error_response(410, "Upload has expired")
 
         logger.debug(
-            f"HEAD request for upload {upload_id}: "
-            f"offset={upload['offset']}, length={upload['upload_length']}"
+            "HEAD request for upload %s: offset=%s, length=%s",
+            upload_id,
+            upload["offset"],
+            upload["upload_length"],
         )
         response_headers = {
             "Tus-Resumable": self.TUS_VERSION,
@@ -430,24 +447,24 @@ class TusServer:
         """Handle PATCH request to append data to upload."""
         upload = self.storage.get_upload(upload_id)
         if not upload:
-            logger.warning(f"Upload not found: {upload_id}")
+            logger.warning("Upload not found: %s", upload_id)
             return self._error_response(404, "Upload not found")
 
         # Check expiration
         expires_at = upload.get("expires_at")
         if expires_at and expires_at < datetime.now(timezone.utc):
-            logger.warning(f"Upload expired: {upload_id}")
+            logger.warning("Upload expired: %s", upload_id)
             return self._error_response(410, "Upload has expired")
 
         # Check if already completed
         if upload.get("completed"):
-            logger.warning(f"Upload already completed: {upload_id}")
+            logger.warning("Upload already completed: %s", upload_id)
             return self._error_response(403, "Upload already completed")
 
         # Check content type
         content_type = headers.get("content-type", "")
         if content_type != "application/offset+octet-stream":
-            logger.error(f"Invalid Content-Type: {content_type}")
+            logger.error("Invalid Content-Type: %s", content_type)
             return self._error_response(415, "Invalid Content-Type")
 
         # Check upload offset
@@ -459,16 +476,16 @@ class TusServer:
         try:
             upload_offset = int(upload_offset_str)
         except ValueError:
-            logger.error(f"Invalid Upload-Offset header: {upload_offset_str}")
+            logger.error("Invalid Upload-Offset header: %s", upload_offset_str)
             return self._error_response(400, "Invalid Upload-Offset header")
 
         if upload_offset < 0:
-            logger.error(f"Negative Upload-Offset: {upload_offset}")
+            logger.error("Negative Upload-Offset: %s", upload_offset)
             return self._error_response(400, "Upload-Offset must not be negative")
 
         if upload_offset != upload["offset"]:
             logger.error(
-                f"Upload-Offset mismatch: expected {upload['offset']}, got {upload_offset}"
+                "Upload-Offset mismatch: expected %s, got %s", upload["offset"], upload_offset
             )
             return self._error_response(409, "Upload-Offset mismatch")
 
@@ -481,17 +498,26 @@ class TusServer:
                     computed = hashlib.sha1(body).hexdigest()
                     provided = base64.b64decode(checksum).hex()
                     if computed != provided:
-                        logger.error(f"Checksum mismatch for upload {upload_id}")
+                        logger.error("Checksum mismatch for upload %s", upload_id)
                         return self._error_response(460, "Checksum mismatch")
             except (ValueError, binascii.Error) as e:
-                logger.error(f"Invalid Upload-Checksum header: {e}")
+                logger.error("Invalid Upload-Checksum header: %s", e)
                 return self._error_response(400, "Invalid Upload-Checksum header")
 
         # Reject chunk if it would exceed the declared upload length
         new_offset = upload_offset + len(body)
         if new_offset > upload["upload_length"]:
-            logger.error(f"Chunk exceeds upload length: {new_offset} > {upload['upload_length']}")
+            logger.error(
+                "Chunk exceeds upload length: %s > %s", new_offset, upload["upload_length"]
+            )
             return self._error_response(400, "Chunk would exceed declared upload length")
+
+        # Reject chunk if it exceeds max_chunk_size
+        if self.max_chunk_size > 0 and len(body) > self.max_chunk_size:
+            logger.warning(
+                "Chunk size %s exceeds max_chunk_size %s", len(body), self.max_chunk_size
+            )
+            return self._error_response(413, "Chunk exceeds maximum chunk size")
 
         # Write chunk then atomically advance offset.
         # If another concurrent request already advanced the offset, return 409.
@@ -500,19 +526,23 @@ class TusServer:
             return self._error_response(409, "Concurrent write conflict; use HEAD to re-sync")
 
         logger.info(
-            f"PATCH upload {upload_id}: wrote {len(body)} bytes, "
-            f"new offset: {new_offset}/{upload['upload_length']}"
+            "PATCH upload %s: wrote %s bytes, new offset: %s/%s",
+            upload_id,
+            len(body),
+            new_offset,
+            upload["upload_length"],
         )
 
-        # Fire on_upload_complete if this PATCH completed the upload
-        if new_offset >= upload["upload_length"] and self._on_upload_complete:
-            file_info = self.storage.get_file_info(upload_id)
-            self._invoke_post_hook(
-                self._on_upload_complete,
-                upload_id,
-                upload.get("metadata", {}),
-                file_info,
-            )
+        # Finalize storage and fire on_upload_complete if this PATCH completed the upload
+        if new_offset >= upload["upload_length"] and self.storage.complete_upload(upload_id):  # noqa: SIM102
+            if self._on_upload_complete:
+                file_info = self.storage.get_file_info(upload_id)
+                self._invoke_post_hook(
+                    self._on_upload_complete,
+                    upload_id,
+                    upload.get("metadata", {}),
+                    file_info,
+                )
 
         # Return response
         response_headers = {
@@ -531,11 +561,11 @@ class TusServer:
         """Handle DELETE request to terminate upload."""
         upload = self.storage.get_upload(upload_id)
         if not upload:
-            logger.warning(f"Upload not found for deletion: {upload_id}")
+            logger.warning("Upload not found for deletion: %s", upload_id)
             return self._error_response(404, "Upload not found")
 
         self.storage.delete_upload(upload_id)
-        logger.info(f"Deleted upload {upload_id}")
+        logger.info("Deleted upload %s", upload_id)
 
         # Fire on_upload_terminate after successful deletion
         if self._on_upload_terminate:
@@ -551,7 +581,7 @@ class TusServer:
 class TusHTTPRequestHandler(BaseHTTPRequestHandler):
     """HTTP request handler for TUS server."""
 
-    tus_server: TusServer = None
+    tus_server: Optional[TusServer] = None
 
     def do_OPTIONS(self) -> None:
         """Handle OPTIONS request."""
@@ -581,6 +611,10 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
 
     def _handle_request(self, method: str) -> None:
         """Handle incoming request."""
+        if self.tus_server is None:
+            self.send_response(500)
+            self.end_headers()
+            return
         # Read body for POST/PATCH
         body = b""
         if method in ("POST", "PATCH"):
@@ -604,6 +638,13 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
                 self.send_header("Tus-Resumable", self.tus_server.TUS_VERSION)
                 self.end_headers()
                 self.wfile.write(b"Request entity too large")
+                return
+            max_chunk = self.tus_server.max_chunk_size
+            if method == "PATCH" and max_chunk > 0 and content_length > max_chunk:
+                self.send_response(413)
+                self.send_header("Tus-Resumable", self.tus_server.TUS_VERSION)
+                self.end_headers()
+                self.wfile.write(b"Chunk exceeds maximum chunk size")
                 return
             if content_length > 0:
                 body = self.rfile.read(content_length)
