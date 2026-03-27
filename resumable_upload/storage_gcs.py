@@ -89,8 +89,9 @@ class GCSStorage(Storage):
     def _read_info(self, upload_id: str) -> Optional[dict]:
         try:
             blob = self.gcs_bucket.blob(self._info_key(upload_id))
-            data = blob.download_as_bytes()
-            return json.loads(data)
+            raw = blob.download_as_bytes()
+            result: dict = json.loads(raw)
+            return result
         except NotFound:
             return None
 
@@ -281,7 +282,7 @@ class GCSStorage(Storage):
             with contextlib.suppress(NotFound):
                 blob.delete()
 
-    def complete_upload(self, upload_id: str) -> None:
+    def complete_upload(self, upload_id: str) -> bool:
         """Finalize the upload into a single GCS object.
 
         Strategy:
@@ -336,11 +337,13 @@ class GCSStorage(Storage):
         info["completed"] = True
         info["parts"] = []
         self._write_info(upload_id, info)
+        return True
 
     def read_file(self, upload_id: str) -> bytes:
         try:
             blob = self.gcs_bucket.blob(self._object_key(upload_id))
-            return blob.download_as_bytes()
+            data: bytes = blob.download_as_bytes()
+            return data
         except NotFound:
             raise FileNotFoundError(f"Upload {upload_id} not found in GCS") from None
 

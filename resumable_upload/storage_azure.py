@@ -110,7 +110,8 @@ class AzureBlobStorage(Storage):
 
     def _download_blob(self, key: str) -> bytes:
         blob = self._get_blob_client(key)
-        return blob.download_blob().readall()
+        data: bytes = blob.download_blob().readall()
+        return data
 
     def _delete_blob(self, key: str) -> None:
         blob = self._get_blob_client(key)
@@ -120,8 +121,9 @@ class AzureBlobStorage(Storage):
 
     def _read_info(self, upload_id: str) -> Optional[dict]:
         try:
-            data = self._download_blob(self._info_key(upload_id))
-            return json.loads(data)
+            raw = self._download_blob(self._info_key(upload_id))
+            result: dict = json.loads(raw)
+            return result
         except ResourceNotFoundError:
             return None
 
@@ -261,7 +263,7 @@ class AzureBlobStorage(Storage):
             }
         )
 
-    def complete_upload(self, upload_id: str) -> None:
+    def complete_upload(self, upload_id: str) -> bool:
         """Finalize the upload by committing staged blocks.
 
         Strategy:
@@ -307,6 +309,7 @@ class AzureBlobStorage(Storage):
         info["completed"] = True
         info["blocks"] = []
         self._write_info(upload_id, info)
+        return True
 
     def read_file(self, upload_id: str) -> bytes:
         try:

@@ -81,7 +81,8 @@ class S3Storage(Storage):
     def _read_info(self, upload_id: str) -> Optional[dict]:
         try:
             resp = self.s3.get_object(Bucket=self.bucket, Key=self._info_key(upload_id))
-            return json.loads(resp["Body"].read())
+            result: dict = json.loads(resp["Body"].read())
+            return result
         except ClientError as e:
             if e.response["Error"]["Code"] == "NoSuchKey":
                 return None
@@ -248,7 +249,7 @@ class S3Storage(Storage):
             }
         )
 
-    def complete_upload(self, upload_id: str) -> None:
+    def complete_upload(self, upload_id: str) -> bool:
         """Finalize the upload into a single S3 object.
 
         Strategy:
@@ -308,11 +309,13 @@ class S3Storage(Storage):
         info["completed"] = True
         info["multipart_upload_id"] = None
         self._write_info(upload_id, info)
+        return True
 
     def read_file(self, upload_id: str) -> bytes:
         try:
             resp = self.s3.get_object(Bucket=self.bucket, Key=self._object_key(upload_id))
-            return resp["Body"].read()
+            data: bytes = resp["Body"].read()
+            return data
         except ClientError as e:
             if e.response["Error"]["Code"] == "NoSuchKey":
                 raise FileNotFoundError(f"Upload {upload_id} not found in S3") from e

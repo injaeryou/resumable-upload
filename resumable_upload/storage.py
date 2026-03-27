@@ -54,6 +54,16 @@ class Storage(ABC):
         self.update_offset(upload_id, new_offset)
         return True
 
+    def complete_upload(self, upload_id: str) -> bool:  # noqa: B027
+        """Finalize the upload after all data has been received.
+
+        Returns True if this call transitioned the upload to completed state,
+        False if it was already completed (idempotent guard against double-completion).
+        Cloud storage backends override this to complete multipart uploads,
+        compose objects, or commit block lists.
+        """
+        return True
+
     @abstractmethod
     def delete_upload(self, upload_id: str) -> None:
         """Delete an upload entry."""
@@ -99,15 +109,19 @@ class Storage(ABC):
 class SQLiteStorage(Storage):
     """SQLite-based storage backend."""
 
-    def __init__(self, db_path: str = "uploads.db", upload_dir: str = "uploads"):
+    def __init__(
+        self, db_path: str = "uploads.db", upload_dir: str = "uploads", timeout: float = 10.0
+    ):
         """Initialize SQLite storage.
 
         Args:
             db_path: Path to SQLite database file
             upload_dir: Directory to store uploaded files
+            timeout: SQLite connection timeout in seconds
         """
         self.db_path = db_path
         self.upload_dir = upload_dir
+        self.timeout = timeout
         os.makedirs(upload_dir, exist_ok=True)
         self._file_locks: dict[str, threading.Lock] = {}
         self._file_locks_lock = threading.Lock()
@@ -122,7 +136,7 @@ class SQLiteStorage(Storage):
 
     def _init_db(self) -> None:
         """Initialize database schema."""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=self.timeout)
         try:
             conn.execute(
                 """
@@ -140,6 +154,8 @@ class SQLiteStorage(Storage):
             with contextlib.suppress(sqlite3.OperationalError):
                 conn.execute("ALTER TABLE uploads ADD COLUMN expires_at TIMESTAMP")
             conn.commit()
+            if self.db_path != ":memory:":
+                conn.execute("PRAGMA journal_mode=WAL")
         finally:
             conn.close()
 
@@ -151,7 +167,7 @@ class SQLiteStorage(Storage):
         expires_at: Optional[datetime] = None,
     ) -> None:
         """Create a new upload entry."""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=self.timeout)
         try:
             expires_at_str = expires_at.astimezone(timezone.utc).isoformat() if expires_at else None
             conn.execute(
@@ -176,7 +192,7 @@ class SQLiteStorage(Storage):
 
     def get_upload(self, upload_id: str) -> Optional[dict[str, Any]]:
         """Get upload information."""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=self.timeout)
         try:
             conn.row_factory = sqlite3.Row
             cursor = conn.execute("SELECT * FROM uploads WHERE upload_id = ?", (upload_id,))
@@ -209,7 +225,7 @@ class SQLiteStorage(Storage):
 
     def update_offset(self, upload_id: str, offset: int) -> None:
         """Update the current offset of an upload."""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=self.timeout)
         try:
             conn.execute(
                 "UPDATE uploads SET offset = ?, completed = (? >= upload_length)"
@@ -222,7 +238,7 @@ class SQLiteStorage(Storage):
 
     def update_offset_atomic(self, upload_id: str, expected_offset: int, new_offset: int) -> bool:
         """Atomically update offset; returns False on concurrent conflict."""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=self.timeout)
         try:
             cursor = conn.execute(
                 "UPDATE uploads SET offset = ?, completed = (? >= upload_length)"
@@ -230,13 +246,41 @@ class SQLiteStorage(Storage):
                 (new_offset, new_offset, upload_id, expected_offset),
             )
             conn.commit()
-            return cursor.rowcount > 0
+            if cursor.rowcount == 0:
+                return False
+            # Check if upload is now completed; clean up lock to prevent memory leak
+            row = conn.execute(
+                "SELECT completed FROM uploads WHERE upload_id = ?", (upload_id,)
+            ).fetchone()
+            if row and row[0]:
+                with self._file_locks_lock:
+                    self._file_locks.pop(upload_id, None)
+            return True
         finally:
             conn.close()
 
+    def complete_upload(self, upload_id: str) -> bool:
+        """Mark upload as completed, clean up lock, and return True.
+
+        Sets completed=1 in the DB (idempotent) and removes the per-upload
+        lock entry. Always returns True for local storage.
+        """
+        conn = sqlite3.connect(self.db_path, timeout=self.timeout)
+        try:
+            conn.execute(
+                "UPDATE uploads SET completed = 1 WHERE upload_id = ?",
+                (upload_id,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        with self._file_locks_lock:
+            self._file_locks.pop(upload_id, None)
+        return True
+
     def delete_upload(self, upload_id: str) -> None:
         """Delete an upload entry."""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=self.timeout)
         try:
             conn.execute("DELETE FROM uploads WHERE upload_id = ?", (upload_id,))
             conn.commit()
@@ -288,7 +332,7 @@ class SQLiteStorage(Storage):
 
     def get_expired_uploads(self) -> list[str]:
         """Get list of expired upload IDs."""
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=self.timeout)
         try:
             now = datetime.now(timezone.utc).isoformat()
             cursor = conn.execute(
