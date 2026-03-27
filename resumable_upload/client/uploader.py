@@ -108,6 +108,7 @@ class Uploader:
             self.file_size = file_stream.tell()
             file_stream.seek(0)
         else:
+            assert file_path is not None
             self._file_handle = open(file_path, "rb")  # noqa: SIM115
             self._owns_file = True
             self.file_size = os.path.getsize(file_path)

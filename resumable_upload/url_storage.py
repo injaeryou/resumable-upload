@@ -89,7 +89,8 @@ class FileURLStorage(URLStorage):
         """Load data from storage file."""
         try:
             with open(self.storage_path) as f:
-                return json.load(f)
+                result: dict = json.load(f)
+                return result
         except (json.JSONDecodeError, FileNotFoundError):
             return {}
 

@@ -44,6 +44,7 @@ dev = [
     "ruff>=0.1.0",
     "pre-commit>=3.0.0",
     "tox>=4.0.0",
+    "mypy>=1.0.0",
 ]
 test = [
     "pytest>=7.0.0",
@@ -115,6 +116,12 @@ ignore = [
 
 [tool.ruff.format]
 docstring-code-format = true
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
 
 [tool.setuptools.packages.find]
 where = ["."]

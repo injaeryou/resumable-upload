@@ -147,6 +147,7 @@ class TusClient:
             file_size = file_stream.tell()
             file_stream.seek(0)
         else:
+            assert file_path is not None
             file_size = os.path.getsize(file_path)
 
         metadata = metadata or {}
@@ -157,18 +158,24 @@ class TusClient:
 
         # Calculate fingerprint once (avoid double computation)
         fingerprint = (
-            self.fingerprinter.get_fingerprint(file_path or file_stream) if self.store_url else None
+            self.fingerprinter.get_fingerprint(file_path or file_stream)  # type: ignore[arg-type]
+            if self.store_url
+            else None
         )
 
         # Check for stored URL if enabled
         upload_url = None
         if self.store_url:
+            assert self.url_storage is not None
+            assert fingerprint is not None
             upload_url = self.url_storage.get_url(fingerprint)
 
         # Create upload if no stored URL
         if not upload_url:
             upload_url = self._create_upload(file_size, metadata)
             if self.store_url:
+                assert self.url_storage is not None
+                assert fingerprint is not None
                 self.url_storage.set_url(fingerprint, upload_url)
 
         uploader = Uploader(
@@ -292,7 +299,7 @@ class TusClient:
         try:
             req = Request(self.url, data=body or None, headers=headers, method="POST")
             with urlopen(req, context=self.ssl_context, timeout=self.timeout) as response:
-                location = response.headers.get("Location")
+                location: Optional[str] = response.headers.get("Location")
                 if not location:
                     raise TusCommunicationError("Server did not return Location header")
 
