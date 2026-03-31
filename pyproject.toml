@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "MIT"}
 authors = [
-    {name = "Injae Ryou", email = "sts07142@naver.com"}
+    {name = "Injae Ryou", email = "injaeryou@gmail.com"}
 ]
 keywords = ["tus", "upload", "resumable", "file-upload", "server", "client", "http"]
 classifiers = [
