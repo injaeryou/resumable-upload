@@ -3,8 +3,12 @@
 ## Exceptions
 
 ```python
-from resumable_upload.exceptions import TusCommunicationError, TusUploadFailed
+from resumable_upload.exceptions import (
+    TusCommunicationError, TusUploadFailed, TusHookError
+)
 ```
+
+### Client Exceptions
 
 | Exception | Raised when |
 |-----------|-------------|
@@ -18,6 +22,21 @@ Both exceptions expose:
 - `message` (str): Human-readable error description
 - `status_code` (int | None): HTTP status code, if available
 - `response_content` (bytes | None): Raw response body, if available
+
+### Server Exceptions
+
+| Exception | Raised when |
+|-----------|-------------|
+| `TusHookError` | Raised in server hooks to reject a request with a specific status code and body |
+
+```python
+from resumable_upload.exceptions import TusHookError
+
+raise TusHookError(403, "Forbidden")  # status_code defaults to 400
+```
+
+- `status_code` (int): HTTP status code to return to the client (default: 400)
+- `body` (str): Response body to return to the client
 
 ---
 

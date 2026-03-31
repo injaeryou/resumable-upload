@@ -13,6 +13,8 @@ A Python implementation of the [TUS resumable upload protocol](https://tus.io/) 
 - **Web Framework Support** — Flask, FastAPI, Django integration
 - **Python 3.9+** — tested on 3.9 through 3.14
 - **SQLite Storage** — built-in backend, extensible to custom backends
+- **Cloud Storage** — S3, Google Cloud Storage, Azure Blob Storage backends (optional dependencies)
+- **Server Hooks** — intercept requests and react to upload lifecycle events
 - **Cross-Session Resume** — persist upload URLs across process restarts
 
 ## Installation
@@ -28,6 +30,17 @@ A Python implementation of the [TUS resumable upload protocol](https://tus.io/) 
     ```bash
     pip install resumable-upload
     ```
+
+### Cloud Storage Backends
+
+Install with optional cloud storage dependencies:
+
+```bash
+pip install resumable-upload[s3]        # AWS S3
+pip install resumable-upload[gcs]       # Google Cloud Storage
+pip install resumable-upload[azure]     # Azure Blob Storage
+pip install resumable-upload[all-storage]  # All cloud backends
+```
 
 ## Quick Start
 
