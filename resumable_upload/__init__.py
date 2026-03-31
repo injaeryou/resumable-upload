@@ -4,7 +4,7 @@ A Python implementation of the TUS resumable upload protocol.
 Provides both server and client components with minimal dependencies.
 """
 
-__version__ = "0.0.3"
+__version__ = "0.0.4"
 
 from resumable_upload.client import TusClient, Uploader, UploadStats
 from resumable_upload.exceptions import TusCommunicationError, TusHookError, TusUploadFailed
