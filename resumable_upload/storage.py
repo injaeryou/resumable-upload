@@ -75,9 +75,7 @@ class Storage(ABC):
         Only meaningful for local storage backends. Cloud backends
         should raise NotImplementedError.
         """
-        raise NotImplementedError(
-            f"{type(self).__name__} does not support local file paths"
-        )
+        raise NotImplementedError(f"{type(self).__name__} does not support local file paths")
 
     def get_file_info(self, upload_id: str) -> dict[str, Any]:
         """Get backend-specific file location info.

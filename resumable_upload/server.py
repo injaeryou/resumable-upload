@@ -321,7 +321,10 @@ class TusServer:
         if self._on_upload_create:
             try:
                 result = self._invoke_pre_hook(
-                    self._on_upload_create, upload_id, metadata, upload_length,
+                    self._on_upload_create,
+                    upload_id,
+                    metadata,
+                    upload_length,
                 )
                 if isinstance(result, dict):
                     metadata = result
@@ -362,7 +365,10 @@ class TusServer:
             if initial_offset >= upload_length and self._on_upload_complete:
                 file_info = self.storage.get_file_info(upload_id)
                 self._invoke_post_hook(
-                    self._on_upload_complete, upload_id, metadata, file_info,
+                    self._on_upload_complete,
+                    upload_id,
+                    metadata,
+                    file_info,
                 )
 
         # Return response

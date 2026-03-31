@@ -1,55 +1,153 @@
-"""Tests for S3Storage backend."""
+"""Tests for GCSStorage backend using mock GCS client."""
 
 from datetime import datetime, timedelta, timezone
 
 import pytest
 
-boto3 = pytest.importorskip("boto3")
-moto = pytest.importorskip("moto")
 
-from moto import mock_aws  # noqa: E402
+class FakeBlob:
+    """In-memory blob that mimics google.cloud.storage.Blob."""
 
-from resumable_upload.storage_s3 import S3Storage  # noqa: E402
+    def __init__(self, name: str, bucket: "FakeBucket"):
+        self.name = name
+        self._bucket = bucket
+
+    def upload_from_string(self, data, content_type=None):
+        if isinstance(data, str):
+            data = data.encode()
+        self._bucket._blobs[self.name] = data
+
+    def download_as_bytes(self):
+        from google.cloud.exceptions import NotFound
+
+        if self.name not in self._bucket._blobs:
+            raise NotFound(f"Blob {self.name} not found")
+        return self._bucket._blobs[self.name]
+
+    def delete(self):
+        from google.cloud.exceptions import NotFound
+
+        if self.name not in self._bucket._blobs:
+            raise NotFound(f"Blob {self.name} not found")
+        del self._bucket._blobs[self.name]
+
+    def compose(self, sources):
+        combined = b""
+        for src in sources:
+            combined += self._bucket._blobs[src.name]
+        self._bucket._blobs[self.name] = combined
+
+
+class FakeBucket:
+    """In-memory bucket that mimics google.cloud.storage.Bucket."""
+
+    def __init__(self, name: str):
+        self.name = name
+        self._blobs: dict[str, bytes] = {}
+
+    def blob(self, name: str) -> FakeBlob:
+        return FakeBlob(name, self)
+
+    def copy_blob(self, source_blob, destination_bucket, destination_key):
+        destination_bucket._blobs[destination_key] = self._blobs[source_blob.name]
+
+
+class FakeGCSClient:
+    """In-memory GCS client for testing."""
+
+    def __init__(self):
+        self._buckets: dict[str, FakeBucket] = {}
+
+    def bucket(self, name: str) -> FakeBucket:
+        if name not in self._buckets:
+            self._buckets[name] = FakeBucket(name)
+        return self._buckets[name]
+
+    def list_blobs(self, bucket, prefix=""):
+        blob_names = sorted(bucket._blobs.keys())
+        result = []
+        for name in blob_names:
+            if name.startswith(prefix):
+                blob = FakeBlob(name, bucket)
+                result.append(blob)
+        return result
+
+
+# We need to mock the google.cloud imports before importing GCSStorage
+@pytest.fixture(autouse=True)
+def mock_gcs_imports():
+    """Mock google.cloud.storage and google.cloud.exceptions modules."""
+    import types
+
+    # Create mock google.cloud.exceptions module with real NotFound
+    class NotFound(Exception):
+        pass
+
+    exceptions_mod = types.ModuleType("google.cloud.exceptions")
+    exceptions_mod.NotFound = NotFound
+
+    # Create mock google.cloud.storage module
+    storage_mod = types.ModuleType("google.cloud.storage")
+    storage_mod.Client = FakeGCSClient
+
+    google_mod = types.ModuleType("google")
+    cloud_mod = types.ModuleType("google.cloud")
+    google_mod.cloud = cloud_mod
+    cloud_mod.storage = storage_mod
+    cloud_mod.exceptions = exceptions_mod
+
+    import sys
+
+    saved = {}
+    for mod_name in ["google", "google.cloud", "google.cloud.storage", "google.cloud.exceptions"]:
+        saved[mod_name] = sys.modules.get(mod_name)
+        sys.modules[mod_name] = {
+            "google": google_mod,
+            "google.cloud": cloud_mod,
+            "google.cloud.storage": storage_mod,
+            "google.cloud.exceptions": exceptions_mod,
+        }[mod_name]
+
+    yield NotFound
+
+    # Restore
+    for mod_name, original in saved.items():
+        if original is None:
+            sys.modules.pop(mod_name, None)
+        else:
+            sys.modules[mod_name] = original
+
 
 TEST_BUCKET = "test-tus-uploads"
-TEST_REGION = "us-east-1"
 
 
 @pytest.fixture
-def s3_client():
-    """Create a mocked S3 client with a test bucket."""
-    with mock_aws():
-        client = boto3.client("s3", region_name=TEST_REGION)
-        client.create_bucket(Bucket=TEST_BUCKET)
-        yield client
+def gcs_client():
+    return FakeGCSClient()
 
 
 @pytest.fixture
-def storage(s3_client):
-    """Create an S3Storage with mocked S3."""
-    return S3Storage(
+def storage(gcs_client):
+    # Force reimport to pick up mocked modules
+    import importlib
+
+    import resumable_upload.storage_gcs as mod
+
+    importlib.reload(mod)
+    s = mod.GCSStorage(
         bucket=TEST_BUCKET,
-        s3_client=s3_client,
+        gcs_client=gcs_client,
         prefix="uploads",
-        part_size=5 * 1024 * 1024,  # 5MB minimum
+        part_size=10,  # Small for testing
     )
-
-
-@pytest.fixture
-def small_storage(s3_client):
-    """S3Storage with small part_size for easier testing of multipart."""
-    return S3Storage(
-        bucket=TEST_BUCKET,
-        s3_client=s3_client,
-        prefix="uploads",
-        part_size=10,  # Very small for testing (real S3 requires 5MB)
-    )
+    s._flush_size = 10  # Override for testing (real GCS enforces 5MB minimum)
+    return s
 
 
 # -- Basic CRUD operations --------------------------------------------------
 
 
-class TestS3StorageCreate:
+class TestGCSStorageCreate:
     def test_create_upload(self, storage):
         storage.create_upload("test-id", 1024, {"filename": "test.bin"})
         upload = storage.get_upload("test-id")
@@ -71,61 +169,60 @@ class TestS3StorageCreate:
         assert storage.get_upload("nonexistent") is None
 
 
-class TestS3StorageWrite:
-    def test_write_single_chunk_completes_upload(self, small_storage):
-        """Write data >= part_size → flushes as S3 part immediately."""
-        data = b"A" * 20  # 20 bytes > part_size of 10
-        small_storage.create_upload("u1", len(data), {})
-        small_storage.write_chunk("u1", 0, data[:10])
-        small_storage.update_offset("u1", 10)
-
-        upload = small_storage.get_upload("u1")
-        assert upload["offset"] == 10
-
-    def test_write_chunk_buffering(self, small_storage):
+class TestGCSStorageWrite:
+    def test_write_chunk_buffering(self, storage):
         """Chunks smaller than part_size are buffered."""
-        small_storage.create_upload("u2", 20, {})
-        small_storage.write_chunk("u2", 0, b"ABCDE")  # 5 bytes < 10 part_size
-        small_storage.update_offset("u2", 5)
+        storage.create_upload("u2", 20, {})
+        storage.write_chunk("u2", 0, b"ABCDE")  # 5 bytes < 10 part_size
+        storage.update_offset("u2", 5)
 
-        upload = small_storage.get_upload("u2")
+        upload = storage.get_upload("u2")
         assert upload["offset"] == 5
         assert not upload["completed"]
 
-    def test_full_upload_flow(self, small_storage):
-        """Complete upload with multiple chunks → read back data."""
-        data = b"Hello, S3 Storage!"
-        small_storage.create_upload("full", len(data), {"filename": "test.txt"})
+    def test_write_single_chunk(self, storage):
+        """Write data >= part_size flushes as a part."""
+        data = b"A" * 20
+        storage.create_upload("u1", len(data), {})
+        storage.write_chunk("u1", 0, data[:10])
+        storage.update_offset("u1", 10)
+
+        upload = storage.get_upload("u1")
+        assert upload["offset"] == 10
+
+    def test_full_upload_flow(self, storage):
+        """Complete upload with multiple chunks then read back data."""
+        data = b"Hello, GCS Storage!"
+        storage.create_upload("full", len(data), {"filename": "test.txt"})
 
         offset = 0
         chunk_size = 10
         while offset < len(data):
             chunk = data[offset : offset + chunk_size]
-            small_storage.write_chunk("full", offset, chunk)
+            storage.write_chunk("full", offset, chunk)
             offset += len(chunk)
-            small_storage.update_offset("full", offset)
+            storage.update_offset("full", offset)
 
-        # Finalize the upload
-        small_storage.complete_upload("full")
+        storage.complete_upload("full")
 
-        upload = small_storage.get_upload("full")
+        upload = storage.get_upload("full")
         assert upload["completed"] is True
 
-        result = small_storage.read_file("full")
+        result = storage.read_file("full")
         assert result == data
 
-    def test_single_shot_upload(self, small_storage):
-        """Upload where all data comes in one chunk."""
+    def test_single_shot_upload(self, storage):
+        """Upload where all data comes in one chunk smaller than part_size."""
         data = b"one shot"
-        small_storage.create_upload("oneshot", len(data), {})
-        small_storage.write_chunk("oneshot", 0, data)
-        small_storage.update_offset("oneshot", len(data))
-        small_storage.complete_upload("oneshot")
+        storage.create_upload("oneshot", len(data), {})
+        storage.write_chunk("oneshot", 0, data)
+        storage.update_offset("oneshot", len(data))
+        storage.complete_upload("oneshot")
 
-        assert small_storage.read_file("oneshot") == data
+        assert storage.read_file("oneshot") == data
 
 
-class TestS3StorageDelete:
+class TestGCSStorageDelete:
     def test_delete_upload(self, storage):
         storage.create_upload("del-id", 100, {})
         assert storage.get_upload("del-id") is not None
@@ -140,7 +237,7 @@ class TestS3StorageDelete:
 # -- Offset operations -------------------------------------------------------
 
 
-class TestS3StorageOffset:
+class TestGCSStorageOffset:
     def test_update_offset(self, storage):
         storage.create_upload("off-id", 100, {})
         storage.update_offset("off-id", 50)
@@ -163,9 +260,7 @@ class TestS3StorageOffset:
     def test_update_offset_atomic_conflict(self, storage):
         storage.create_upload("conflict-id", 100, {})
         storage.update_offset("conflict-id", 30)
-        # Expected offset is 0 but actual is 30 → conflict
         assert storage.update_offset_atomic("conflict-id", 0, 50) is False
-        # Offset unchanged
         upload = storage.get_upload("conflict-id")
         assert upload["offset"] == 30
 
@@ -173,7 +268,7 @@ class TestS3StorageOffset:
 # -- File info ---------------------------------------------------------------
 
 
-class TestS3StorageFileInfo:
+class TestGCSStorageFileInfo:
     def test_get_file_info(self, storage):
         storage.create_upload("info-id", 100, {})
         info = storage.get_file_info("info-id")
@@ -189,7 +284,7 @@ class TestS3StorageFileInfo:
 # -- Expiration --------------------------------------------------------------
 
 
-class TestS3StorageExpiration:
+class TestGCSStorageExpiration:
     def test_get_expired_uploads(self, storage):
         past = datetime.now(timezone.utc) - timedelta(hours=1)
         future = datetime.now(timezone.utc) + timedelta(hours=1)
@@ -219,18 +314,24 @@ class TestS3StorageExpiration:
 # -- Integration with TusServer ---------------------------------------------
 
 
-class TestS3StorageWithServer:
-    def test_full_upload_via_server(self, s3_client):
-        """S3Storage works as drop-in replacement for SQLiteStorage in TusServer."""
+class TestGCSStorageWithServer:
+    def test_full_upload_via_server(self, gcs_client):
+        """GCSStorage works as drop-in replacement in TusServer."""
+        import importlib
+
+        import resumable_upload.storage_gcs as mod
+
+        importlib.reload(mod)
         from resumable_upload import TusServer
 
-        storage = S3Storage(
+        gcs_storage = mod.GCSStorage(
             bucket=TEST_BUCKET,
-            s3_client=s3_client,
+            gcs_client=gcs_client,
             prefix="srv",
             part_size=10,
         )
-        server = TusServer(storage=storage, base_path="/files")
+        gcs_storage._flush_size = 10  # Override for testing
+        server = TusServer(storage=gcs_storage, base_path="/files")
 
         data = b"server integration test data"
 
@@ -266,9 +367,9 @@ class TestS3StorageWithServer:
         assert status == 200
         assert headers["Upload-Offset"] == str(len(data))
 
-        # Read back data
-        storage.complete_upload(upload_id)
-        assert storage.read_file(upload_id) == data
+        # Read back
+        gcs_storage.complete_upload(upload_id)
+        assert gcs_storage.read_file(upload_id) == data
 
         # DELETE
         status, _, _ = server.handle_request(
@@ -277,4 +378,4 @@ class TestS3StorageWithServer:
             {"tus-resumable": "1.0.0"},
         )
         assert status == 204
-        assert storage.get_upload(upload_id) is None
+        assert gcs_storage.get_upload(upload_id) is None

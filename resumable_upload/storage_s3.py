@@ -21,8 +21,7 @@ try:
     from botocore.exceptions import ClientError
 except ImportError as e:
     raise ImportError(
-        "boto3 is required for S3Storage. "
-        "Install it with: pip install resumable-upload[s3]"
+        "boto3 is required for S3Storage. Install it with: pip install resumable-upload[s3]"
     ) from e
 
 
@@ -159,9 +158,7 @@ class S3Storage(Storage):
             info["completed"] = True
         self._write_info(upload_id, info)
 
-    def update_offset_atomic(
-        self, upload_id: str, expected_offset: int, new_offset: int
-    ) -> bool:
+    def update_offset_atomic(self, upload_id: str, expected_offset: int, new_offset: int) -> bool:
         info = self._read_info(upload_id)
         if info is None or info["offset"] != expected_offset:
             return False
@@ -203,9 +200,7 @@ class S3Storage(Storage):
         existing_buffer = b""
         if info["buffer_size"] > 0:
             try:
-                resp = self.s3.get_object(
-                    Bucket=self.bucket, Key=self._buffer_key(upload_id)
-                )
+                resp = self.s3.get_object(Bucket=self.bucket, Key=self._buffer_key(upload_id))
                 existing_buffer = resp["Body"].read()
             except ClientError:
                 existing_buffer = b""
@@ -230,9 +225,7 @@ class S3Storage(Storage):
         else:
             # Clear buffer
             with contextlib.suppress(ClientError):
-                self.s3.delete_object(
-                    Bucket=self.bucket, Key=self._buffer_key(upload_id)
-                )
+                self.s3.delete_object(Bucket=self.bucket, Key=self._buffer_key(upload_id))
             info["buffer_size"] = 0
 
         self._write_info(upload_id, info)
@@ -272,9 +265,7 @@ class S3Storage(Storage):
         remaining = b""
         if info["buffer_size"] > 0:
             try:
-                resp = self.s3.get_object(
-                    Bucket=self.bucket, Key=self._buffer_key(upload_id)
-                )
+                resp = self.s3.get_object(Bucket=self.bucket, Key=self._buffer_key(upload_id))
                 remaining = resp["Body"].read()
             except ClientError:
                 pass
@@ -292,8 +283,7 @@ class S3Storage(Storage):
                 UploadId=info["multipart_upload_id"],
                 MultipartUpload={
                     "Parts": [
-                        {"PartNumber": p["PartNumber"], "ETag": p["ETag"]}
-                        for p in info["parts"]
+                        {"PartNumber": p["PartNumber"], "ETag": p["ETag"]} for p in info["parts"]
                     ]
                 },
             )
@@ -313,9 +303,7 @@ class S3Storage(Storage):
 
         # Clean up buffer object
         with contextlib.suppress(ClientError):
-            self.s3.delete_object(
-                Bucket=self.bucket, Key=self._buffer_key(upload_id)
-            )
+            self.s3.delete_object(Bucket=self.bucket, Key=self._buffer_key(upload_id))
 
         info["completed"] = True
         info["multipart_upload_id"] = None
@@ -323,15 +311,11 @@ class S3Storage(Storage):
 
     def read_file(self, upload_id: str) -> bytes:
         try:
-            resp = self.s3.get_object(
-                Bucket=self.bucket, Key=self._object_key(upload_id)
-            )
+            resp = self.s3.get_object(Bucket=self.bucket, Key=self._object_key(upload_id))
             return resp["Body"].read()
         except ClientError as e:
             if e.response["Error"]["Code"] == "NoSuchKey":
-                raise FileNotFoundError(
-                    f"Upload {upload_id} not found in S3"
-                ) from e
+                raise FileNotFoundError(f"Upload {upload_id} not found in S3") from e
             raise
 
     def get_file_info(self, upload_id: str) -> dict[str, Any]:
