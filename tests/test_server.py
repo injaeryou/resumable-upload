@@ -684,3 +684,73 @@ def test_zero_byte_upload_marked_completed():
         assert hook_called[0] == upload_id
     finally:
         shutil.rmtree(temp_dir)
+
+
+def test_unsupported_checksum_algorithm():
+    """Test that unsupported checksum algorithms are rejected with 400."""
+    import base64
+    import hashlib
+
+    temp_dir = tempfile.mkdtemp()
+    try:
+        storage = SQLiteStorage(db_path=os.path.join(temp_dir, "test.db"), upload_dir=temp_dir)
+        server = TusServer(storage=storage)
+
+        # Create an upload
+        status, headers, _ = server.handle_request(
+            "POST",
+            "/files",
+            {"tus-resumable": "1.0.0", "upload-length": "5"},
+            b"",
+        )
+        assert status == 201
+        upload_id = headers["Location"].split("/")[-1]
+
+        # Send a PATCH with an unsupported algorithm (md5)
+        data = b"hello"
+        md5_hash = base64.b64encode(hashlib.md5(data).digest()).decode()
+        status, _, body = server.handle_request(
+            "PATCH",
+            f"/files/{upload_id}",
+            {
+                "tus-resumable": "1.0.0",
+                "upload-offset": "0",
+                "content-type": "application/offset+octet-stream",
+                "upload-checksum": f"md5 {md5_hash}",
+            },
+            data,
+        )
+        assert status == 400
+        assert b"Unsupported checksum algorithm" in body
+    finally:
+        shutil.rmtree(temp_dir)
+
+
+def test_metadata_key_without_value():
+    """Test that metadata keys without values are parsed correctly per TUS spec."""
+    temp_dir = tempfile.mkdtemp()
+    try:
+        storage = SQLiteStorage(db_path=os.path.join(temp_dir, "test.db"), upload_dir=temp_dir)
+        server = TusServer(storage=storage)
+
+        # Create upload with a value-less metadata key
+        status, headers, _ = server.handle_request(
+            "POST",
+            "/files",
+            {
+                "tus-resumable": "1.0.0",
+                "upload-length": "0",
+                "upload-metadata": "is-confidential,filename dGVzdA==",
+            },
+            b"",
+        )
+        assert status == 201
+        upload_id = headers["Location"].split("/")[-1]
+
+        # Verify metadata was parsed correctly
+        upload = storage.get_upload(upload_id)
+        assert upload is not None
+        assert upload["metadata"]["is-confidential"] == ""
+        assert upload["metadata"]["filename"] == "test"
+    finally:
+        shutil.rmtree(temp_dir)

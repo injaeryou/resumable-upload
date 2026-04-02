@@ -188,6 +188,8 @@ class TusServer:
         # Early body-size gate for direct API callers (frameworks that pre-read the body)
         if method == "PATCH" and self.max_chunk_size > 0 and len(body) > self.max_chunk_size:
             return self._error_response(413, "Chunk exceeds maximum chunk size")
+        if self.max_size > 0 and len(body) > self.max_size:
+            return self._error_response(413, "Request entity too large")
 
         # Invoke on_incoming_request hook before any processing
         if self._on_incoming_request:
@@ -314,6 +316,8 @@ class TusServer:
                 )
             for pair in upload_metadata.split(","):
                 pair = pair.strip()
+                if not pair:
+                    continue
                 if " " in pair:
                     key, value = pair.split(" ", 1)
                     try:
@@ -322,6 +326,8 @@ class TusServer:
                         return self._error_response(
                             400, f"Invalid base64 encoding for metadata key '{key}': {e}"
                         )
+                else:
+                    metadata[pair] = ""
 
         # Generate upload ID
         upload_id = str(uuid.uuid4())
@@ -500,6 +506,9 @@ class TusServer:
                     if computed != provided:
                         logger.error("Checksum mismatch for upload %s", upload_id)
                         return self._error_response(460, "Checksum mismatch")
+                else:
+                    logger.error("Unsupported checksum algorithm: %s", algo)
+                    return self._error_response(400, f"Unsupported checksum algorithm: {algo}")
             except (ValueError, binascii.Error) as e:
                 logger.error("Invalid Upload-Checksum header: %s", e)
                 return self._error_response(400, "Invalid Upload-Checksum header")

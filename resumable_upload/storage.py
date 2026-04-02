@@ -241,21 +241,11 @@ class SQLiteStorage(Storage):
         conn = sqlite3.connect(self.db_path, timeout=self.timeout)
         try:
             cursor = conn.execute(
-                "UPDATE uploads SET offset = ?, completed = (? >= upload_length)"
-                " WHERE upload_id = ? AND offset = ?",
-                (new_offset, new_offset, upload_id, expected_offset),
+                "UPDATE uploads SET offset = ? WHERE upload_id = ? AND offset = ?",
+                (new_offset, upload_id, expected_offset),
             )
             conn.commit()
-            if cursor.rowcount == 0:
-                return False
-            # Check if upload is now completed; clean up lock to prevent memory leak
-            row = conn.execute(
-                "SELECT completed FROM uploads WHERE upload_id = ?", (upload_id,)
-            ).fetchone()
-            if row and row[0]:
-                with self._file_locks_lock:
-                    self._file_locks.pop(upload_id, None)
-            return True
+            return cursor.rowcount != 0
         finally:
             conn.close()
 
