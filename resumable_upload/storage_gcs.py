@@ -293,6 +293,8 @@ class GCSStorage(Storage):
         info = self._read_info(upload_id)
         if info is None:
             raise ValueError(f"Upload {upload_id} not found")
+        if info.get("completed"):
+            return False
 
         # Read remaining buffer
         remaining = b""
