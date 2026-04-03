@@ -85,12 +85,13 @@ This document details the compliance status of this library against the [TUS res
 
 | Status | Meaning | Trigger |
 |--------|---------|---------|
-| `400` | Bad Request | Missing/invalid header, negative offset, chunk overflow |
+| `400` | Bad Request | Missing/invalid header, negative offset, chunk overflow, oversized metadata, unsupported checksum algorithm |
+| `403` | Forbidden | PATCH on already completed upload |
 | `404` | Not Found | Unknown upload ID |
-| `409` | Conflict | `Upload-Offset` mismatch |
+| `409` | Conflict | `Upload-Offset` mismatch or concurrent write conflict |
 | `410` | Gone | Upload has expired |
 | `412` | Precondition Failed | Unsupported TUS version |
-| `413` | Payload Too Large | Exceeds `Tus-Max-Size` |
+| `413` | Payload Too Large | Exceeds `Tus-Max-Size` or `max_chunk_size` |
 | `415` | Unsupported Media Type | Wrong `Content-Type` in PATCH |
 | `460` | Checksum Mismatch | SHA1 verification failed |
 

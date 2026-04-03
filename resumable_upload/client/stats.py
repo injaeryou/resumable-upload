@@ -54,11 +54,17 @@ class UploadStats:
 
     @property
     def eta_seconds(self) -> float:
-        """Get estimated time to completion in seconds."""
+        """Get estimated time to completion in seconds.
+
+        Returns 0.0 when upload is complete, float('inf') when speed is
+        unknown or stalled.
+        """
+        if self.uploaded_bytes >= self.total_bytes:
+            return 0.0
         if self.upload_speed > 0:
             remaining_bytes = self.total_bytes - self.uploaded_bytes
             return remaining_bytes / self.upload_speed
-        return 0.0
+        return float("inf")
 
     @property
     def total_chunks(self) -> int:

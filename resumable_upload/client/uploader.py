@@ -223,9 +223,12 @@ class Uploader:
             self._stats.uploaded_bytes = self.offset
 
             # Calculate chunks_completed based on current offset
-            # This gives us the number of complete chunks uploaded so far
-            # offset=0 means 0 chunks, offset=chunk_size means 1 chunk, etc.
-            self._stats.chunks_completed = self.offset // self.chunk_size
+            # Use ceiling division to count partial last chunks correctly
+            # E.g. 15 bytes with 10-byte chunks: ceil(15/10) = 2 chunks
+            if self.offset > 0:
+                self._stats.chunks_completed = -(-self.offset // self.chunk_size)
+            else:
+                self._stats.chunks_completed = 0
 
     def _upload_chunk_with_retry(self, data: bytes) -> None:
         """Upload a chunk of data with retry logic."""
