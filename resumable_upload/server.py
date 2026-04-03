@@ -352,7 +352,7 @@ class TusServer:
 
         # Compute expiry
         expires_at = None
-        if self.upload_expiry:
+        if self.upload_expiry is not None:
             expires_at = datetime.now(timezone.utc) + timedelta(seconds=self.upload_expiry)
 
         # Create upload

@@ -754,3 +754,35 @@ def test_metadata_key_without_value():
         assert upload["metadata"]["filename"] == "test"
     finally:
         shutil.rmtree(temp_dir)
+
+
+def test_on_upload_create_hook_replaces_metadata():
+    """Test that on_upload_create hook can replace metadata dict."""
+    temp_dir = tempfile.mkdtemp()
+    try:
+        storage = SQLiteStorage(db_path=os.path.join(temp_dir, "test.db"), upload_dir=temp_dir)
+
+        def modify_metadata(upload_id, metadata, upload_length):
+            return {"original": "replaced", "added_by_hook": "yes"}
+
+        server = TusServer(storage=storage, on_upload_create=modify_metadata)
+
+        status, headers, _ = server.handle_request(
+            "POST",
+            "/files",
+            {
+                "tus-resumable": "1.0.0",
+                "upload-length": "10",
+                "upload-metadata": "filename dGVzdA==",
+            },
+            b"",
+        )
+        assert status == 201
+        upload_id = headers["Location"].split("/")[-1]
+
+        upload = storage.get_upload(upload_id)
+        assert upload is not None
+        assert upload["metadata"] == {"original": "replaced", "added_by_hook": "yes"}
+        assert "filename" not in upload["metadata"]
+    finally:
+        shutil.rmtree(temp_dir)

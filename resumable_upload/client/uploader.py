@@ -293,6 +293,7 @@ class Uploader:
             # Server offset diverged (409); re-sync via HEAD
             self.offset = self._get_offset()
             self._file_handle.seek(self.offset)
+            self._update_stats_after_chunk()
 
         return self.offset < self.file_size
 
@@ -333,6 +334,7 @@ class Uploader:
                 # Server offset diverged (409); re-sync via HEAD and retry chunk
                 self.offset = self._get_offset()
                 self._file_handle.seek(self.offset)
+                self._update_stats_after_chunk()
                 continue
 
             if progress_callback:
