@@ -135,7 +135,8 @@ class TusServer:
         except TusHookError:
             raise
         except Exception:
-            logger.exception("Unexpected error in pre-hook %s", hook.__name__)
+            hook_name = getattr(hook, "__name__", repr(hook))
+            logger.exception("Unexpected error in pre-hook %s", hook_name)
             raise TusHookError("Internal Server Error", status_code=500) from None
 
     def _invoke_post_hook(self, hook: Callable, *args: Any) -> None:
@@ -143,7 +144,7 @@ class TusServer:
         try:
             hook(*args)
         except Exception:
-            logger.exception("Error in post-hook %s", hook.__name__)
+            logger.exception("Error in post-hook %s", getattr(hook, "__name__", repr(hook)))
 
     def _validate_upload_id(self, upload_id: str) -> bool:
         """Validate that upload_id is a valid UUID to prevent path traversal."""

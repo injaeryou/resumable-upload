@@ -91,8 +91,7 @@ jobs:
       run: |
         python -m pip install --upgrade pip
         pip install -e ".[dev]"
-        pip install mypy
 
-    - name: Type check with mypy
+    - name: Type check with ty
       run: |
-        mypy resumable_upload/ --ignore-missing-imports
+        ty check resumable_upload/

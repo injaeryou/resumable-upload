@@ -158,7 +158,7 @@ class TusClient:
 
         # Calculate fingerprint once (avoid double computation)
         fingerprint = (
-            self.fingerprinter.get_fingerprint(file_path or file_stream)  # type: ignore[arg-type]
+            self.fingerprinter.get_fingerprint(file_path or file_stream)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
             if self.store_url
             else None
         )
