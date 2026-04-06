@@ -266,8 +266,14 @@ class S3Storage(Storage):
             try:
                 resp = self.s3.get_object(Bucket=self.bucket, Key=self._buffer_key(upload_id))
                 remaining = resp["Body"].read()
-            except ClientError:
-                pass
+            except ClientError as e:
+                if e.response["Error"]["Code"] == "NoSuchKey":
+                    raise ValueError(
+                        f"Upload {upload_id}: buffer object missing but "
+                        f"buffer_size={info['buffer_size']}. "
+                        "Cannot complete without buffered data."
+                    ) from None
+                raise
 
         has_parts = len(info["parts"]) > 0
 

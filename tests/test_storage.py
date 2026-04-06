@@ -63,6 +63,10 @@ class TestSQLiteStorage:
         storage.update_offset(upload_id, 1024)
         upload = storage.get_upload(upload_id)
         assert upload["offset"] == 1024
+        assert upload["completed"] is False
+
+        storage.complete_upload(upload_id)
+        upload = storage.get_upload(upload_id)
         assert upload["completed"] is True
 
     def test_write_and_read_chunk(self, storage):

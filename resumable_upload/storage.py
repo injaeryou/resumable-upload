@@ -232,9 +232,8 @@ class SQLiteStorage(Storage):
         conn = sqlite3.connect(self.db_path, timeout=self.timeout)
         try:
             conn.execute(
-                "UPDATE uploads SET offset = ?, completed = (? >= upload_length)"
-                " WHERE upload_id = ?",
-                (offset, offset, upload_id),
+                "UPDATE uploads SET offset = ? WHERE upload_id = ?",
+                (offset, upload_id),
             )
             conn.commit()
         finally:

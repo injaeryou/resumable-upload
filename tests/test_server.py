@@ -238,7 +238,8 @@ class TestTusServer:
         data = b"complete data"
         storage.create_upload(upload_id, len(data), {})
         storage.write_chunk(upload_id, 0, data)
-        storage.update_offset(upload_id, len(data))  # marks completed=True
+        storage.update_offset(upload_id, len(data))
+        storage.complete_upload(upload_id)
 
         headers = {
             "tus-resumable": "1.0.0",
