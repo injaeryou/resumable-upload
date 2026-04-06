@@ -245,10 +245,17 @@ class TestGCSStorageOffset:
         assert upload["offset"] == 50
         assert not upload["completed"]
 
-    def test_update_offset_marks_completed(self, storage):
+    def test_update_offset_does_not_mark_completed(self, storage):
         storage.create_upload("comp-id", 100, {})
         storage.update_offset("comp-id", 100)
         upload = storage.get_upload("comp-id")
+        assert upload["completed"] is False
+
+    def test_complete_upload_marks_completed(self, storage):
+        storage.create_upload("comp-id2", 100, {})
+        storage.update_offset("comp-id2", 100)
+        assert storage.complete_upload("comp-id2") is True
+        upload = storage.get_upload("comp-id2")
         assert upload["completed"] is True
 
     def test_update_offset_atomic_success(self, storage):

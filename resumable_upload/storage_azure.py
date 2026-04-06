@@ -185,8 +185,6 @@ class AzureBlobStorage(Storage):
         if info is None:
             return
         info["offset"] = offset
-        if offset >= info["upload_length"]:
-            info["completed"] = True
         self._write_info(upload_id, info)
 
     def update_offset_atomic(self, upload_id: str, expected_offset: int, new_offset: int) -> bool:
@@ -194,8 +192,6 @@ class AzureBlobStorage(Storage):
         if info is None or info["offset"] != expected_offset:
             return False
         info["offset"] = new_offset
-        if new_offset >= info["upload_length"]:
-            info["completed"] = True
         self._write_info(upload_id, info)
         return True
 

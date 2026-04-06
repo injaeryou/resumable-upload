@@ -153,6 +153,10 @@ class SQLiteStorage(Storage):
             # Migration: add expires_at column for existing databases
             with contextlib.suppress(sqlite3.OperationalError):
                 conn.execute("ALTER TABLE uploads ADD COLUMN expires_at TIMESTAMP")
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_uploads_expires_at"
+                " ON uploads (expires_at) WHERE expires_at IS NOT NULL"
+            )
             conn.commit()
             if self.db_path != ":memory:":
                 conn.execute("PRAGMA journal_mode=WAL")
