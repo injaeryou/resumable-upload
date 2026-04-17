@@ -50,7 +50,7 @@ class Uploader:
         file_path: Optional[str] = None,
         file_stream: Optional[IO] = None,
         chunk_size: Union[int, float] = 1024 * 1024,
-        checksum: bool = True,
+        checksum: Union[bool, str] = True,
         metadata_encoding: str = "utf-8",
         headers: Optional[dict[str, str]] = None,
         max_retries: int = 0,
@@ -174,6 +174,15 @@ class Uploader:
             # Update stats after successful upload
             self._update_stats_after_chunk()
 
+    def _resolve_checksum_algorithm(self) -> Optional[str]:
+        """Normalize ``self.checksum`` to a hashlib algorithm name or None."""
+        if self.checksum is False or self.checksum is None:
+            return None
+        if self.checksum is True:
+            return "sha1"
+        # String: trust it; hashlib.new() will raise if unknown.
+        return str(self.checksum).lower()
+
     def _upload_chunk_once(self, data: bytes) -> None:
         """Upload a chunk of data (single attempt)."""
         headers = {
@@ -184,11 +193,14 @@ class Uploader:
             **self.headers,
         }
 
-        # Add checksum if enabled
-        if self.checksum:
-            checksum_bytes = hashlib.sha1(data).digest()
-            checksum_b64 = base64.b64encode(checksum_bytes).decode("ascii")
-            headers["Upload-Checksum"] = f"sha1 {checksum_b64}"
+        # Add checksum if enabled. Accepts True (→ sha1) or a hashlib-supported
+        # algorithm name (e.g. "sha256", "md5", "sha512").
+        algo = self._resolve_checksum_algorithm()
+        if algo is not None:
+            hasher = hashlib.new(algo)
+            hasher.update(data)
+            checksum_b64 = base64.b64encode(hasher.digest()).decode("ascii")
+            headers["Upload-Checksum"] = f"{algo} {checksum_b64}"
 
         try:
             req = Request(self.url, data=data, headers=headers, method="PATCH")

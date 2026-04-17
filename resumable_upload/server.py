@@ -2,7 +2,6 @@
 
 import base64
 import binascii
-import hashlib
 import logging
 import re
 import threading
@@ -12,6 +11,7 @@ from email.utils import formatdate
 from http.server import BaseHTTPRequestHandler
 from typing import Any, Callable, Optional
 
+from resumable_upload.checksum import ChecksumAlgorithms
 from resumable_upload.exceptions import TusHookError
 from resumable_upload.locks import LockBackend
 from resumable_upload.metrics import MetricsRegistry
@@ -92,6 +92,7 @@ class TusServer:
         lock_backend: Optional[LockBackend] = None,
         lock_ttl_seconds: float = 60.0,
         lock_wait_seconds: float = 5.0,
+        checksum_algorithms: tuple[str, ...] = ("sha1",),
     ):
         """Initialize TUS server.
 
@@ -137,6 +138,7 @@ class TusServer:
         self._locks = lock_backend
         self._lock_ttl = lock_ttl_seconds
         self._lock_wait = lock_wait_seconds
+        self._checksums = ChecksumAlgorithms(checksum_algorithms)
         if self._metrics is not None:
             self._metrics.register_counter("tusd_requests_total", "Total HTTP requests received")
             self._metrics.register_counter(
@@ -352,7 +354,7 @@ class TusServer:
             "Tus-Resumable": self.TUS_VERSION,
             "Tus-Version": self.TUS_VERSION,
             "Tus-Extension": ",".join(self.SUPPORTED_EXTENSIONS),
-            "Tus-Checksum-Algorithm": "sha1",
+            "Tus-Checksum-Algorithm": ",".join(self._checksums.enabled),
         }
 
         if self.max_size > 0:
@@ -718,18 +720,20 @@ class TusServer:
         if upload_checksum:
             try:
                 algo, checksum = upload_checksum.split(" ", 1)
-                if algo == "sha1":
-                    computed = hashlib.sha1(body).hexdigest()
-                    provided = base64.b64decode(checksum).hex()
-                    if computed != provided:
-                        logger.error("Checksum mismatch for upload %s", upload_id)
-                        return self._error_response(460, "Checksum mismatch")
-                else:
-                    logger.error("Unsupported checksum algorithm: %s", algo)
-                    return self._error_response(400, f"Unsupported checksum algorithm: {algo}")
-            except (ValueError, binascii.Error) as e:
+            except ValueError:
+                return self._error_response(400, "Invalid Upload-Checksum header")
+            if not self._checksums.is_supported(algo):
+                logger.error("Unsupported checksum algorithm: %s", algo)
+                return self._error_response(400, f"Unsupported checksum algorithm: {algo}")
+            try:
+                provided = base64.b64decode(checksum).hex()
+            except (binascii.Error, ValueError) as e:
                 logger.error("Invalid Upload-Checksum header: %s", e)
                 return self._error_response(400, "Invalid Upload-Checksum header")
+            computed = self._checksums.compute(algo, body)
+            if computed != provided:
+                logger.error("Checksum mismatch for upload %s", upload_id)
+                return self._error_response(460, "Checksum mismatch")
 
         # Reject chunk if it would exceed the declared upload length
         new_offset = upload_offset + len(body)

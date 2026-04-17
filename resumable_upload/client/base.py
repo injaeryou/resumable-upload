@@ -52,7 +52,7 @@ class TusClient:
         self,
         url: str,
         chunk_size: Union[int, float] = 1024 * 1024,
-        checksum: bool = True,
+        checksum: Union[bool, str] = True,
         verify_tls_cert: bool = True,
         metadata_encoding: str = "utf-8",
         store_url: bool = False,
