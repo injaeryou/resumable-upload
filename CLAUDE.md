@@ -1,0 +1,166 @@
+# CLAUDE.md — Project Conventions for AI-driven Development
+
+This file describes how Claude Code (and other AI coding agents) should work in this repository. Human contributors: treat this as a living cheat-sheet too.
+
+## Project Overview
+
+`resumable-upload` is a Python implementation of the [TUS resumable upload protocol v1.0.0](https://tus.io/protocols/resumable-upload.html). It ships both server and client components with **zero runtime dependencies** for the core path. Cloud storage backends (S3 / GCS / Azure) are opt-in via extras.
+
+- **Status**: published on PyPI — `pip install resumable-upload`
+- **Python**: 3.9 through 3.14 (keep 3.9 floor)
+- **License**: MIT
+- **Compliance matrix**: see `TUS_COMPLIANCE.md`
+
+## Architecture (30-second tour)
+
+```
+resumable_upload/
+├── __init__.py            — public exports (keep surface minimal)
+├── server.py              — TusServer + TusHTTPRequestHandler (sync http.server)
+├── storage.py             — Storage ABC + SQLiteStorage (default)
+├── storage_s3.py          — S3 backend (optional, boto3)
+├── storage_gcs.py         — GCS backend (optional, google-cloud-storage)
+├── storage_azure.py       — Azure backend (optional, azure-storage-blob)
+├── url_storage.py         — FileURLStorage for cross-session resume
+├── fingerprint.py         — default SHA-256 full-file fingerprint
+├── exceptions.py          — TusHookError, TusCommunicationError, TusUploadFailed
+└── client/
+    ├── base.py            — TusClient (high-level API)
+    ├── uploader.py        — Uploader (low-level chunk control)
+    └── stats.py           — UploadStats
+
+tests/                     — pytest, one test file per module
+examples/                  — runnable Flask/FastAPI/Django integration examples
+docs/                      — user-facing mkdocs site (do not repurpose)
+.docs/                     — AI-only artifacts (gitignored) — see below
+```
+
+## Tech Stack & Constraints
+
+- Runtime: **stdlib only** for `resumable_upload.server`, `resumable_upload.client`, `resumable_upload.storage` (SQLite is stdlib).
+- Never add a runtime dependency to the core without explicit user approval.
+- Cloud backends use their official SDK (`boto3`, `google-cloud-storage`, `azure-storage-blob`) gated by `[project.optional-dependencies]` extras.
+- Type checker: **ty** (Astral). Never reintroduce mypy — see `14798d2`.
+- Linter/formatter: **ruff** (config in `pyproject.toml`). Line length 100.
+- Test runner: **pytest** + **pytest-cov**. Fixtures live next to tests; no `conftest.py` sprawl.
+- Package manager for dev: **uv** (`uv pip install -e .[dev]`). `pip` is also fine.
+
+## AI-driven Development Protocol
+
+This project is developed primarily with AI agents. Follow these rules:
+
+1. **Plans live in `.docs/plans/`** (gitignored). Every non-trivial feature starts with a markdown plan in that folder. Plans are extremely detailed (TDD step-by-step, exact code, exact commands). See `2026-04-17-phase-a-tus-compatibility.md` for the style.
+2. **Research lives in `.docs/research/`** (gitignored). Gap analyses, comparative studies, competitor reviews. Capture them so future sessions don't redo the same work.
+3. **ADRs live in `.docs/decisions/`** (gitignored). Short markdown files capturing "why we chose X over Y" for decisions that are non-obvious from the code.
+4. **Always read the current plan before touching code**. Don't re-derive the design; the plan is authoritative.
+5. **Follow the plan's TDD cycle per step**: write failing test → run to confirm it fails → implement minimal code → run to confirm it passes → commit. One logical change per commit.
+6. **Use subagent-driven execution for plan work** (`superpowers:subagent-driven-development`). Fresh subagent per task; controller provides full context; two-stage review (spec compliance → code quality) before marking complete.
+7. **Never commit AI working artifacts** (`.docs/`, `.claude/`, `.omc/` are gitignored). If a piece of research or a decision deserves public history, surface it in a PR description or `TUS_COMPLIANCE.md` update.
+
+## Workflow: Issues, Branches, PRs
+
+Issue-first, sub-PR-per-task. Same workflow real OSS projects like `tusd` use.
+
+### Umbrella RFC issues
+- One per Phase or major feature.
+- Body = scope summary + link to `.docs/plans/<filename>.md` + checkboxed task list.
+- Label: `rfc`, and a phase label (e.g., `phase-a`).
+- Title: `RFC: <feature name>` or `Phase A — TUS ecosystem compatibility`.
+
+### Branches
+- Always branch from `main`. Never commit directly to `main`.
+- Naming: **conventional prefix + short slug**.
+  - `feat/<slug>` — new feature (`feat/concatenation-extension`)
+  - `fix/<slug>` — bug fix (`fix/chunks-completed-off-by-one`)
+  - `chore/<slug>` — infra / tooling / refactor-only (`chore/ai-dev-scaffolding`)
+  - `docs/<slug>` — docs-only (`docs/production-deployment-guide`)
+- One PR per Task inside a Phase, not one giant PR.
+
+### Commits
+- **Conventional Commits**: `type(scope): imperative summary`.
+  - Types: `feat`, `fix`, `chore`, `docs`, `refactor`, `test`, `build`, `ci`.
+  - Common scopes: `server`, `client`, `storage`, `cli`, `metrics`, `locks`, etc.
+- Keep messages under 72 chars on the subject line. Body explains *why* if non-obvious.
+- Examples from history:
+  - `fix(storage): consistent completed flag contract across all backends`
+  - `chore: replace mypy with Astral's ty for type checking`
+  - `fix(client): chunks_completed off-by-one, eta_seconds sentinel value`
+
+### Pull requests
+- PR title = same Conventional-Commits format as the squash-merge commit.
+- PR body: reference the umbrella issue with `Part of #<n>` (or `Closes #<n>` if single-PR).
+- Include a testing-evidence section: `pytest -v` output excerpt, `ruff check` clean, `ty check` clean.
+- Default merge strategy: **squash merge**. One logical change on `main` per PR.
+- Never force-push to `main`. Never skip pre-commit hooks.
+
+## Quality Gates
+
+Before every commit:
+
+```bash
+pytest -v
+ruff check resumable_upload tests
+ruff format --check resumable_upload tests
+ty check resumable_upload
+```
+
+Pre-commit hooks are configured in `.pre-commit-config.yaml`; they run the same tooling. Don't bypass with `--no-verify`.
+
+## TUS Protocol Invariants (don't break these)
+
+These are not style preferences — they are wire-protocol requirements:
+
+1. **Wire compatibility**: the server must remain interoperable with `tus-js-client`, `tus-py-client`, `tusd`, and `uppy`. Test against at least one real TUS client (examples are in `examples/`).
+2. **`Tus-Resumable` header**: required on every non-OPTIONS request and every response. Version `1.0.0`.
+3. **Headers are case-insensitive** on input but returned in canonical case on output.
+4. **Error status codes**: follow `TUS_COMPLIANCE.md` exactly. 460 for checksum mismatch is intentional (non-standard but widely used).
+5. **`Upload-Offset` is append-only**. Once advanced, it never decreases. Never mutate a completed upload.
+6. **Concurrent PATCH with stale offset** must return 409 (not silently accept). See the `update_offset_atomic` contract.
+
+## Hooks (`TusServer` extension points)
+
+Pre-hooks can reject requests by raising `TusHookError(status_code=…)`. Post-hooks' exceptions are caught and logged but don't affect the client response.
+
+- `on_incoming_request(method, path, headers)` — pre, every request
+- `on_upload_create(upload_id, metadata, upload_length) -> Optional[dict]` — pre, POST; return dict to replace metadata
+- `on_upload_complete(upload_id, metadata, file_info)` — post, after final chunk
+- `on_upload_terminate(upload_id)` — post, after DELETE
+
+## Don't Touch
+
+- `.venv/`, `.mypy_cache/`, `.ruff_cache/`, `.pytest_cache/`, `htmlcov/`, `site/`, `uploads/`, `uploads.db` — generated / environment / test output. If one of these causes a failure, fix the cause, don't edit the file.
+- Anything under `resumable_upload.egg-info/` — regenerated by packaging.
+- `uv.lock` — let `uv` manage it (library project, so mostly unused but don't hand-edit).
+
+## Useful Commands
+
+```bash
+# Install for development
+uv pip install -e ".[dev,test,all-storage]"
+
+# Run all tests with coverage
+pytest --cov=resumable_upload --cov-report=term-missing
+
+# Run a single test file
+pytest tests/test_server.py -v
+
+# Lint & format
+ruff check --fix resumable_upload tests
+ruff format resumable_upload tests
+
+# Type check
+ty check resumable_upload
+
+# Build docs locally
+mkdocs serve
+
+# Build distribution
+uv build
+```
+
+## When In Doubt
+
+- **Design question**: check `.docs/plans/` first. If no plan covers it, stop and ask the human before inventing.
+- **Wire-protocol question**: check `TUS_COMPLIANCE.md` and the TUS spec (`https://tus.io/protocols/resumable-upload.html`). Don't guess.
+- **Style question**: match the nearest existing file in the same module.
+- **Dependency question**: the default answer is "don't add one". If you must, add to an optional extra, not to core.

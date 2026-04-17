@@ -211,3 +211,10 @@ uploads/
 uploads.db
 .tus_urls.json
 site/
+
+# AI-driven development — local artifacts not tracked in git
+# (implementation plans, research notes, ADRs, agent session state)
+.docs/
+.claude/
+.omc/
+AGENTS.local.md
