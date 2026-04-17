@@ -12,7 +12,7 @@ This document details the compliance status of this library against the [TUS res
 | **termination** | ✅ Implemented | Upload deletion via DELETE |
 | **checksum** | ✅ Implemented | SHA1 (`Upload-Checksum` header); `Tus-Checksum-Algorithm: sha1` advertised in OPTIONS |
 | **expiration** | ✅ Implemented | `Upload-Expires` in POST / HEAD / PATCH responses; periodic server-side cleanup |
-| **concatenation** | ❌ Not implemented | Combining parallel partial uploads |
+| **concatenation** | ✅ Implemented (SQLiteStorage) | Partial + final upload merging. Cloud backends (S3/GCS/Azure) return 501 pending Phase B |
 
 ## Protocol Requirements
 
@@ -72,14 +72,19 @@ This document details the compliance status of this library against the [TUS res
 | `409` on concurrent offset conflict (atomic CAS) | ✅ | `UPDATE ... WHERE offset = ?`; returns `409` if row not updated |
 | `409` received → HEAD re-sync before retry | ✅ | Client fetches current offset and re-seeks before retrying chunk |
 
+### Extension support (beyond the core spec)
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| `X-HTTP-Method-Override` | ✅ Implemented | POST rewrites to PATCH/DELETE/HEAD; OPTIONS/GET rewrites rejected with 400 to preserve the Tus-Resumable gate |
+
 ### Not Implemented
 
 | Feature | Notes |
 |---------|-------|
-| `concatenation` extension | Combining multiple partial uploads |
-| `X-HTTP-Method-Override` | For environments blocking PATCH/DELETE |
-| `Upload-Defer-Length` | Deferred length (part of creation extension) |
+| `Upload-Defer-Length` | Deferred length (part of creation extension) — planned for Phase B |
 | Multiple TUS version support | Only `1.0.0` supported |
+| Cloud-side concatenation | S3 `UploadPartCopy` / GCS `compose` / Azure block-list — planned for Phase B |
 
 ## Error Response Reference
 

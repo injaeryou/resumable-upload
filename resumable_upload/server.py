@@ -187,6 +187,21 @@ class TusServer:
         # Normalize headers to lowercase
         headers = {k.lower(): v for k, v in headers.items()}
 
+        # X-HTTP-Method-Override: let clients tunnel PATCH/DELETE/HEAD through
+        # POST for environments (CDNs, WAFs, legacy proxies) that block those
+        # methods. Only POST may be rewritten, and only to PATCH/DELETE/HEAD —
+        # rewriting to OPTIONS/GET would sidestep the Tus-Resumable check.
+        if method == "POST":
+            override = headers.get("x-http-method-override", "").strip().upper()
+            if override:
+                allowed_overrides = {"PATCH", "DELETE", "HEAD"}
+                if override not in allowed_overrides:
+                    status, resp_headers, resp_body = self._error_response(
+                        400, f"Unsupported X-HTTP-Method-Override value: {override}"
+                    )
+                    return (status, self._add_cors_headers(resp_headers), resp_body)
+                method = override
+
         # Early body-size gate for direct API callers (frameworks that pre-read the body)
         if method == "PATCH" and self.max_chunk_size > 0 and len(body) > self.max_chunk_size:
             return self._error_response(413, "Chunk exceeds maximum chunk size")
