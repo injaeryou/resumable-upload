@@ -77,6 +77,44 @@ upload_url = client.upload_file(
 print(f"업로드 완료: {upload_url}")
 ```
 
+### 커맨드라인 서버
+
+Python 코드를 작성하지 않고 쉘에서 바로 TUS 서버를 실행할 수 있습니다:
+
+```bash
+# 콘솔 스크립트 (pip/uv 설치 후)
+resumable-upload serve --host 0.0.0.0 --port 8080 --upload-dir ./uploads
+
+# 모듈 실행
+python -m resumable_upload serve --port 8080
+```
+
+플래그: `--host`, `--port`, `--base-path`, `--upload-dir`, `--db-path`, `--max-size`, `--max-chunk-size`, `--upload-expiry`, `--cors-origin`, `--log-level`. 자세한 내용은 `resumable-upload serve --help`로 확인하세요.
+
+### 병렬 청크 업로드
+
+고대역폭 환경에서 큰 파일을 N개의 partial 업로드로 분할해 동시에 전송하고, 서버에서 [concatenation 확장](https://tus.io/protocols/resumable-upload.html#concatenation)을 통해 병합합니다:
+
+```python
+client = TusClient("http://localhost:8080/files", chunk_size=1024 * 1024)
+url = client.upload_file("large.bin", parallel_uploads=4)
+```
+
+TUS `concatenation` 확장을 지원하는 서버가 필요합니다(본 라이브러리는 지원). [`tus-js-client`](https://github.com/tus/tus-js-client)의 `parallelUploads` 옵션과 호환됩니다.
+
+### 수동 partial / final 제어
+
+여러 기기 또는 세션에 걸쳐 업로드를 재개해야 하는 고급 워크플로우에서는 partial / final 프리미티브를 직접 사용할 수 있습니다:
+
+```python
+url1 = client.create_partial_upload("part1.bin")
+url2 = client.create_partial_upload("part2.bin")
+final_url = client.create_final_upload(
+    partial_urls=[url1, url2],
+    metadata={"filename": "merged.bin"},
+)
+```
+
 ## 🔧 고급 사용법
 
 자세한 가이드는 **[docs/advanced-usage.md](docs/advanced-usage.md)** 참조:
@@ -127,9 +165,15 @@ print(f"업로드 완료: {upload_url}")
 | **termination** | ✅ 구현됨 |
 | **checksum** | ✅ 구현됨 (SHA1) |
 | **expiration** | ✅ 구현됨 |
-| **concatenation** | ❌ 미구현 |
+| **concatenation** | ✅ 구현됨 (SQLiteStorage; 클라우드 백엔드 예정) |
 
 > **참고:** TUS `Upload-Checksum`은 스펙에 따라 **SHA1**을 사용합니다. 세션 간 재개를 위한 내부 파일 지문(fingerprint)은 **SHA-256**을 사용하며, TUS 프로토콜과는 무관합니다.
+
+### 표준 외 지원
+
+| 기능 | 상태 |
+|------|------|
+| `X-HTTP-Method-Override` | ✅ 구현됨 — PATCH/DELETE를 차단하는 환경을 위해 POST를 PATCH/DELETE/HEAD로 재작성 |
 
 ## 🧪 테스트
 

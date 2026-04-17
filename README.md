@@ -92,6 +92,44 @@ upload_url = client.upload_file(
 print(f"Upload complete: {upload_url}")
 ```
 
+### Command-line Server
+
+Run a TUS server from the shell without writing any Python:
+
+```bash
+# Console script (installed via pip/uv)
+resumable-upload serve --host 0.0.0.0 --port 8080 --upload-dir ./uploads
+
+# Or via module invocation
+python -m resumable_upload serve --port 8080
+```
+
+Flags: `--host`, `--port`, `--base-path`, `--upload-dir`, `--db-path`, `--max-size`, `--max-chunk-size`, `--upload-expiry`, `--cors-origin`, `--log-level`. Run `resumable-upload serve --help` for details.
+
+### Parallel chunk uploads
+
+For large files over high-bandwidth connections, split the file into N concurrent partial uploads and merge them server-side via the [concatenation extension](https://tus.io/protocols/resumable-upload.html#concatenation):
+
+```python
+client = TusClient("http://localhost:8080/files", chunk_size=1024 * 1024)
+url = client.upload_file("large.bin", parallel_uploads=4)
+```
+
+Requires a server that implements the TUS `concatenation` extension (this library does). Compatible with [`tus-js-client`](https://github.com/tus/tus-js-client)'s `parallelUploads` option.
+
+### Manual partial / final control
+
+For advanced workflows (e.g., resumable uploads split across devices or sessions), use the partial / final primitives directly:
+
+```python
+url1 = client.create_partial_upload("part1.bin")
+url2 = client.create_partial_upload("part2.bin")
+final_url = client.create_final_upload(
+    partial_urls=[url1, url2],
+    metadata={"filename": "merged.bin"},
+)
+```
+
 ## 🔧 Advanced Usage
 
 For detailed guides see **[docs/advanced-usage.md](docs/advanced-usage.md)**:
@@ -142,9 +180,15 @@ This library implements [TUS protocol v1.0.0](https://tus.io/protocols/resumable
 | **termination** | ✅ Implemented |
 | **checksum** | ✅ Implemented (SHA1) |
 | **expiration** | ✅ Implemented |
-| **concatenation** | ❌ Not implemented |
+| **concatenation** | ✅ Implemented (SQLiteStorage; cloud backends planned) |
 
 > **Note:** TUS `Upload-Checksum` uses **SHA1** as required by the spec. The internal client-side fingerprint for cross-session resume uses **SHA-256** and is not part of the TUS protocol.
+
+### Non-standard but supported
+
+| Feature | Status |
+|---------|--------|
+| `X-HTTP-Method-Override` | ✅ Implemented — POST rewrites to PATCH/DELETE/HEAD for environments that block those methods |
 
 ## 🧪 Testing
 
