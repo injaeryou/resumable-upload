@@ -12,7 +12,7 @@ This document details the compliance status of this library against the [TUS res
 | **termination** | ✅ Implemented | Upload deletion via DELETE |
 | **checksum** | ✅ Implemented | SHA1 (`Upload-Checksum` header); `Tus-Checksum-Algorithm: sha1` advertised in OPTIONS |
 | **expiration** | ✅ Implemented | `Upload-Expires` in POST / HEAD / PATCH responses; periodic server-side cleanup |
-| **concatenation** | ✅ Implemented (SQLiteStorage) | Partial + final upload merging. Cloud backends (S3/GCS/Azure) return 501 pending Phase B |
+| **concatenation** | ✅ Implemented (all backends) | Partial + final upload merging across SQLiteStorage, S3 (UploadPartCopy), GCS (compose), and Azure (stage_block + commit_block_list) |
 
 ## Protocol Requirements
 
@@ -84,7 +84,6 @@ This document details the compliance status of this library against the [TUS res
 |---------|-------|
 | `Upload-Defer-Length` | Deferred length (part of creation extension) — planned for Phase B |
 | Multiple TUS version support | Only `1.0.0` supported |
-| Cloud-side concatenation | S3 `UploadPartCopy` / GCS `compose` / Azure block-list — planned for Phase B |
 
 ## Error Response Reference
 

@@ -301,35 +301,4 @@ class TestConcatenationServer:
         assert "Upload-Concat" in headers["Access-Control-Allow-Headers"]
 
 
-class TestConcatenationNotImplemented:
-    """Concatenation on cloud backends is deferred — they must raise explicitly."""
-
-    def test_s3_raises_not_implemented(self):
-        pytest.importorskip("boto3")
-        from unittest.mock import MagicMock
-
-        from resumable_upload.storage_s3 import S3Storage
-
-        storage = S3Storage(bucket="b", s3_client=MagicMock())
-        with pytest.raises(NotImplementedError, match="concatenation"):
-            storage.concatenate_uploads(final_id="x", partial_ids=["y"], metadata={})
-
-    def test_gcs_raises_not_implemented(self):
-        pytest.importorskip("google.cloud.storage")
-        from unittest.mock import MagicMock
-
-        from resumable_upload.storage_gcs import GCSStorage
-
-        storage = GCSStorage(bucket="b", gcs_client=MagicMock())
-        with pytest.raises(NotImplementedError, match="concatenation"):
-            storage.concatenate_uploads(final_id="x", partial_ids=["y"], metadata={})
-
-    def test_azure_raises_not_implemented(self):
-        pytest.importorskip("azure.storage.blob")
-        from unittest.mock import MagicMock
-
-        from resumable_upload.storage_azure import AzureBlobStorage
-
-        storage = AzureBlobStorage(container="c", container_client=MagicMock())
-        with pytest.raises(NotImplementedError, match="concatenation"):
-            storage.concatenate_uploads(final_id="x", partial_ids=["y"], metadata={})
+# Cloud backend concatenation coverage lives in tests/test_concatenation_cloud.py.

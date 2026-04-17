@@ -360,8 +360,57 @@ class AzureBlobStorage(Storage):
         partial_ids: list[str],
         metadata: dict[str, str],
     ) -> int:
-        raise NotImplementedError(
-            "Azure concatenation is not yet supported; planned for Phase B "
-            "via staged blocks + commit_block_list. Use SQLiteStorage for "
-            "local development or merge in a post-finish hook."
+        """Merge partial uploads into a final Azure blob via block staging.
+
+        For each partial this downloads the blob data, stages it as a block
+        on the final blob, then commits the block list. Data transits through
+        the client; for large files a ``put_block_from_url`` variant would
+        avoid that round-trip but requires SAS URLs so is left for later.
+        """
+        from azure.storage.blob import BlobBlock
+
+        partials = []
+        for pid in partial_ids:
+            p = self.get_upload(pid)
+            if p is None:
+                raise ValueError(f"partial upload not found: {pid}")
+            if not p.get("is_partial"):
+                raise ValueError(f"upload {pid} is not a partial upload")
+            if p["offset"] != p["upload_length"]:
+                raise ValueError(f"partial upload {pid} is not complete")
+            partials.append(p)
+
+        total_length = sum(p["upload_length"] for p in partials)
+        final_blob = self._get_blob_client(self._object_key(final_id))
+
+        block_list: list[BlobBlock] = []
+        for idx, p in enumerate(partials):
+            src_data = self._download_blob(self._object_key(p["upload_id"]))
+            block_id = self._make_block_id(idx + 1)
+            final_blob.stage_block(block_id, src_data)
+            block_list.append(BlobBlock(block_id=block_id))
+
+        final_blob.commit_block_list(block_list)
+
+        self._write_info(
+            final_id,
+            {
+                "upload_id": final_id,
+                "upload_length": total_length,
+                "offset": total_length,
+                "metadata": metadata,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "expires_at": None,
+                "completed": True,
+                "is_partial": False,
+                "blocks": [],
+                "buffer_size": 0,
+            },
         )
+        logger.info(
+            "Azure concatenate_uploads: merged %s partials into %s (%s bytes)",
+            len(partials),
+            final_id,
+            total_length,
+        )
+        return total_length

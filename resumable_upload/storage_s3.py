@@ -373,8 +373,84 @@ class S3Storage(Storage):
         partial_ids: list[str],
         metadata: dict[str, str],
     ) -> int:
-        raise NotImplementedError(
-            "S3 concatenation is not yet supported; planned for Phase B "
-            "via UploadPartCopy. Use SQLiteStorage for local development "
-            "or merge in a post-finish hook."
+        """Merge partial uploads into a final S3 object via UploadPartCopy.
+
+        S3 requires every non-last part to be at least 5 MiB. Partials smaller
+        than that must be the last in the list, otherwise S3 will reject the
+        CompleteMultipartUpload call. Callers that need small-partial
+        concatenation should merge client-side and upload the result as a
+        single object.
+        """
+        partials = []
+        for pid in partial_ids:
+            p = self.get_upload(pid)
+            if p is None:
+                raise ValueError(f"partial upload not found: {pid}")
+            if not p.get("is_partial"):
+                raise ValueError(f"upload {pid} is not a partial upload")
+            if p["offset"] != p["upload_length"]:
+                raise ValueError(f"partial upload {pid} is not complete")
+            partials.append(p)
+
+        total_length = sum(p["upload_length"] for p in partials)
+        final_key = self._object_key(final_id)
+
+        mpu = self.s3.create_multipart_upload(Bucket=self.bucket, Key=final_key)
+        multipart_upload_id = mpu["UploadId"]
+
+        try:
+            parts = []
+            for idx, p in enumerate(partials, start=1):
+                src_key = self._object_key(p["upload_id"])
+                copy = self.s3.upload_part_copy(
+                    Bucket=self.bucket,
+                    Key=final_key,
+                    PartNumber=idx,
+                    UploadId=multipart_upload_id,
+                    CopySource={"Bucket": self.bucket, "Key": src_key},
+                )
+                parts.append(
+                    {
+                        "ETag": copy["CopyPartResult"]["ETag"],
+                        "PartNumber": idx,
+                    }
+                )
+
+            self.s3.complete_multipart_upload(
+                Bucket=self.bucket,
+                Key=final_key,
+                UploadId=multipart_upload_id,
+                MultipartUpload={"Parts": parts},
+            )
+        except Exception:
+            with contextlib.suppress(ClientError):
+                self.s3.abort_multipart_upload(
+                    Bucket=self.bucket,
+                    Key=final_key,
+                    UploadId=multipart_upload_id,
+                )
+            raise
+
+        self._write_info(
+            final_id,
+            {
+                "upload_id": final_id,
+                "upload_length": total_length,
+                "offset": total_length,
+                "metadata": metadata,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "expires_at": None,
+                "completed": True,
+                "is_partial": False,
+                "multipart_upload_id": None,
+                "parts": [],
+                "buffer_size": 0,
+            },
         )
+        logger.info(
+            "S3 concatenate_uploads: merged %s partials into %s (%s bytes)",
+            len(partials),
+            final_id,
+            total_length,
+        )
+        return total_length

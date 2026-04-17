@@ -165,7 +165,7 @@ final_url = client.create_final_upload(
 | **termination** | ✅ 구현됨 |
 | **checksum** | ✅ 구현됨 (SHA1) |
 | **expiration** | ✅ 구현됨 |
-| **concatenation** | ✅ 구현됨 (SQLiteStorage; 클라우드 백엔드 예정) |
+| **concatenation** | ✅ 구현됨 (SQLite / S3 / GCS / Azure) |
 
 > **참고:** TUS `Upload-Checksum`은 스펙에 따라 **SHA1**을 사용합니다. 세션 간 재개를 위한 내부 파일 지문(fingerprint)은 **SHA-256**을 사용하며, TUS 프로토콜과는 무관합니다.
 

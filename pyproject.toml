@@ -48,6 +48,7 @@ dev = [
     "pre-commit>=3.0.0",
     "tox>=4.0.0",
     "ty>=0.0.28",
+    "moto[s3]>=5.0",
 ]
 test = [
     "pytest>=7.0.0",

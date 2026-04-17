@@ -390,8 +390,59 @@ class GCSStorage(Storage):
         partial_ids: list[str],
         metadata: dict[str, str],
     ) -> int:
-        raise NotImplementedError(
-            "GCS concatenation is not yet supported; planned for Phase B "
-            "via the GCS compose primitive. Use SQLiteStorage for local "
-            "development or merge in a post-finish hook."
+        """Merge partial uploads into a final GCS object via ``compose``.
+
+        GCS compose accepts up to 32 source blobs per call. For larger inputs
+        this method chains compose operations: every 31 sources are merged
+        into the destination, then the destination is prepended to the next
+        batch, and so on. This mirrors the pattern used by tusd's GCS store.
+        """
+        partials = []
+        for pid in partial_ids:
+            p = self.get_upload(pid)
+            if p is None:
+                raise ValueError(f"partial upload not found: {pid}")
+            if not p.get("is_partial"):
+                raise ValueError(f"upload {pid} is not a partial upload")
+            if p["offset"] != p["upload_length"]:
+                raise ValueError(f"partial upload {pid} is not complete")
+            partials.append(p)
+
+        total_length = sum(p["upload_length"] for p in partials)
+        sources = [self.gcs_bucket.blob(self._object_key(p["upload_id"])) for p in partials]
+        destination = self.gcs_bucket.blob(self._object_key(final_id))
+
+        compose_limit = 32
+        if len(sources) <= compose_limit:
+            destination.compose(sources)
+        else:
+            # Compose the first batch into destination, then chain.
+            destination.compose(sources[:compose_limit])
+            remaining = sources[compose_limit:]
+            while remaining:
+                batch = [destination, *remaining[: compose_limit - 1]]
+                destination.compose(batch)
+                remaining = remaining[compose_limit - 1 :]
+
+        self._write_info(
+            final_id,
+            {
+                "upload_id": final_id,
+                "upload_length": total_length,
+                "offset": total_length,
+                "metadata": metadata,
+                "created_at": datetime.now(timezone.utc).isoformat(),
+                "expires_at": None,
+                "completed": True,
+                "is_partial": False,
+                "parts": [],
+                "buffer_size": 0,
+            },
         )
+        logger.info(
+            "GCS concatenate_uploads: merged %s partials into %s (%s bytes)",
+            len(partials),
+            final_id,
+            total_length,
+        )
+        return total_length

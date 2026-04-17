@@ -180,7 +180,7 @@ This library implements [TUS protocol v1.0.0](https://tus.io/protocols/resumable
 | **termination** | ✅ Implemented |
 | **checksum** | ✅ Implemented (SHA1) |
 | **expiration** | ✅ Implemented |
-| **concatenation** | ✅ Implemented (SQLiteStorage; cloud backends planned) |
+| **concatenation** | ✅ Implemented (SQLite / S3 / GCS / Azure) |
 
 > **Note:** TUS `Upload-Checksum` uses **SHA1** as required by the spec. The internal client-side fingerprint for cross-session resume uses **SHA-256** and is not part of the TUS protocol.
 
