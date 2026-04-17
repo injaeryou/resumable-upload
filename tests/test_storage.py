@@ -179,6 +179,52 @@ class TestSQLiteStorage:
         finally:
             os.chmod(upload_dir, 0o755)
 
+    # --- is_partial flag (Phase A Task 1) ---
+
+    def test_create_upload_with_is_partial_flag(self, storage):
+        """is_partial=True is persisted and surfaced by get_upload."""
+        upload_id = "11111111-1111-1111-1111-111111111111"
+        storage.create_upload(upload_id, 10, {}, is_partial=True)
+        upload = storage.get_upload(upload_id)
+        assert upload is not None
+        assert upload["is_partial"] is True
+
+    def test_create_upload_defaults_is_partial_false(self, storage):
+        """is_partial defaults to False when the kwarg is omitted."""
+        upload_id = "22222222-2222-2222-2222-222222222222"
+        storage.create_upload(upload_id, 10, {})
+        upload = storage.get_upload(upload_id)
+        assert upload is not None
+        assert upload["is_partial"] is False
+
+    def test_legacy_db_migration_adds_is_partial(self, temp_dir):
+        """Initializing over a DB without is_partial adds the column via migration."""
+        db_path = os.path.join(temp_dir, "legacy.db")
+        upload_dir = os.path.join(temp_dir, "uploads_legacy")
+        os.makedirs(upload_dir, exist_ok=True)
+
+        conn = sqlite3.connect(db_path)
+        conn.execute(
+            """
+            CREATE TABLE uploads (
+                upload_id TEXT PRIMARY KEY,
+                upload_length INTEGER NOT NULL,
+                offset INTEGER DEFAULT 0,
+                metadata TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                completed BOOLEAN DEFAULT 0
+            )
+            """
+        )
+        conn.commit()
+        conn.close()
+
+        storage = SQLiteStorage(db_path=db_path, upload_dir=upload_dir)
+        upload_id = str(uuid.uuid4())
+        storage.create_upload(upload_id, 100, {}, is_partial=True)
+        upload = storage.get_upload(upload_id)
+        assert upload["is_partial"] is True
+
     def test_existing_db_migration_adds_expires_at(self, temp_dir):
         """Re-initializing an old DB (without expires_at) adds the column."""
         db_path = os.path.join(temp_dir, "old.db")

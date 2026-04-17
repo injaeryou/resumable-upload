@@ -142,6 +142,7 @@ class AzureBlobStorage(Storage):
         upload_length: int,
         metadata: dict[str, str],
         expires_at: Optional[datetime] = None,
+        is_partial: bool = False,
     ) -> None:
         info = {
             "upload_id": upload_id,
@@ -151,6 +152,7 @@ class AzureBlobStorage(Storage):
             "created_at": datetime.now(timezone.utc).isoformat(),
             "expires_at": expires_at.isoformat() if expires_at else None,
             "completed": False,
+            "is_partial": is_partial,
             "blocks": [],
             "buffer_size": 0,
         }
@@ -178,6 +180,7 @@ class AzureBlobStorage(Storage):
             "metadata": info.get("metadata", {}),
             "completed": info.get("completed", False),
             "expires_at": expires_at,
+            "is_partial": info.get("is_partial", False),
         }
 
     def update_offset(self, upload_id: str, offset: int) -> None:

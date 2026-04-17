@@ -27,8 +27,15 @@ class Storage(ABC):
         upload_length: int,
         metadata: dict[str, str],
         expires_at: Optional[datetime] = None,
+        is_partial: bool = False,
     ) -> None:
-        """Create a new upload entry."""
+        """Create a new upload entry.
+
+        Args:
+            is_partial: If True, this upload is a partial upload that will be
+                consumed by a final concatenation request. Partial uploads are
+                never delivered to the on_upload_complete hook individually.
+        """
         pass
 
     @abstractmethod
@@ -146,13 +153,17 @@ class SQLiteStorage(Storage):
                     offset INTEGER DEFAULT 0,
                     metadata TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    completed BOOLEAN DEFAULT 0
+                    completed BOOLEAN DEFAULT 0,
+                    is_partial BOOLEAN DEFAULT 0
                 )
                 """
             )
             # Migration: add expires_at column for existing databases
             with contextlib.suppress(sqlite3.OperationalError):
                 conn.execute("ALTER TABLE uploads ADD COLUMN expires_at TIMESTAMP")
+            # Migration: add is_partial column (TUS concatenation extension)
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute("ALTER TABLE uploads ADD COLUMN is_partial BOOLEAN DEFAULT 0")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_uploads_expires_at"
                 " ON uploads (expires_at) WHERE expires_at IS NOT NULL"
@@ -169,6 +180,7 @@ class SQLiteStorage(Storage):
         upload_length: int,
         metadata: dict[str, str],
         expires_at: Optional[datetime] = None,
+        is_partial: bool = False,
     ) -> None:
         """Create a new upload entry."""
         conn = sqlite3.connect(self.db_path, timeout=self.timeout)
@@ -176,10 +188,18 @@ class SQLiteStorage(Storage):
             expires_at_str = expires_at.astimezone(timezone.utc).isoformat() if expires_at else None
             conn.execute(
                 """
-                INSERT INTO uploads (upload_id, upload_length, metadata, expires_at)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO uploads (
+                    upload_id, upload_length, metadata, expires_at, is_partial
+                )
+                VALUES (?, ?, ?, ?, ?)
                 """,
-                (upload_id, upload_length, json.dumps(metadata), expires_at_str),
+                (
+                    upload_id,
+                    upload_length,
+                    json.dumps(metadata),
+                    expires_at_str,
+                    int(is_partial),
+                ),
             )
             conn.commit()
         finally:
@@ -225,6 +245,7 @@ class SQLiteStorage(Storage):
             "metadata": json.loads(row["metadata"]) if row["metadata"] else {},
             "completed": bool(row["completed"]),
             "expires_at": expires_at,
+            "is_partial": bool(row["is_partial"]),
         }
 
     def update_offset(self, upload_id: str, offset: int) -> None:

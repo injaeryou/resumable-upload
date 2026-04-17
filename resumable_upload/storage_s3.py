@@ -104,6 +104,7 @@ class S3Storage(Storage):
         upload_length: int,
         metadata: dict[str, str],
         expires_at: Optional[datetime] = None,
+        is_partial: bool = False,
     ) -> None:
         # Start S3 multipart upload
         mpu = self.s3.create_multipart_upload(
@@ -120,6 +121,7 @@ class S3Storage(Storage):
             "created_at": datetime.now(timezone.utc).isoformat(),
             "expires_at": expires_at.isoformat() if expires_at else None,
             "completed": False,
+            "is_partial": is_partial,
             "multipart_upload_id": multipart_upload_id,
             "parts": [],
             "buffer_size": 0,
@@ -148,6 +150,7 @@ class S3Storage(Storage):
             "metadata": info.get("metadata", {}),
             "completed": info.get("completed", False),
             "expires_at": expires_at,
+            "is_partial": info.get("is_partial", False),
         }
 
     def update_offset(self, upload_id: str, offset: int) -> None:
