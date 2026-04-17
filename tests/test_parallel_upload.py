@@ -117,3 +117,97 @@ class TestPartialFinalHelpers:
 
         with pytest.raises(TusCommunicationError):
             client.create_final_upload(partial_urls=[f"{base_url}/{incomplete_id}"], metadata={})
+
+
+class TestParallelUploads:
+    """Automatic parallel uploads via upload_file(parallel_uploads=N)."""
+
+    def test_parallel_upload_roundtrip_equal_slices(self, live_server, tmp_path):
+        base_url, storage = live_server
+        big = tmp_path / "big.bin"
+        # 1 MiB of deterministic data — exercises multiple chunks per slice
+        payload = bytes((i * 7 + 3) % 256 for i in range(1024 * 1024))
+        big.write_bytes(payload)
+
+        client = TusClient(base_url, chunk_size=64 * 1024)
+        final_url = client.upload_file(
+            str(big),
+            metadata={"filename": "big.bin"},
+            parallel_uploads=4,
+        )
+
+        info = client.get_upload_info(final_url)
+        assert info["length"] == len(payload)
+        assert info["offset"] == len(payload)
+        assert info["complete"] is True
+        assert info["metadata"]["filename"] == "big.bin"
+
+        final_id = final_url.rsplit("/", 1)[1]
+        assert storage.read_file(final_id) == payload
+
+    def test_parallel_upload_handles_uneven_slices(self, live_server, tmp_path):
+        """Length not divisible by parallel_uploads: last slice gets remainder."""
+        base_url, storage = live_server
+        # 1001 bytes across 4 slices → 250/250/250/251
+        payload = bytes(range(256)) * 3 + b"\xaa" * (1001 - 256 * 3)
+        assert len(payload) == 1001
+        f = tmp_path / "uneven.bin"
+        f.write_bytes(payload)
+
+        client = TusClient(base_url, chunk_size=128)
+        final_url = client.upload_file(str(f), parallel_uploads=4)
+
+        final_id = final_url.rsplit("/", 1)[1]
+        assert storage.read_file(final_id) == payload
+
+    def test_parallel_upload_rejects_invalid_n(self, live_server, tmp_path):
+        base_url, _ = live_server
+        f = tmp_path / "x.bin"
+        f.write_bytes(b"hello")
+        client = TusClient(base_url)
+        with pytest.raises(ValueError, match="parallel_uploads"):
+            client.upload_file(str(f), parallel_uploads=0)
+        with pytest.raises(ValueError, match="parallel_uploads"):
+            client.upload_file(str(f), parallel_uploads=-3)
+
+    def test_parallel_upload_requires_file_path(self, live_server):
+        from io import BytesIO
+
+        base_url, _ = live_server
+        client = TusClient(base_url)
+        with pytest.raises(ValueError, match="file_path"):
+            client.upload_file(file_stream=BytesIO(b"x" * 100), parallel_uploads=2)
+
+    def test_parallel_upload_incompatible_with_stop_at(self, live_server, tmp_path):
+        base_url, _ = live_server
+        f = tmp_path / "x.bin"
+        f.write_bytes(b"hello world")
+        client = TusClient(base_url)
+        with pytest.raises(ValueError, match="stop_at"):
+            client.upload_file(str(f), parallel_uploads=2, stop_at=5)
+
+    def test_parallel_upload_n_greater_than_size_degenerates(self, live_server, tmp_path):
+        """parallel_uploads > file_size: skip empty slices, still succeeds."""
+        base_url, storage = live_server
+        f = tmp_path / "tiny.bin"
+        f.write_bytes(b"abc")
+
+        client = TusClient(base_url, chunk_size=1)
+        final_url = client.upload_file(str(f), parallel_uploads=10)
+        final_id = final_url.rsplit("/", 1)[1]
+        assert storage.read_file(final_id) == b"abc"
+
+    def test_parallel_upload_of_single_returns_normal_upload(self, live_server, tmp_path):
+        """parallel_uploads=1 must behave exactly like the existing path."""
+        base_url, storage = live_server
+        f = tmp_path / "x.bin"
+        f.write_bytes(b"regular-upload")
+
+        client = TusClient(base_url, chunk_size=1024)
+        url = client.upload_file(str(f), parallel_uploads=1)
+        # parallel_uploads=1 uses the single-stream path — not a final upload —
+        # so the returned URL is the upload itself, not a concatenated one.
+        upload_id = url.rsplit("/", 1)[1]
+        stored = storage.get_upload(upload_id)
+        assert stored["is_partial"] is False
+        assert storage.read_file(upload_id) == b"regular-upload"

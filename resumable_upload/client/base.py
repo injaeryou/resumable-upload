@@ -117,6 +117,7 @@ class TusClient:
         metadata: Optional[dict[str, str]] = None,
         progress_callback: Optional[Callable[[UploadStats], None]] = None,
         stop_at: Optional[int] = None,
+        parallel_uploads: int = 1,
     ) -> str:
         """Upload a file to the server.
 
@@ -126,20 +127,40 @@ class TusClient:
             metadata: Optional metadata dictionary
             progress_callback: Optional callback function that receives UploadStats
             stop_at: Stop upload at this byte offset (for partial uploads)
+            parallel_uploads: Number of concurrent partial uploads to run.
+                When > 1 the file is split into ``parallel_uploads`` byte ranges,
+                each uploaded as a TUS partial, then merged server-side via the
+                concatenation extension. Requires ``file_path`` (streams are
+                not split) and is incompatible with ``stop_at``. Server must
+                support the concatenation extension.
 
         Returns:
             URL of the uploaded file
 
         Raises:
-            ValueError: If neither file_path nor file_stream provided
+            ValueError: If neither file_path nor file_stream provided,
+                parallel_uploads < 1, parallel_uploads > 1 with a stream,
+                or parallel_uploads > 1 with stop_at.
             FileNotFoundError: If file doesn't exist
             TusCommunicationError: If upload fails
         """
+        if parallel_uploads < 1:
+            raise ValueError(f"parallel_uploads must be >= 1, got {parallel_uploads}")
+
         if not file_path and not file_stream:
             raise ValueError("Either file_path or file_stream must be provided")
 
         if file_path and not os.path.exists(file_path):
             raise FileNotFoundError(f"File not found: {file_path}")
+
+        if parallel_uploads > 1:
+            if file_path is None:
+                raise ValueError("parallel_uploads requires file_path (streams are not split)")
+            if stop_at is not None:
+                raise ValueError("parallel_uploads is incompatible with stop_at")
+            return self._upload_parallel(
+                file_path, metadata or {}, parallel_uploads, progress_callback
+            )
 
         # Get file size
         if file_stream:
@@ -197,6 +218,79 @@ class TusClient:
             return uploader.url
         finally:
             uploader.close()
+
+    def _upload_parallel(
+        self,
+        file_path: str,
+        metadata: dict[str, str],
+        parallel_uploads: int,
+        progress_callback: Optional[Callable[[UploadStats], None]],
+    ) -> str:
+        """Split a file into N ranges, upload concurrently, and merge server-side."""
+        import io
+        from concurrent.futures import ThreadPoolExecutor
+
+        file_size = os.path.getsize(file_path)
+        if file_size == 0:
+            # Degenerate case — fall back to a single zero-length upload.
+            return self.upload_file(
+                file_path,
+                metadata=metadata,
+                parallel_uploads=1,
+                progress_callback=progress_callback,
+            )
+
+        # Compute byte boundaries; the last slice absorbs any remainder.
+        # Slices start at `start` and end at `end` (exclusive).
+        base = file_size // parallel_uploads
+        boundaries: list[tuple[int, int]] = []
+        start = 0
+        for i in range(parallel_uploads):
+            end = file_size if i == parallel_uploads - 1 else start + base
+            if end > start:  # skip empty slices when parallel_uploads > file_size
+                boundaries.append((start, end))
+            start = end
+
+        if "filename" not in metadata:
+            metadata = {**metadata, "filename": os.path.basename(file_path)}
+
+        def upload_slice(lo: int, hi: int) -> str:
+            length = hi - lo
+            # Send partials without metadata; metadata is attached to the final.
+            upload_url = self._create_upload(
+                length, metadata={}, extra_headers={"Upload-Concat": "partial"}
+            )
+            with open(file_path, "rb") as f:
+                f.seek(lo)
+                buf = io.BytesIO(f.read(length))
+            uploader = Uploader(
+                url=upload_url,
+                file_stream=buf,
+                chunk_size=self.chunk_size,
+                checksum=self.checksum,
+                metadata_encoding=self.metadata_encoding,
+                headers=self.headers.copy(),
+                max_retries=self.max_retries,
+                retry_delay=self.retry_delay,
+                ssl_context=self.ssl_context,
+                timeout=self.timeout,
+            )
+            try:
+                uploader.upload()
+                return upload_url
+            finally:
+                uploader.close()
+
+        with ThreadPoolExecutor(max_workers=parallel_uploads) as pool:
+            futures = [pool.submit(upload_slice, lo, hi) for lo, hi in boundaries]
+            partial_urls = [f.result() for f in futures]
+
+        if progress_callback:
+            stats = UploadStats(total_bytes=file_size)
+            stats.uploaded_bytes = file_size
+            progress_callback(stats)
+
+        return self.create_final_upload(partial_urls=partial_urls, metadata=metadata)
 
     def resume_upload(
         self,
