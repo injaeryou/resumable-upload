@@ -66,6 +66,7 @@ class TusServer:
     SUPPORTED_EXTENSIONS = [
         "creation",
         "creation-with-upload",
+        "creation-defer-length",
         "termination",
         "checksum",
         "expiration",
@@ -371,24 +372,35 @@ class TusServer:
             return self._handle_create_final(concat_header, headers)
         is_partial = concat_header == "partial"
 
+        defer_length = headers.get("upload-defer-length") == "1"
         upload_length_str = headers.get("upload-length")
-        if not upload_length_str:
+
+        if defer_length and upload_length_str:
+            return self._error_response(
+                400, "Upload-Length and Upload-Defer-Length are mutually exclusive"
+            )
+        if not defer_length and not upload_length_str:
             logger.error("Missing Upload-Length header")
             return self._error_response(400, "Missing Upload-Length header")
 
-        try:
-            upload_length = int(upload_length_str)
-        except ValueError:
-            logger.error("Invalid Upload-Length header: %s", upload_length_str)
-            return self._error_response(400, "Invalid Upload-Length header")
+        upload_length: Optional[int]
+        if defer_length:
+            upload_length = None
+        else:
+            assert upload_length_str is not None  # guaranteed by the check above
+            try:
+                upload_length = int(upload_length_str)
+            except ValueError:
+                logger.error("Invalid Upload-Length header: %s", upload_length_str)
+                return self._error_response(400, "Invalid Upload-Length header")
 
-        if upload_length < 0:
-            logger.error("Negative Upload-Length header: %s", upload_length)
-            return self._error_response(400, "Upload-Length must not be negative")
+            if upload_length < 0:
+                logger.error("Negative Upload-Length header: %s", upload_length)
+                return self._error_response(400, "Upload-Length must not be negative")
 
-        if self.max_size > 0 and upload_length > self.max_size:
-            logger.warning("Upload size %s exceeds maximum %s", upload_length, self.max_size)
-            return self._error_response(413, "Upload exceeds maximum size")
+            if self.max_size > 0 and upload_length > self.max_size:
+                logger.warning("Upload size %s exceeds maximum %s", upload_length, self.max_size)
+                return self._error_response(413, "Upload exceeds maximum size")
 
         # Parse metadata
         metadata, err = self._parse_metadata(headers.get("upload-metadata", ""))
@@ -451,8 +463,13 @@ class TusServer:
             self.storage.update_offset(upload_id, initial_offset)
             logger.info("creation-with-upload: wrote %s bytes for %s", initial_offset, upload_id)
 
-        # Handle upload completion (zero-length upload or creation-with-upload)
-        if initial_offset >= upload_length and self.storage.complete_upload(upload_id):
+        # Handle upload completion (zero-length upload or creation-with-upload).
+        # Deferred-length uploads cannot complete here: their length is not yet known.
+        if (
+            upload_length is not None
+            and initial_offset >= upload_length
+            and self.storage.complete_upload(upload_id)
+        ):
             if self._metrics is not None:
                 self._metrics.inc("tusd_uploads_finished_total")
             if self._on_upload_complete:
@@ -597,9 +614,13 @@ class TusServer:
         response_headers = {
             "Tus-Resumable": self.TUS_VERSION,
             "Upload-Offset": str(upload["offset"]),
-            "Upload-Length": str(upload["upload_length"]),
             "Cache-Control": "no-store",
         }
+        if upload["upload_length"] is None:
+            # Upload-Defer-Length extension: length not yet committed.
+            response_headers["Upload-Defer-Length"] = "1"
+        else:
+            response_headers["Upload-Length"] = str(upload["upload_length"])
 
         if expires_at:
             response_headers["Upload-Expires"] = self._format_expiry(expires_at)
@@ -641,6 +662,34 @@ class TusServer:
         if content_type != "application/offset+octet-stream":
             logger.error("Invalid Content-Type: %s", content_type)
             return self._error_response(415, "Invalid Content-Type")
+
+        # Upload-Defer-Length: commit the final length on the first PATCH.
+        patch_upload_length = headers.get("upload-length")
+        if upload["upload_length"] is None:
+            if not patch_upload_length:
+                return self._error_response(
+                    400, "Upload-Length header required for deferred-length PATCH"
+                )
+            try:
+                committed_length = int(patch_upload_length)
+            except ValueError:
+                return self._error_response(400, "Invalid Upload-Length header")
+            if committed_length < 0:
+                return self._error_response(400, "Upload-Length must not be negative")
+            if self.max_size > 0 and committed_length > self.max_size:
+                return self._error_response(413, "Upload exceeds maximum size")
+            self.storage.set_upload_length(upload_id, committed_length)
+            upload["upload_length"] = committed_length
+        elif patch_upload_length is not None:
+            # Length already committed: reject attempts to change it.
+            try:
+                resent_length = int(patch_upload_length)
+            except ValueError:
+                return self._error_response(400, "Invalid Upload-Length header")
+            if resent_length != upload["upload_length"]:
+                return self._error_response(
+                    400, "Upload-Length already committed and cannot be changed"
+                )
 
         # Check upload offset
         upload_offset_str = headers.get("upload-offset")

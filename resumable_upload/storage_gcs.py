@@ -107,7 +107,7 @@ class GCSStorage(Storage):
     def create_upload(
         self,
         upload_id: str,
-        upload_length: int,
+        upload_length: Optional[int],
         metadata: dict[str, str],
         expires_at: Optional[datetime] = None,
         is_partial: bool = False,
@@ -156,6 +156,13 @@ class GCSStorage(Storage):
         if info is None:
             return
         info["offset"] = offset
+        self._write_info(upload_id, info)
+
+    def set_upload_length(self, upload_id: str, upload_length: int) -> None:
+        info = self._read_info(upload_id)
+        if info is None:
+            return
+        info["upload_length"] = upload_length
         self._write_info(upload_id, info)
 
     def update_offset_atomic(self, upload_id: str, expected_offset: int, new_offset: int) -> bool:

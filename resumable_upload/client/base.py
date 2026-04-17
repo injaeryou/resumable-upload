@@ -371,16 +371,25 @@ class TusClient:
         metadata: dict[str, str],
         initial_data: Optional[bytes] = None,
         extra_headers: Optional[dict[str, str]] = None,
+        defer_length: bool = False,
     ) -> str:
-        """Create a new upload on the server."""
+        """Create a new upload on the server.
+
+        When ``defer_length=True`` the request omits ``Upload-Length`` and
+        sends ``Upload-Defer-Length: 1``; the caller is then responsible for
+        including ``Upload-Length`` on the first PATCH.
+        """
         # Encode metadata
         encoded_metadata = self.encode_metadata(metadata)
 
         headers = {
             "Tus-Resumable": self.TUS_VERSION,
-            "Upload-Length": str(file_size),
             **self.headers,
         }
+        if defer_length:
+            headers["Upload-Defer-Length"] = "1"
+        else:
+            headers["Upload-Length"] = str(file_size)
         if extra_headers:
             headers.update(extra_headers)
 
@@ -781,6 +790,18 @@ class TusClient:
             return uploader.url
         finally:
             uploader.close()
+
+    def create_deferred_upload(
+        self,
+        metadata: Optional[dict[str, str]] = None,
+    ) -> str:
+        """Create an upload without declaring its length up front.
+
+        The length is committed when the client sends the first PATCH with
+        an ``Upload-Length`` header. Useful when streaming data whose total
+        size is unknown at creation time. Returns the upload URL.
+        """
+        return self._create_upload(file_size=0, metadata=metadata or {}, defer_length=True)
 
     def create_final_upload(
         self,

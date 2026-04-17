@@ -139,7 +139,7 @@ class AzureBlobStorage(Storage):
     def create_upload(
         self,
         upload_id: str,
-        upload_length: int,
+        upload_length: Optional[int],
         metadata: dict[str, str],
         expires_at: Optional[datetime] = None,
         is_partial: bool = False,
@@ -182,6 +182,13 @@ class AzureBlobStorage(Storage):
             "expires_at": expires_at,
             "is_partial": info.get("is_partial", False),
         }
+
+    def set_upload_length(self, upload_id: str, upload_length: int) -> None:
+        info = self._read_info(upload_id)
+        if info is None:
+            return
+        info["upload_length"] = upload_length
+        self._write_info(upload_id, info)
 
     def update_offset(self, upload_id: str, offset: int) -> None:
         info = self._read_info(upload_id)

@@ -9,6 +9,7 @@ This document details the compliance status of this library against the [TUS res
 | **core** | ✅ Implemented | POST / HEAD / PATCH, offset tracking, version negotiation |
 | **creation** | ✅ Implemented | Upload creation via POST with `Upload-Length` |
 | **creation-with-upload** | ✅ Implemented | Initial data in POST body (`Content-Type: application/offset+octet-stream`) |
+| **creation-defer-length** | ✅ Implemented | `Upload-Defer-Length: 1` creates a deferred upload whose length is committed via `Upload-Length` on the first PATCH |
 | **termination** | ✅ Implemented | Upload deletion via DELETE |
 | **checksum** | ✅ Implemented | SHA1 (`Upload-Checksum` header); `Tus-Checksum-Algorithm: sha1` advertised in OPTIONS |
 | **expiration** | ✅ Implemented | `Upload-Expires` in POST / HEAD / PATCH responses; periodic server-side cleanup |
@@ -82,7 +83,6 @@ This document details the compliance status of this library against the [TUS res
 
 | Feature | Notes |
 |---------|-------|
-| `Upload-Defer-Length` | Deferred length (part of creation extension) — planned for Phase B |
 | Multiple TUS version support | Only `1.0.0` supported |
 
 ## Error Response Reference

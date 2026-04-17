@@ -24,7 +24,7 @@ class Storage(ABC):
     def create_upload(
         self,
         upload_id: str,
-        upload_length: int,
+        upload_length: Optional[int],
         metadata: dict[str, str],
         expires_at: Optional[datetime] = None,
         is_partial: bool = False,
@@ -32,11 +32,22 @@ class Storage(ABC):
         """Create a new upload entry.
 
         Args:
+            upload_length: Total byte size. ``None`` marks the upload as
+                deferred-length (Upload-Defer-Length extension); the final
+                length is committed on the first PATCH via
+                :meth:`set_upload_length`.
             is_partial: If True, this upload is a partial upload that will be
                 consumed by a final concatenation request. Partial uploads are
                 never delivered to the on_upload_complete hook individually.
         """
         pass
+
+    def set_upload_length(self, upload_id: str, upload_length: int) -> None:
+        """Commit the final length of a deferred-length upload.
+
+        Default implementation raises; concrete backends override.
+        """
+        raise NotImplementedError(f"{type(self).__name__} does not support deferred-length uploads")
 
     @abstractmethod
     def get_upload(self, upload_id: str) -> Optional[dict[str, Any]]:
@@ -199,15 +210,21 @@ class SQLiteStorage(Storage):
         finally:
             conn.close()
 
+    # Sentinel stored in the NOT NULL upload_length column when a caller passes
+    # None (Upload-Defer-Length). Surfaces as None on read; callers should not
+    # see the sentinel.
+    _DEFERRED_LENGTH_SENTINEL = -1
+
     def create_upload(
         self,
         upload_id: str,
-        upload_length: int,
+        upload_length: Optional[int],
         metadata: dict[str, str],
         expires_at: Optional[datetime] = None,
         is_partial: bool = False,
     ) -> None:
-        """Create a new upload entry."""
+        """Create a new upload entry. ``upload_length=None`` enables defer-length."""
+        stored_length = self._DEFERRED_LENGTH_SENTINEL if upload_length is None else upload_length
         conn = sqlite3.connect(self.db_path, timeout=self.timeout)
         try:
             expires_at_str = expires_at.astimezone(timezone.utc).isoformat() if expires_at else None
@@ -220,7 +237,7 @@ class SQLiteStorage(Storage):
                 """,
                 (
                     upload_id,
-                    upload_length,
+                    stored_length,
                     json.dumps(metadata),
                     expires_at_str,
                     int(is_partial),
@@ -263,9 +280,11 @@ class SQLiteStorage(Storage):
             except (ValueError, AttributeError):
                 pass
 
+        raw_length = row["upload_length"]
+        upload_length = None if raw_length == self._DEFERRED_LENGTH_SENTINEL else raw_length
         return {
             "upload_id": row["upload_id"],
-            "upload_length": row["upload_length"],
+            "upload_length": upload_length,
             "offset": row["offset"],
             "metadata": json.loads(row["metadata"]) if row["metadata"] else {},
             "completed": bool(row["completed"]),
@@ -280,6 +299,18 @@ class SQLiteStorage(Storage):
             conn.execute(
                 "UPDATE uploads SET offset = ? WHERE upload_id = ?",
                 (offset, upload_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def set_upload_length(self, upload_id: str, upload_length: int) -> None:
+        """Commit the final length of a deferred-length upload."""
+        conn = sqlite3.connect(self.db_path, timeout=self.timeout)
+        try:
+            conn.execute(
+                "UPDATE uploads SET upload_length = ? WHERE upload_id = ?",
+                (upload_length, upload_id),
             )
             conn.commit()
         finally:
