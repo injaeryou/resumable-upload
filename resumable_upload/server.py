@@ -21,11 +21,11 @@ _UUID_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f
 
 _TUS_EXPOSE_HEADERS = (
     "Upload-Offset,Location,Upload-Length,Tus-Version,Tus-Resumable,"
-    "Tus-Max-Size,Tus-Extension,Upload-Metadata,Upload-Expires"
+    "Tus-Max-Size,Tus-Extension,Upload-Metadata,Upload-Expires,Upload-Concat"
 )
 _TUS_ALLOW_HEADERS = (
     "Origin,X-Requested-With,Content-Type,Upload-Length,Upload-Offset,"
-    "Tus-Resumable,Upload-Metadata,Upload-Checksum,Upload-Expires"
+    "Tus-Resumable,Upload-Metadata,Upload-Checksum,Upload-Expires,Upload-Concat"
 )
 
 
@@ -63,10 +63,11 @@ class TusServer:
     _MAX_METADATA_SIZE = 4096  # 4 KB limit to guard against DoS
     SUPPORTED_EXTENSIONS = [
         "creation",
+        "creation-with-upload",
         "termination",
         "checksum",
         "expiration",
-        "creation-with-upload",
+        "concatenation",
     ]
 
     def __init__(
@@ -288,6 +289,14 @@ class TusServer:
         self, headers: dict[str, str], body: bytes
     ) -> tuple[int, dict[str, str], bytes]:
         """Handle POST request to create a new upload."""
+        # Concatenation extension routing:
+        #   Upload-Concat: partial     -> create a partial upload
+        #   Upload-Concat: final;<...> -> create a final upload that merges partials
+        concat_header = headers.get("upload-concat", "").strip()
+        if concat_header.startswith("final"):
+            return self._handle_create_final(concat_header, headers)
+        is_partial = concat_header == "partial"
+
         upload_length_str = headers.get("upload-length")
         if not upload_length_str:
             logger.error("Missing Upload-Length header")
@@ -308,27 +317,9 @@ class TusServer:
             return self._error_response(413, "Upload exceeds maximum size")
 
         # Parse metadata
-        metadata = {}
-        upload_metadata = headers.get("upload-metadata", "")
-        if upload_metadata:
-            if len(upload_metadata) > self._MAX_METADATA_SIZE:
-                return self._error_response(
-                    400, f"Upload-Metadata exceeds maximum size of {self._MAX_METADATA_SIZE} bytes"
-                )
-            for pair in upload_metadata.split(","):
-                pair = pair.strip()
-                if not pair:
-                    continue
-                if " " in pair:
-                    key, value = pair.split(" ", 1)
-                    try:
-                        metadata[key] = base64.b64decode(value).decode("utf-8")
-                    except (ValueError, UnicodeDecodeError, binascii.Error) as e:
-                        return self._error_response(
-                            400, f"Invalid base64 encoding for metadata key '{key}': {e}"
-                        )
-                else:
-                    metadata[pair] = ""
+        metadata, err = self._parse_metadata(headers.get("upload-metadata", ""))
+        if metadata is None:
+            return self._error_response(400, err)
 
         # Generate upload ID
         upload_id = str(uuid.uuid4())
@@ -357,7 +348,9 @@ class TusServer:
             expires_at = datetime.now(timezone.utc) + timedelta(seconds=self.upload_expiry)
 
         # Create upload
-        self.storage.create_upload(upload_id, upload_length, metadata, expires_at)
+        self.storage.create_upload(
+            upload_id, upload_length, metadata, expires_at, is_partial=is_partial
+        )
         logger.info(
             "Created upload %s with length %s, metadata: %s",
             upload_id,
@@ -403,6 +396,101 @@ class TusServer:
         if expires_at:
             response_headers["Upload-Expires"] = self._format_expiry(expires_at)
 
+        return (201, response_headers, b"")
+
+    def _parse_metadata(self, upload_metadata: str) -> tuple[Optional[dict[str, str]], str]:
+        """Parse the Upload-Metadata header value.
+
+        Returns (metadata_dict, None) on success, or (None, error_message) on failure.
+        """
+        metadata: dict[str, str] = {}
+        if not upload_metadata:
+            return metadata, ""
+        if len(upload_metadata) > self._MAX_METADATA_SIZE:
+            return None, (
+                f"Upload-Metadata exceeds maximum size of {self._MAX_METADATA_SIZE} bytes"
+            )
+        for pair in upload_metadata.split(","):
+            pair = pair.strip()
+            if not pair:
+                continue
+            if " " in pair:
+                key, value = pair.split(" ", 1)
+                try:
+                    metadata[key] = base64.b64decode(value).decode("utf-8")
+                except (ValueError, UnicodeDecodeError, binascii.Error) as e:
+                    return None, f"Invalid base64 encoding for metadata key '{key}': {e}"
+            else:
+                metadata[pair] = ""
+        return metadata, ""
+
+    def _handle_create_final(
+        self, concat_header: str, headers: dict[str, str]
+    ) -> tuple[int, dict[str, str], bytes]:
+        """Handle POST with `Upload-Concat: final;<space-separated upload URLs>`."""
+        try:
+            _, urls_part = concat_header.split(";", 1)
+        except ValueError:
+            return self._error_response(400, "Invalid Upload-Concat header")
+
+        prefix = self.base_path + "/"
+        partial_ids: list[str] = []
+        for raw_url in urls_part.split():
+            raw_url = raw_url.strip()
+            if not raw_url:
+                continue
+            # Accept absolute URLs; extract the path portion.
+            path = raw_url
+            if "://" in raw_url:
+                from urllib.parse import urlparse
+
+                path = urlparse(raw_url).path
+            if not path.startswith(prefix):
+                return self._error_response(
+                    400, f"Upload-Concat references unknown upload: {raw_url}"
+                )
+            upload_id = path[len(prefix) :]
+            if not self._validate_upload_id(upload_id):
+                return self._error_response(400, "Invalid upload ID in Upload-Concat")
+            partial_ids.append(upload_id)
+
+        if not partial_ids:
+            return self._error_response(400, "Upload-Concat final requires partial URLs")
+
+        metadata, err = self._parse_metadata(headers.get("upload-metadata", ""))
+        if metadata is None:
+            return self._error_response(400, err)
+
+        final_id = str(uuid.uuid4())
+        try:
+            total_length = self.storage.concatenate_uploads(final_id, partial_ids, metadata)
+        except ValueError as e:
+            return self._error_response(400, str(e))
+        except NotImplementedError as e:
+            return self._error_response(501, str(e))
+
+        if self.max_size > 0 and total_length > self.max_size:
+            # Concatenated payload exceeds limit — delete and reject.
+            self.storage.delete_upload(final_id)
+            return self._error_response(413, "Concatenated upload exceeds maximum size")
+
+        logger.info(
+            "Created final upload %s by concatenating %s partials (total %s bytes)",
+            final_id,
+            len(partial_ids),
+            total_length,
+        )
+
+        if self._on_upload_complete:
+            file_info = self.storage.get_file_info(final_id)
+            self._invoke_post_hook(self._on_upload_complete, final_id, metadata, file_info)
+
+        response_headers = {
+            "Tus-Resumable": self.TUS_VERSION,
+            "Location": f"{self.base_path}/{final_id}",
+            "Upload-Offset": str(total_length),
+            "Upload-Length": str(total_length),
+        }
         return (201, response_headers, b"")
 
     def _handle_head(
