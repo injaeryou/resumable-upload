@@ -11,7 +11,7 @@ This document details the compliance status of this library against the [TUS res
 | **creation-with-upload** | ✅ Implemented | Initial data in POST body (`Content-Type: application/offset+octet-stream`) |
 | **creation-defer-length** | ✅ Implemented | `Upload-Defer-Length: 1` creates a deferred upload whose length is committed via `Upload-Length` on the first PATCH |
 | **termination** | ✅ Implemented | Upload deletion via DELETE |
-| **checksum** | ✅ Implemented | SHA1 (`Upload-Checksum` header); `Tus-Checksum-Algorithm: sha1` advertised in OPTIONS |
+| **checksum** | ✅ Implemented | SHA1 / SHA256 / SHA512 / MD5 selectable per server via `checksum_algorithms` kwarg; advertised in `Tus-Checksum-Algorithm` |
 | **expiration** | ✅ Implemented | `Upload-Expires` in POST / HEAD / PATCH responses; periodic server-side cleanup |
 | **concatenation** | ✅ Implemented (all backends) | Partial + final upload merging across SQLiteStorage, S3 (UploadPartCopy), GCS (compose), and Azure (stage_block + commit_block_list) |
 
@@ -84,6 +84,12 @@ This document details the compliance status of this library against the [TUS res
 | Feature | Notes |
 |---------|-------|
 | Multiple TUS version support | Only `1.0.0` supported |
+
+### Under consideration (not implemented)
+
+| Feature | Notes |
+|---------|-------|
+| IETF resumable-upload draft (`draft-ietf-httpbis-resumable-upload`) | Next-generation HTTP-native standard being developed at the IETF. Will likely be tracked once the draft stabilizes and multiple reference clients exist. Until then, stick with classic TUS 1.0.0 |
 
 ## Error Response Reference
 

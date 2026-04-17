@@ -92,6 +92,51 @@ upload_url = client.upload_file(
 print(f"Upload complete: {upload_url}")
 ```
 
+### Checksum algorithms
+
+Pick any subset of `sha1`, `sha256`, `sha512`, `md5` to advertise and validate:
+
+```python
+TusServer(storage=..., checksum_algorithms=("sha1", "sha256"))
+```
+
+Client picks which one to send:
+
+```python
+TusClient("...", checksum="sha256")
+```
+
+### Client hooks and URL storage
+
+Observability + domain-specific retry gating:
+
+```python
+def before(method, url, headers): print(f"-> {method} {url}")
+def after(method, url, status):   print(f"<- {method} {status}")
+def should_retry(err, attempt):   return not isinstance(err, PermissionError)
+
+client = TusClient(
+    "...",
+    before_request=before,
+    after_response=after,
+    on_should_retry=should_retry,
+)
+```
+
+Three URL-storage backends ship (all implement the same `URLStorage` ABC):
+
+- `FileURLStorage` — durable JSON file, multi-process safe via flock
+- `SQLiteURLStorage` — durable DB, recommended for multi-process clients
+- `InMemoryURLStorage` — fast, non-durable (tests, short sessions)
+
+Look up a resumable upload by file:
+
+```python
+previous = client.find_previous_uploads("big.bin")
+if previous:
+    client.resume_upload("big.bin", previous[0]["upload_url"])
+```
+
 ### ASGI (FastAPI, Starlette, Quart, etc.)
 
 Mount a TUS server as an ASGI application:

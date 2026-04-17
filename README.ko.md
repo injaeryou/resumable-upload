@@ -77,6 +77,51 @@ upload_url = client.upload_file(
 print(f"업로드 완료: {upload_url}")
 ```
 
+### 체크섬 알고리즘
+
+`sha1`, `sha256`, `sha512`, `md5` 중 원하는 조합을 advertise하고 검증합니다:
+
+```python
+TusServer(storage=..., checksum_algorithms=("sha1", "sha256"))
+```
+
+클라이언트도 알고리즘 선택:
+
+```python
+TusClient("...", checksum="sha256")
+```
+
+### 클라이언트 훅 + URL 스토리지
+
+관측/재시도 세밀 제어:
+
+```python
+def before(method, url, headers): print(f"-> {method} {url}")
+def after(method, url, status):   print(f"<- {method} {status}")
+def should_retry(err, attempt):   return not isinstance(err, PermissionError)
+
+client = TusClient(
+    "...",
+    before_request=before,
+    after_response=after,
+    on_should_retry=should_retry,
+)
+```
+
+URL 스토리지 3종 (모두 `URLStorage` ABC 구현):
+
+- `FileURLStorage` — JSON 파일, flock으로 멀티프로세스 안전
+- `SQLiteURLStorage` — DB 기반, 멀티프로세스 클라이언트 권장 기본값
+- `InMemoryURLStorage` — 빠르지만 영속성 없음 (테스트/단기 세션용)
+
+파일로 이전 업로드 찾기:
+
+```python
+previous = client.find_previous_uploads("big.bin")
+if previous:
+    client.resume_upload("big.bin", previous[0]["upload_url"])
+```
+
 ### ASGI (FastAPI, Starlette, Quart 등)
 
 ASGI 애플리케이션으로 TUS 서버 마운트:
