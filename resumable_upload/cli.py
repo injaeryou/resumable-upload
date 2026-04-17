@@ -68,6 +68,11 @@ def _build_parser() -> argparse.ArgumentParser:
         choices=("DEBUG", "INFO", "WARNING", "ERROR"),
         help="Log level (default: INFO)",
     )
+    serve.add_argument(
+        "--metrics-path",
+        default=None,
+        help="Enable Prometheus metrics at this path (e.g., /metrics). Disabled if unset.",
+    )
     return parser
 
 
@@ -78,6 +83,13 @@ def _serve(args: argparse.Namespace) -> int:
     )
 
     storage = SQLiteStorage(db_path=args.db_path, upload_dir=args.upload_dir)
+
+    metrics = None
+    if args.metrics_path:
+        from resumable_upload.metrics import MetricsRegistry
+
+        metrics = MetricsRegistry()
+
     tus = TusServer(
         storage=storage,
         base_path=args.base_path,
@@ -85,6 +97,8 @@ def _serve(args: argparse.Namespace) -> int:
         max_chunk_size=args.max_chunk_size,
         upload_expiry=args.upload_expiry,
         cors_allow_origins=args.cors_origin,
+        metrics_registry=metrics,
+        metrics_path=args.metrics_path or "/metrics",
     )
 
     class Handler(TusHTTPRequestHandler):

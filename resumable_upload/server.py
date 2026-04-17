@@ -13,6 +13,7 @@ from http.server import BaseHTTPRequestHandler
 from typing import Any, Callable, Optional
 
 from resumable_upload.exceptions import TusHookError
+from resumable_upload.metrics import MetricsRegistry
 from resumable_upload.storage import SQLiteStorage, Storage
 
 logger = logging.getLogger(__name__)
@@ -84,6 +85,8 @@ class TusServer:
         on_upload_create: Optional[Callable[..., Optional[dict]]] = None,
         on_upload_complete: Optional[Callable[..., None]] = None,
         on_upload_terminate: Optional[Callable[..., None]] = None,
+        metrics_registry: Optional[MetricsRegistry] = None,
+        metrics_path: str = "/metrics",
     ):
         """Initialize TUS server.
 
@@ -124,6 +127,26 @@ class TusServer:
         self._on_upload_create = on_upload_create
         self._on_upload_complete = on_upload_complete
         self._on_upload_terminate = on_upload_terminate
+        self._metrics = metrics_registry
+        self._metrics_path = metrics_path
+        if self._metrics is not None:
+            self._metrics.register_counter("tusd_requests_total", "Total HTTP requests received")
+            self._metrics.register_counter(
+                "tusd_errors_total", "Total responses with status >= 400"
+            )
+            self._metrics.register_counter(
+                "tusd_uploads_created_total", "Uploads created (POST succeeded)"
+            )
+            self._metrics.register_counter(
+                "tusd_uploads_finished_total",
+                "Uploads completed (final chunk received or final upload merged)",
+            )
+            self._metrics.register_counter(
+                "tusd_uploads_terminated_total", "Uploads terminated via DELETE"
+            )
+            self._metrics.register_counter(
+                "tusd_bytes_received_total", "Total bytes received across all PATCH requests"
+            )
 
     def _invoke_pre_hook(self, hook: Callable, *args: Any) -> Any:
         """Invoke a pre-hook, converting exceptions to HTTP error responses.
@@ -186,6 +209,10 @@ class TusServer:
 
         # Normalize headers to lowercase
         headers = {k.lower(): v for k, v in headers.items()}
+
+        # Record the request under its wire method (before any override rewrite).
+        if self._metrics is not None:
+            self._metrics.inc("tusd_requests_total", labels={"method": method})
 
         # X-HTTP-Method-Override: let clients tunnel PATCH/DELETE/HEAD through
         # POST for environments (CDNs, WAFs, legacy proxies) that block those
@@ -281,6 +308,9 @@ class TusServer:
                         if count:
                             logger.info("Cleaned up %s expired upload(s)", count)
 
+        if self._metrics is not None and status >= 400:
+            self._metrics.inc("tusd_errors_total", labels={"status": str(status)})
+
         return (status, self._add_cors_headers(resp_headers), resp_body)
 
     def _handle_options(
@@ -366,6 +396,8 @@ class TusServer:
         self.storage.create_upload(
             upload_id, upload_length, metadata, expires_at, is_partial=is_partial
         )
+        if self._metrics is not None:
+            self._metrics.inc("tusd_uploads_created_total")
         logger.info(
             "Created upload %s with length %s, metadata: %s",
             upload_id,
@@ -391,7 +423,9 @@ class TusServer:
             logger.info("creation-with-upload: wrote %s bytes for %s", initial_offset, upload_id)
 
         # Handle upload completion (zero-length upload or creation-with-upload)
-        if initial_offset >= upload_length and self.storage.complete_upload(upload_id):  # noqa: SIM102
+        if initial_offset >= upload_length and self.storage.complete_upload(upload_id):
+            if self._metrics is not None:
+                self._metrics.inc("tusd_uploads_finished_total")
             if self._on_upload_complete:
                 file_info = self.storage.get_file_info(upload_id)
                 self._invoke_post_hook(
@@ -496,6 +530,8 @@ class TusServer:
             total_length,
         )
 
+        if self._metrics is not None:
+            self._metrics.inc("tusd_uploads_finished_total")
         if self._on_upload_complete:
             file_info = self.storage.get_file_info(final_id)
             self._invoke_post_hook(self._on_upload_complete, final_id, metadata, file_info)
@@ -638,6 +674,9 @@ class TusServer:
         if not self.storage.update_offset_atomic(upload_id, upload_offset, new_offset):
             return self._error_response(409, "Concurrent write conflict; use HEAD to re-sync")
 
+        if self._metrics is not None:
+            self._metrics.inc("tusd_bytes_received_total", value=len(body))
+
         logger.info(
             "PATCH upload %s: wrote %s bytes, new offset: %s/%s",
             upload_id,
@@ -647,7 +686,9 @@ class TusServer:
         )
 
         # Finalize storage and fire on_upload_complete if this PATCH completed the upload
-        if new_offset >= upload["upload_length"] and self.storage.complete_upload(upload_id):  # noqa: SIM102
+        if new_offset >= upload["upload_length"] and self.storage.complete_upload(upload_id):
+            if self._metrics is not None:
+                self._metrics.inc("tusd_uploads_finished_total")
             if self._on_upload_complete:
                 file_info = self.storage.get_file_info(upload_id)
                 self._invoke_post_hook(
@@ -679,6 +720,8 @@ class TusServer:
 
         self.storage.delete_upload(upload_id)
         logger.info("Deleted upload %s", upload_id)
+        if self._metrics is not None:
+            self._metrics.inc("tusd_uploads_terminated_total")
 
         # Fire on_upload_terminate after successful deletion
         if self._on_upload_terminate:
@@ -699,6 +742,23 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
     def do_OPTIONS(self) -> None:
         """Handle OPTIONS request."""
         self._handle_request("OPTIONS")
+
+    def do_GET(self) -> None:
+        """Serve /metrics when a metrics registry is attached; otherwise 404."""
+        if (
+            self.tus_server is not None
+            and self.tus_server._metrics is not None
+            and self.path == self.tus_server._metrics_path
+        ):
+            body = self.tus_server._metrics.render().encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+            return
+        self.send_response(404)
+        self.end_headers()
 
     def do_POST(self) -> None:
         """Handle POST request."""
