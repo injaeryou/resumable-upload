@@ -49,6 +49,8 @@ dev = [
     "tox>=4.0.0",
     "ty>=0.0.28",
     "moto[s3]>=5.0",
+    "fakeredis>=2.0",
+    "lupa>=2.0",
 ]
 test = [
     "pytest>=7.0.0",
@@ -67,6 +69,9 @@ gcs = [
 ]
 azure = [
     "azure-storage-blob>=12.0.0",
+]
+redis = [
+    "redis>=5.0",
 ]
 all-storage = [
     "boto3>=1.26.0",

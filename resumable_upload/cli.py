@@ -73,6 +73,18 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Enable Prometheus metrics at this path (e.g., /metrics). Disabled if unset.",
     )
+    serve.add_argument(
+        "--lock-backend",
+        choices=("none", "memory", "redis"),
+        default="memory",
+        help="Distributed lock backend for PATCH/DELETE (default: memory). "
+        "'redis' requires --redis-url and the [redis] extra.",
+    )
+    serve.add_argument(
+        "--redis-url",
+        default=None,
+        help="Redis URL (e.g., redis://localhost:6379/0), required when --lock-backend=redis",
+    )
     return parser
 
 
@@ -90,6 +102,20 @@ def _serve(args: argparse.Namespace) -> int:
 
         metrics = MetricsRegistry()
 
+    lock_backend = None
+    if args.lock_backend == "memory":
+        from resumable_upload.locks import InMemoryLockBackend
+
+        lock_backend = InMemoryLockBackend()
+    elif args.lock_backend == "redis":
+        if not args.redis_url:
+            raise SystemExit("--redis-url is required when --lock-backend=redis")
+        import redis
+
+        from resumable_upload.locks_redis import RedisLockBackend
+
+        lock_backend = RedisLockBackend(client=redis.from_url(args.redis_url))
+
     tus = TusServer(
         storage=storage,
         base_path=args.base_path,
@@ -99,6 +125,7 @@ def _serve(args: argparse.Namespace) -> int:
         cors_allow_origins=args.cors_origin,
         metrics_registry=metrics,
         metrics_path=args.metrics_path or "/metrics",
+        lock_backend=lock_backend,
     )
 
     class Handler(TusHTTPRequestHandler):

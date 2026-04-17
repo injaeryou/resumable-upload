@@ -13,6 +13,7 @@ from http.server import BaseHTTPRequestHandler
 from typing import Any, Callable, Optional
 
 from resumable_upload.exceptions import TusHookError
+from resumable_upload.locks import LockBackend
 from resumable_upload.metrics import MetricsRegistry
 from resumable_upload.storage import SQLiteStorage, Storage
 
@@ -87,6 +88,9 @@ class TusServer:
         on_upload_terminate: Optional[Callable[..., None]] = None,
         metrics_registry: Optional[MetricsRegistry] = None,
         metrics_path: str = "/metrics",
+        lock_backend: Optional[LockBackend] = None,
+        lock_ttl_seconds: float = 60.0,
+        lock_wait_seconds: float = 5.0,
     ):
         """Initialize TUS server.
 
@@ -129,6 +133,9 @@ class TusServer:
         self._on_upload_terminate = on_upload_terminate
         self._metrics = metrics_registry
         self._metrics_path = metrics_path
+        self._locks = lock_backend
+        self._lock_ttl = lock_ttl_seconds
+        self._lock_wait = lock_wait_seconds
         if self._metrics is not None:
             self._metrics.register_counter("tusd_requests_total", "Total HTTP requests received")
             self._metrics.register_counter(
@@ -177,6 +184,26 @@ class TusServer:
     def _error_response(self, status: int, message: str) -> tuple[int, dict, bytes]:
         """Build a consistent error response with Tus-Resumable header."""
         return (status, {"Tus-Resumable": self.TUS_VERSION}, message.encode())
+
+    def _with_lock(
+        self, upload_id: str, fn: Callable[[], tuple[int, dict, bytes]]
+    ) -> tuple[int, dict, bytes]:
+        """Wrap a write-path handler in a distributed lock when configured.
+
+        Returns 423 Locked if another holder is already writing and the wait
+        timeout elapses. A no-op wrapper when lock_backend is unset.
+        """
+        if self._locks is None:
+            return fn()
+        token = self._locks.acquire(
+            upload_id, ttl_seconds=self._lock_ttl, wait_timeout=self._lock_wait
+        )
+        if token is None:
+            return self._error_response(423, "Upload locked; retry later")
+        try:
+            return fn()
+        finally:
+            self._locks.release(upload_id, token)
 
     def _add_cors_headers(self, headers: dict) -> dict:
         """Add CORS headers if cors_allow_origins is configured."""
@@ -276,13 +303,15 @@ class TusServer:
             if not self._validate_upload_id(upload_id):
                 result = self._error_response(400, "Invalid upload ID format")
             else:
-                result = self._handle_patch(upload_id, headers, body)
+                result = self._with_lock(
+                    upload_id, lambda: self._handle_patch(upload_id, headers, body)
+                )
         elif method == "DELETE" and path.startswith(self.base_path + "/"):
             upload_id = path[len(self.base_path) + 1 :]
             if not self._validate_upload_id(upload_id):
                 result = self._error_response(400, "Invalid upload ID format")
             else:
-                result = self._handle_delete(upload_id, headers)
+                result = self._with_lock(upload_id, lambda: self._handle_delete(upload_id, headers))
         else:
             logger.warning("Route not found: %s %s", method, path)
             result = self._error_response(404, "Not Found")
