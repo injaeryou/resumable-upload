@@ -37,6 +37,9 @@ Repository = "https://github.com/sts07142/resumable-upload"
 Issues = "https://github.com/sts07142/resumable-upload/issues"
 Changelog = "https://github.com/sts07142/resumable-upload/releases"
 
+[project.scripts]
+resumable-upload = "resumable_upload.cli:main"
+
 [project.optional-dependencies]
 dev = [
     "pytest>=7.0.0",
