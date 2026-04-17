@@ -8,6 +8,7 @@ enabling resumable uploads across sessions.
 import contextlib
 import json
 import os
+import sqlite3
 import tempfile
 import threading
 from abc import ABC, abstractmethod
@@ -141,3 +142,85 @@ class FileURLStorage(URLStorage):
             if fingerprint in data:
                 del data[fingerprint]
                 self._save_data(data)
+
+
+class InMemoryURLStorage(URLStorage):
+    """Thread-safe in-memory URL storage.
+
+    Fast and process-local. Everything is forgotten when the process exits
+    — use for tests or short-lived upload sessions where cross-session
+    resume isn't needed.
+    """
+
+    def __init__(self) -> None:
+        self._data: dict[str, str] = {}
+        self._lock = threading.Lock()
+
+    def get_url(self, fingerprint: str) -> Optional[str]:
+        with self._lock:
+            return self._data.get(fingerprint)
+
+    def set_url(self, fingerprint: str, url: str) -> None:
+        with self._lock:
+            self._data[fingerprint] = url
+
+    def remove_url(self, fingerprint: str) -> None:
+        with self._lock:
+            self._data.pop(fingerprint, None)
+
+
+class SQLiteURLStorage(URLStorage):
+    """SQLite-backed URL storage.
+
+    Durable, concurrent-safe without application-level locking (SQLite's
+    own locks serialize writes). Preferred over FileURLStorage for
+    multi-process clients on the same host.
+    """
+
+    def __init__(self, db_path: str = "tus_urls.db", timeout: float = 5.0) -> None:
+        self.db_path = db_path
+        self.timeout = timeout
+        conn = sqlite3.connect(self.db_path, timeout=self.timeout)
+        try:
+            conn.execute(
+                """
+                CREATE TABLE IF NOT EXISTS url_map (
+                    fingerprint TEXT PRIMARY KEY,
+                    url TEXT NOT NULL
+                )
+                """
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def get_url(self, fingerprint: str) -> Optional[str]:
+        conn = sqlite3.connect(self.db_path, timeout=self.timeout)
+        try:
+            cur = conn.execute("SELECT url FROM url_map WHERE fingerprint = ?", (fingerprint,))
+            row = cur.fetchone()
+            return row[0] if row else None
+        finally:
+            conn.close()
+
+    def set_url(self, fingerprint: str, url: str) -> None:
+        conn = sqlite3.connect(self.db_path, timeout=self.timeout)
+        try:
+            conn.execute(
+                """
+                INSERT INTO url_map (fingerprint, url) VALUES (?, ?)
+                ON CONFLICT(fingerprint) DO UPDATE SET url = excluded.url
+                """,
+                (fingerprint, url),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+    def remove_url(self, fingerprint: str) -> None:
+        conn = sqlite3.connect(self.db_path, timeout=self.timeout)
+        try:
+            conn.execute("DELETE FROM url_map WHERE fingerprint = ?", (fingerprint,))
+            conn.commit()
+        finally:
+            conn.close()

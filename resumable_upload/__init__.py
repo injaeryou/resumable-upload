@@ -11,7 +11,12 @@ from resumable_upload.exceptions import TusCommunicationError, TusHookError, Tus
 from resumable_upload.fingerprint import Fingerprint
 from resumable_upload.server import TusHTTPRequestHandler, TusServer
 from resumable_upload.storage import SQLiteStorage, Storage
-from resumable_upload.url_storage import FileURLStorage, URLStorage
+from resumable_upload.url_storage import (
+    FileURLStorage,
+    InMemoryURLStorage,
+    SQLiteURLStorage,
+    URLStorage,
+)
 
 # Optional cloud storage backends
 try:
@@ -45,5 +50,7 @@ __all__ = [
     "Fingerprint",
     "URLStorage",
     "FileURLStorage",
+    "InMemoryURLStorage",
+    "SQLiteURLStorage",
     "TusHookError",
 ]
