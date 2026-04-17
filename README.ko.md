@@ -77,6 +77,22 @@ upload_url = client.upload_file(
 print(f"업로드 완료: {upload_url}")
 ```
 
+### ASGI (FastAPI, Starlette, Quart 등)
+
+ASGI 애플리케이션으로 TUS 서버 마운트:
+
+```python
+from fastapi import FastAPI
+from resumable_upload import SQLiteStorage, TusServer
+from resumable_upload.asgi import TusASGIApp
+
+app = FastAPI()
+tus = TusServer(storage=SQLiteStorage(), base_path="/files")
+app.mount("/files", TusASGIApp(tus))
+```
+
+어댑터는 동기 `TusServer.handle_request`를 `asyncio.to_thread`로 감싸 스레드풀에서 실행하므로 이벤트 루프가 블로킹되지 않습니다.
+
 ### 커맨드라인 서버
 
 Python 코드를 작성하지 않고 쉘에서 바로 TUS 서버를 실행할 수 있습니다:
