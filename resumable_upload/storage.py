@@ -112,6 +112,31 @@ class Storage(ABC):
         """Delete expired uploads and return count deleted."""
         pass
 
+    def concatenate_uploads(
+        self,
+        final_id: str,
+        partial_ids: list[str],
+        metadata: dict[str, str],
+    ) -> int:
+        """Create a final upload by concatenating completed partial uploads.
+
+        Args:
+            final_id: UUID for the new final upload.
+            partial_ids: Ordered list of partial upload IDs to merge.
+            metadata: Metadata for the resulting final upload.
+
+        Returns:
+            Total byte length of the concatenated upload.
+
+        Raises:
+            ValueError: If any partial is missing, not flagged is_partial,
+                or not fully uploaded.
+            NotImplementedError: If the backend does not support concatenation.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support the TUS concatenation extension"
+        )
+
 
 class SQLiteStorage(Storage):
     """SQLite-based storage backend."""
@@ -343,6 +368,51 @@ class SQLiteStorage(Storage):
             "upload_id": upload_id,
             "file_path": self.get_file_path(upload_id),
         }
+
+    def concatenate_uploads(
+        self,
+        final_id: str,
+        partial_ids: list[str],
+        metadata: dict[str, str],
+    ) -> int:
+        """Concatenate partial uploads into a single final upload.
+
+        Validates every partial up front (exists, is_partial, fully received)
+        before creating the final row or writing any bytes, so an error leaves
+        the storage unchanged.
+        """
+        partials = []
+        for pid in partial_ids:
+            p = self.get_upload(pid)
+            if p is None:
+                raise ValueError(f"partial upload not found: {pid}")
+            if not p.get("is_partial"):
+                raise ValueError(f"upload {pid} is not a partial upload")
+            if p["offset"] != p["upload_length"]:
+                raise ValueError(f"partial upload {pid} is not complete")
+            partials.append(p)
+
+        total_length = sum(p["upload_length"] for p in partials)
+
+        # Create the final upload row so get_file_path(final_id) is valid.
+        self.create_upload(final_id, total_length, metadata, is_partial=False)
+
+        # Stream each partial's file into the final file, in order.
+        final_path = self.get_file_path(final_id)
+        buffer_size = 1024 * 1024
+        with open(final_path, "wb") as dst:
+            for p in partials:
+                src_path = self.get_file_path(p["upload_id"])
+                with open(src_path, "rb") as src:
+                    while True:
+                        chunk = src.read(buffer_size)
+                        if not chunk:
+                            break
+                        dst.write(chunk)
+
+        self.update_offset(final_id, total_length)
+        self.complete_upload(final_id)
+        return total_length
 
     def get_expired_uploads(self) -> list[str]:
         """Get list of expired upload IDs."""

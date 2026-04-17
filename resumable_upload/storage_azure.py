@@ -353,3 +353,15 @@ class AzureBlobStorage(Storage):
         for upload_id in expired_ids:
             self.delete_upload(upload_id)
         return len(expired_ids)
+
+    def concatenate_uploads(
+        self,
+        final_id: str,
+        partial_ids: list[str],
+        metadata: dict[str, str],
+    ) -> int:
+        raise NotImplementedError(
+            "Azure concatenation is not yet supported; planned for Phase B "
+            "via staged blocks + commit_block_list. Use SQLiteStorage for "
+            "local development or merge in a post-finish hook."
+        )
