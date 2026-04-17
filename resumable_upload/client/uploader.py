@@ -58,6 +58,9 @@ class Uploader:
         ssl_context: Optional[ssl.SSLContext] = None,
         timeout: float = 30.0,
         stop_event: Optional[threading.Event] = None,
+        before_request: Optional[Callable[[str, str, dict[str, str]], None]] = None,
+        after_response: Optional[Callable[[str, str, int], None]] = None,
+        on_should_retry: Optional[Callable[[Exception, int], bool]] = None,
     ):
         """Initialize TUS uploader.
 
@@ -99,6 +102,9 @@ class Uploader:
         self.ssl_context = ssl_context
         self.timeout = timeout
         self._stop_event = stop_event or threading.Event()
+        self._before_request = before_request
+        self._after_response = after_response
+        self._on_should_retry = on_should_retry
 
         # Initialize file stream and get file size
         if file_stream:
@@ -202,9 +208,13 @@ class Uploader:
             checksum_b64 = base64.b64encode(hasher.digest()).decode("ascii")
             headers["Upload-Checksum"] = f"{algo} {checksum_b64}"
 
+        if self._before_request is not None:
+            self._before_request("PATCH", self.url, headers)
         try:
             req = Request(self.url, data=data, headers=headers, method="PATCH")
             with urlopen(req, context=self.ssl_context, timeout=self.timeout) as response:
+                if self._after_response is not None:
+                    self._after_response("PATCH", self.url, response.status)
                 # Update offset from server response
                 new_offset = response.headers.get("Upload-Offset")
                 if new_offset:
@@ -260,6 +270,13 @@ class Uploader:
                 raise  # Don't retry 409; caller must re-sync offset via HEAD
             except (TusUploadFailed, OSError) as e:
                 last_error = e
+                # User-defined veto: skip the remaining retry budget entirely.
+                if self._on_should_retry is not None and not self._on_should_retry(e, attempt + 1):
+                    with self.stats_lock:
+                        self._stats.chunks_failed += 1
+                    raise TusUploadFailed(
+                        f"Retry vetoed by on_should_retry at offset {self.offset}: {e}"
+                    ) from e
                 if attempt < self.max_retries:
                     # Exponential backoff capped at 60 seconds; interruptible via stop_event
                     delay = min(self.retry_delay * (2**attempt), 60.0)

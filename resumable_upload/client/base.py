@@ -62,6 +62,9 @@ class TusClient:
         max_retries: int = 3,
         retry_delay: float = 1.0,
         timeout: float = 30.0,
+        before_request: Optional[Callable[[str, str, dict[str, str]], None]] = None,
+        after_response: Optional[Callable[[str, str, int], None]] = None,
+        on_should_retry: Optional[Callable[[Exception, int], bool]] = None,
     ):
         """Initialize TUS client.
 
@@ -99,6 +102,9 @@ class TusClient:
         self.max_retries = max_retries
         self.retry_delay = retry_delay
         self.timeout = timeout
+        self.before_request = before_request
+        self.after_response = after_response
+        self.on_should_retry = on_should_retry
         self.ssl_context = self._build_ssl_context()
 
     def _build_ssl_context(self) -> Optional[ssl.SSLContext]:
@@ -211,6 +217,9 @@ class TusClient:
             retry_delay=self.retry_delay,
             ssl_context=self.ssl_context,
             timeout=self.timeout,
+            before_request=self.before_request,
+            after_response=self.after_response,
+            on_should_retry=self.on_should_retry,
         )
 
         try:
@@ -274,6 +283,9 @@ class TusClient:
                 retry_delay=self.retry_delay,
                 ssl_context=self.ssl_context,
                 timeout=self.timeout,
+                before_request=self.before_request,
+                after_response=self.after_response,
+                on_should_retry=self.on_should_retry,
             )
             try:
                 uploader.upload()
@@ -331,6 +343,9 @@ class TusClient:
             retry_delay=self.retry_delay,
             ssl_context=self.ssl_context,
             timeout=self.timeout,
+            before_request=self.before_request,
+            after_response=self.after_response,
+            on_should_retry=self.on_should_retry,
         )
 
         try:
@@ -402,9 +417,14 @@ class TusClient:
             headers["Content-Type"] = "application/offset+octet-stream"
             headers["Content-Length"] = str(len(initial_data))
 
+        if self.before_request is not None:
+            self.before_request("POST", self.url, headers)
+
         try:
             req = Request(self.url, data=body or None, headers=headers, method="POST")
             with urlopen(req, context=self.ssl_context, timeout=self.timeout) as response:
+                if self.after_response is not None:
+                    self.after_response("POST", self.url, response.status)
                 location: Optional[str] = response.headers.get("Location")
                 if not location:
                     raise TusCommunicationError("Server did not return Location header")
@@ -738,6 +758,9 @@ class TusClient:
             retry_delay=self.retry_delay,
             ssl_context=self.ssl_context,
             timeout=self.timeout,
+            before_request=self.before_request,
+            after_response=self.after_response,
+            on_should_retry=self.on_should_retry,
         )
 
     def create_partial_upload(
@@ -784,12 +807,35 @@ class TusClient:
             retry_delay=self.retry_delay,
             ssl_context=self.ssl_context,
             timeout=self.timeout,
+            before_request=self.before_request,
+            after_response=self.after_response,
+            on_should_retry=self.on_should_retry,
         )
         try:
             uploader.upload(progress_callback=progress_callback)
             return uploader.url
         finally:
             uploader.close()
+
+    def find_previous_uploads(
+        self,
+        file_path: Optional[str] = None,
+        file_stream: Optional[IO] = None,
+    ) -> list[dict[str, Any]]:
+        """Look up resumable uploads for the given file by fingerprint.
+
+        Returns a list of ``{fingerprint, upload_url}`` dicts. Empty when
+        ``store_url`` is off, when no URL storage is attached, or when no
+        entry matches the file's fingerprint. Analogous to tus-js-client's
+        ``findPreviousUploads``.
+        """
+        if self.url_storage is None:
+            return []
+        fp = self.fingerprinter.get_fingerprint(file_path or file_stream)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+        url = self.url_storage.get_url(fp)
+        if not url:
+            return []
+        return [{"fingerprint": fp, "upload_url": url}]
 
     def create_deferred_upload(
         self,
