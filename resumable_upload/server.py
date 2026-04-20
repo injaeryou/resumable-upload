@@ -435,10 +435,13 @@ class TusServer:
         if self.upload_expiry is not None:
             expires_at = datetime.now(timezone.utc) + timedelta(seconds=self.upload_expiry)
 
-        # Create upload
-        self.storage.create_upload(
-            upload_id, upload_length, metadata, expires_at, is_partial=is_partial
-        )
+        # Create upload. Only pass is_partial when True so third-party Storage
+        # subclasses predating the concatenation extension don't need to
+        # accept the new kwarg.
+        create_kwargs: dict = {}
+        if is_partial:
+            create_kwargs["is_partial"] = True
+        self.storage.create_upload(upload_id, upload_length, metadata, expires_at, **create_kwargs)
         if self._metrics is not None:
             self._metrics.inc("tusd_uploads_created_total")
         logger.info(
