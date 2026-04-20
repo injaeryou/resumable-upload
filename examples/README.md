@@ -1,75 +1,112 @@
 # Examples
 
-Runnable examples for the resumable-upload library.
+Runnable examples for the `resumable-upload` library, split into server- and
+client-side demos.
+
+```
+examples/
+├── server/
+│   ├── http_server.py        Built-in http.server
+│   ├── flask_app.py          Flask integration
+│   ├── fastapi_app.py        FastAPI (thin route wrapper)
+│   ├── django_app.py         Django view
+│   ├── asgi_app.py           FastAPI mount via TusASGIApp
+│   └── with_metrics.py       Prometheus /metrics + optional Redis lock
+└── client/
+    ├── basic_upload.py       Upload a file with progress + retry
+    ├── resume.py             Cross-session resume via fingerprint
+    ├── low_level_uploader.py Fine-grained Uploader control
+    ├── parallel_upload.py    parallel_uploads + manual partial/final
+    └── hooks.py              before_request / after_response / on_should_retry
+```
 
 ## Quick Start
 
 ```bash
-# 1. Start a server (choose one)
-python examples/server_example.py        # built-in http.server  → :8080
-python examples/server_example.py 9000   # custom port           → :9000
-python examples/flask_example.py         # Flask                 → :5000
-python examples/fastapi_example.py       # FastAPI               → :8000
-python examples/django_example.py        # Django                → :8000
+# 1. Start a server (pick one)
+python examples/server/http_server.py           # :8080  (zero deps)
+python examples/server/flask_app.py             # :5000
+python examples/server/fastapi_app.py           # :8000
+python examples/server/django_app.py            # :8000
+python examples/server/asgi_app.py              # :8000  (via TusASGIApp)
+python examples/server/with_metrics.py          # :8080  (/metrics exposed)
 
 # 2. Create a test file
 dd if=/dev/urandom of=/tmp/test.bin bs=1M count=20
 
-# 3. Upload
-python examples/client_example.py   http://localhost:8080/files /tmp/test.bin
-python examples/resume_example.py   http://localhost:8080/files /tmp/test.bin
-python examples/uploader_example.py http://localhost:8080/files /tmp/test.bin
+# 3. Upload from a client
+python examples/client/basic_upload.py         http://localhost:8080/files /tmp/test.bin
+python examples/client/resume.py               http://localhost:8080/files /tmp/test.bin
+python examples/client/low_level_uploader.py   http://localhost:8080/files /tmp/test.bin
+python examples/client/parallel_upload.py      http://localhost:8080/files /tmp/test.bin 4
+python examples/client/hooks.py                http://localhost:8080/files /tmp/test.bin
 ```
 
 ---
 
 ## Server Examples
 
-### `server_example.py` — Built-in HTTP server
+### `server/http_server.py` — Built-in HTTP server
 
 Zero-dependency server using Python's `http.server`.
 
 ```bash
-python examples/server_example.py           # → :8080
-python examples/server_example.py 9000      # → :9000
+python examples/server/http_server.py           # → :8080
+python examples/server/http_server.py 9000      # → :9000
 ```
 
-Features: 100 MB limit · 1 h upload expiry · 5 min cleanup · CORS enabled
+Features: 100 MB limit · 1 h upload expiry · 5 min cleanup · CORS enabled.
 
 ---
 
-### `flask_example.py` — Flask
+### `server/flask_app.py` — Flask
 
 ```bash
 pip install flask
-python examples/flask_example.py           # → :5000
-python examples/flask_example.py 9000      # → :9000
+python examples/server/flask_app.py             # → :5000
 ```
 
 ---
 
-### `fastapi_example.py` — FastAPI
+### `server/fastapi_app.py` — FastAPI (thin route wrapper)
+
+Wraps `TusServer.handle_request` in a single FastAPI route. Good when you
+only need one TUS endpoint inside a larger FastAPI app.
 
 ```bash
 pip install fastapi uvicorn
-python examples/fastapi_example.py         # → :8000  (docs at /docs)
-python examples/fastapi_example.py 9000    # → :9000
+python examples/server/fastapi_app.py           # → :8000  (docs at /docs)
 ```
 
 ---
 
-### `django_example.py` — Django
+### `server/asgi_app.py` — FastAPI mount via `TusASGIApp`
+
+Mounts the TUS server as a sub-app so it participates in the ASGI pipeline
+directly. Preferred when the TUS endpoint should handle its own
+middleware/lifecycle without going through a FastAPI route.
+
+```bash
+pip install fastapi uvicorn
+python examples/server/asgi_app.py              # → :8000
+```
+
+The adapter runs the sync handler on a worker thread via `asyncio.to_thread`,
+so the event loop stays free.
+
+---
+
+### `server/django_app.py` — Django
 
 ```bash
 pip install django
-python examples/django_example.py          # → :8000
-python examples/django_example.py 9000     # → :9000
+python examples/server/django_app.py            # → :8000
 ```
 
-**Integrating into an existing Django project:**
+**Integrating into an existing Django project**:
 
 ```python
-# views.py  — copy tus_upload_view from the example
+# views.py — copy tus_upload_view from the example
 
 # urls.py
 from django.urls import path
@@ -83,81 +120,120 @@ urlpatterns = [
 
 ---
 
-## Client Examples
+### `server/with_metrics.py` — Prometheus metrics + distributed lock
 
-### `client_example.py` — Basic upload
+Demonstrates the production knobs:
 
-Uploads a file, inspects the result, and optionally deletes it.
+- `metrics_registry=MetricsRegistry()` + `/metrics` scrape endpoint
+- `lock_backend=InMemoryLockBackend()` by default
+- Switches to `RedisLockBackend` when `REDIS_URL` env var is set
 
 ```bash
-python examples/client_example.py <server_url> <file_path> [headers_json]
+python examples/server/with_metrics.py                    # memory lock
+REDIS_URL=redis://localhost:6379/0 python examples/server/with_metrics.py
+curl http://localhost:8080/metrics                        # Prometheus format
+```
 
-# With authentication header
-python examples/client_example.py http://localhost:8080/files file.bin \
+---
+
+## Client Examples
+
+### `client/basic_upload.py` — Basic upload
+
+Uploads a file, reports progress, optionally deletes it at the end.
+
+```bash
+python examples/client/basic_upload.py <server_url> <file_path> [headers_json]
+
+# With an auth header
+python examples/client/basic_upload.py http://localhost:8080/files file.bin \
     '{"Authorization": "Bearer my-token"}'
 ```
 
-Features: progress bar · MB/s speed · `max_retries=3` · `timeout=30 s` · delete prompt
+Features: progress bar · MB/s speed · `max_retries=3` · `timeout=30 s` · delete prompt.
 
 ---
 
-### `resume_example.py` — Cross-session resumability
+### `client/resume.py` — Cross-session resume
 
-Demonstrates uploads that survive process restarts.
-On the **first run** the upload starts from byte 0.
-On every **subsequent run** with the same file, the stored URL is reused and
-the upload continues from the last confirmed offset.
+Uploads survive process restarts. First run uploads from byte 0; subsequent
+runs with the same file reuse the stored URL and continue from the last
+confirmed offset.
 
 ```bash
-python examples/resume_example.py <server_url> <file_path>
+python examples/client/resume.py <server_url> <file_path>
 
-# Interrupt with Ctrl-C halfway, then run again to resume
-python examples/resume_example.py http://localhost:8080/files large.bin
-^C
-python examples/resume_example.py http://localhost:8080/files large.bin
+# Ctrl-C halfway through, then re-run to resume
+python examples/client/resume.py http://localhost:8080/files large.bin
 ```
 
-The mapping `{ fingerprint → upload_url }` is stored in `.tus_resume_urls.json`.
+Fingerprint → URL mapping is persisted to `.tus_resume_urls.json`.
 
 ---
 
-### `uploader_example.py` — Fine-grained control
+### `client/low_level_uploader.py` — Fine-grained control
 
-Shows all `Uploader` use-cases: chunk-by-chunk, full upload, `is_complete`,
-`stop_at`, and resume.
+Covers every `Uploader` entry point: chunk-by-chunk, `upload()`,
+`is_complete`, `stop_at`, resume by URL.
 
 ```bash
-python examples/uploader_example.py <server_url> <file_path> [upload_url]
+python examples/client/low_level_uploader.py <server_url> <file_path> [upload_url]
+```
 
-# Start fresh
-python examples/uploader_example.py http://localhost:8080/files file.bin
+---
 
-# Resume at a known URL
-python examples/uploader_example.py http://localhost:8080/files file.bin \
-    http://localhost:8080/files/abc123
+### `client/parallel_upload.py` — Parallel chunks + manual partial/final
+
+Two demonstrations in one script:
+
+- **`parallel_uploads=N`** — the client splits the file into N byte ranges,
+  uploads them concurrently, and the server merges them via the
+  `concatenation` extension. Matches `tus-js-client`'s `parallelUploads`.
+- **Manual partial/final** — upload parts one at a time and stitch them
+  together explicitly.
+
+```bash
+# Automatic parallel upload (4 concurrent partials, merged server-side)
+python examples/client/parallel_upload.py http://localhost:8080/files big.bin 4
+
+# Manual partial/final demo (uses two in-memory temp files)
+python examples/client/parallel_upload.py --manual http://localhost:8080/files
+```
+
+---
+
+### `client/hooks.py` — Observability + previous-upload discovery
+
+Wires `before_request` / `after_response` / `on_should_retry` callbacks and
+uses `SQLiteURLStorage` + `find_previous_uploads()` to resume across runs.
+
+```bash
+python examples/client/hooks.py <server_url> <file_path>
+
+# First run uploads fresh; run again to see resume via find_previous_uploads
+python examples/client/hooks.py http://localhost:8080/files large.bin
 ```
 
 ---
 
 ## Common Configuration
 
-All server examples share the same configuration:
+All server examples share these defaults (adjust in-file):
 
 | Parameter | Value | Description |
 |-----------|-------|-------------|
 | `max_size` | 100 MB | Maximum upload size |
 | `upload_expiry` | 3600 s | Uploads expire after 1 hour |
 | `cleanup_interval` | 300 s | Expired uploads cleaned every 5 min |
-| `cors_allow_origins` | `"*"` | CORS — restrict to specific origin in production |
-
-Adjust these values directly in each example file.
+| `cors_allow_origins` | `"*"` | CORS — restrict to a specific origin in production |
 
 ---
 
 ## Production Notes
 
-- **WSGI/ASGI**: use `gunicorn` (Flask/Django) or `uvicorn --workers N` (FastAPI)
-- **CORS**: replace `"*"` with your frontend origin
-- **Auth**: add an authentication middleware or check headers in the view
-- **Storage**: `SQLiteStorage` is single-process; replace with a custom backend for multi-process deployments
-- **HTTPS**: always terminate TLS in production; pass `verify_tls_cert=False` on the client only for self-signed certs in dev
+- **WSGI/ASGI runners**: use `gunicorn` (Flask/Django) or `uvicorn --workers N` (FastAPI).
+- **CORS**: replace `"*"` with your real frontend origin.
+- **Auth**: use `on_incoming_request` / `on_upload_create` hooks or a reverse-proxy check.
+- **Multi-instance**: pair `SQLiteStorage` on shared storage with `RedisLockBackend`, or use `S3Storage` / `GCSStorage` / `AzureBlobStorage` with a cloud-side bucket.
+- **Metrics**: scrape `server/with_metrics.py`'s `/metrics` endpoint from Prometheus / Datadog.
+- **HTTPS**: terminate TLS in production; `verify_tls_cert=False` on the client is for self-signed certs in dev only.

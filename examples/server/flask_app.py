@@ -2,10 +2,10 @@
 """Flask integration example for TUS server.
 
 Install: pip install flask
-Run    : python examples/flask_example.py [port]
+Run    : python examples/server/flask_app.py [port]
 
-    python examples/flask_example.py        # default port 5000
-    python examples/flask_example.py 9000   # custom port
+    python examples/server/flask_app.py        # default port 5000
+    python examples/server/flask_app.py 9000   # custom port
 """
 
 import logging

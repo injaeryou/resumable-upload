@@ -29,7 +29,7 @@ client = TusClient(
 upload_url = client.upload_file("large_file.bin")
 ```
 
-The fingerprint is a SHA-256 hash of the full file content + size, so different files never collide. See `examples/resume_example.py` for a runnable demo.
+The fingerprint is a SHA-256 hash of the full file content + size, so different files never collide. See `examples/client/resume.py` for a runnable demo.
 
 ## Using File Streams
 

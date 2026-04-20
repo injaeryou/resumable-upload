@@ -6,10 +6,10 @@ URL in a local JSON file keyed by file fingerprint.
 
 Usage:
     # First run — starts upload, then interrupts halfway
-    python examples/resume_example.py http://localhost:8080/files large_file.bin
+    python examples/client/resume.py http://localhost:8080/files large_file.bin
 
     # Second run — detects the stored URL and resumes from where it stopped
-    python examples/resume_example.py http://localhost:8080/files large_file.bin
+    python examples/client/resume.py http://localhost:8080/files large_file.bin
 """
 
 import os

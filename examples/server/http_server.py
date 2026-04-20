@@ -2,10 +2,10 @@
 """Example TUS server using Python's built-in http.server.
 
 Usage:
-    python examples/server_example.py [port]
+    python examples/server/http_server.py [port]
 
-    python examples/server_example.py        # default port 8080
-    python examples/server_example.py 9000   # custom port
+    python examples/server/http_server.py        # default port 8080
+    python examples/server/http_server.py 9000   # custom port
 """
 
 import logging

@@ -2,10 +2,10 @@
 """FastAPI integration example for TUS server.
 
 Install: pip install fastapi uvicorn
-Run    : python examples/fastapi_example.py [port]
+Run    : python examples/server/fastapi_app.py [port]
 
-    python examples/fastapi_example.py        # default port 8000
-    python examples/fastapi_example.py 9000   # custom port
+    python examples/server/fastapi_app.py        # default port 8000
+    python examples/server/fastapi_app.py 9000   # custom port
 """
 
 import logging

@@ -2,13 +2,13 @@
 """Fine-grained upload control using the Uploader class directly.
 
 Usage:
-    python examples/uploader_example.py <server_url> <file_path> [upload_url]
+    python examples/client/low_level_uploader.py <server_url> <file_path> [upload_url]
 
     # Start a new upload chunk-by-chunk
-    python examples/uploader_example.py http://localhost:8080/files file.bin
+    python examples/client/low_level_uploader.py http://localhost:8080/files file.bin
 
     # Resume an existing upload at a known URL
-    python examples/uploader_example.py http://localhost:8080/files file.bin \\
+    python examples/client/low_level_uploader.py http://localhost:8080/files file.bin \\
         http://localhost:8080/files/abc123
 """
 

@@ -2,10 +2,10 @@
 """Django integration example for TUS server.
 
 Install: pip install django
-Run    : python examples/django_example.py [port]
+Run    : python examples/server/django_app.py [port]
 
-    python examples/django_example.py        # default port 8000
-    python examples/django_example.py 9000   # custom port
+    python examples/server/django_app.py        # default port 8000
+    python examples/server/django_app.py 9000   # custom port
 
 To integrate into an existing Django project:
   1. Copy tus_upload_view() into your views.py
