@@ -129,6 +129,9 @@ docstring-code-format = true
 [tool.ty.environment]
 python-version = "3.9"
 
+[tool.ty.src]
+include = ["resumable_upload"]
+
 [tool.ty.rules]
 unresolved-import = "ignore"
 invalid-assignment = "ignore"
