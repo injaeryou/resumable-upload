@@ -19,6 +19,19 @@ import time
 from resumable_upload import TusClient, Uploader, UploadStats
 
 
+def _banner(label: str, message: str) -> None:
+    line = "=" * 60
+    print(f"\n{line}\n{label}: {message}\n{line}")
+
+
+def _success(message: str) -> None:
+    _banner("SUCCESS", message)
+
+
+def _failure(message: str) -> None:
+    _banner("FAILURE", message)
+
+
 def progress_bar(stats: UploadStats) -> None:
     if stats.total_bytes == 0:
         return
@@ -40,7 +53,7 @@ def main():
     existing_url = sys.argv[3] if len(sys.argv) > 3 else None
 
     if not os.path.exists(file_path):
-        print(f"File not found: {file_path}")
+        _failure(f"File not found: {file_path}")
         sys.exit(1)
 
     # ── Example 1: Manual chunk-by-chunk upload ──────────────────────────────
@@ -129,6 +142,11 @@ def main():
     with Uploader(url=partial_url, file_path=file_path, chunk_size=512 * 1024) as uploader:
         uploader.upload(progress_callback=progress_bar)
         print(f"\nis_complete: {uploader.is_complete}")
+        if not uploader.is_complete:
+            _failure("Example 4 resume did not reach completion")
+            sys.exit(1)
+
+    _success("low_level_uploader — all 4 examples completed")
 
 
 if __name__ == "__main__":

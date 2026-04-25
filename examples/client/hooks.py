@@ -27,6 +27,19 @@ from resumable_upload import SQLiteURLStorage, TusClient
 from resumable_upload.exceptions import TusUploadFailed
 
 
+def _banner(label: str, message: str) -> None:
+    line = "=" * 60
+    print(f"\n{line}\n{label}: {message}\n{line}")
+
+
+def _success(message: str) -> None:
+    _banner("SUCCESS", message)
+
+
+def _failure(message: str) -> None:
+    _banner("FAILURE", message)
+
+
 def log_before(method: str, url: str, headers: dict[str, str]) -> None:
     print(f"→ {method} {url}")
 
@@ -80,7 +93,11 @@ def main() -> None:
         url = client.upload_file(file_path, metadata={"filename": Path(file_path).name})
 
     info = client.get_upload_info(url)
-    print(f"\n✓ final at {url}  ({info['offset']}/{info['length']} bytes)")
+    print(f"\nfinal at {url}  ({info['offset']}/{info['length']} bytes)")
+    if not info["complete"]:
+        _failure(f"hooks — server reports upload as incomplete: {url}")
+        sys.exit(1)
+    _success(f"hooks — uploaded {info['length']} bytes via {url}")
 
 
 if __name__ == "__main__":

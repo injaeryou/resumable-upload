@@ -33,6 +33,19 @@ from pathlib import Path
 from resumable_upload import TusClient, UploadStats
 
 
+def _banner(label: str, message: str) -> None:
+    line = "=" * 60
+    print(f"\n{line}\n{label}: {message}\n{line}")
+
+
+def _success(message: str) -> None:
+    _banner("SUCCESS", message)
+
+
+def _failure(message: str) -> None:
+    _banner("FAILURE", message)
+
+
 def progress(stats: UploadStats) -> None:
     print(f"  {stats.progress_percent:5.1f}% {stats.uploaded_bytes}/{stats.total_bytes} bytes")
 
@@ -48,9 +61,13 @@ def demo_parallel(base_url: str, file_path: str, n: int = 4) -> None:
     )
     info = client.get_upload_info(url)
     print(
-        f"\n✓ merged final upload at {url}\n  "
+        f"\nmerged final upload at {url}\n  "
         f"length={info['length']} bytes  complete={info['complete']}"
     )
+    if not info["complete"]:
+        _failure(f"parallel_upload — server reports merged upload as incomplete: {url}")
+        sys.exit(1)
+    _success(f"parallel_upload — {n} partials merged into {url}")
 
 
 def demo_manual(base_url: str) -> None:
@@ -62,6 +79,7 @@ def demo_manual(base_url: str) -> None:
         b = Path(tmp) / "b.bin"
         a.write_bytes(b"hello-")
         b.write_bytes(b"world")
+        expected_length = a.stat().st_size + b.stat().st_size
 
         print("Creating partial A ...")
         url_a = client.create_partial_upload(str(a))
@@ -77,7 +95,14 @@ def demo_manual(base_url: str) -> None:
             metadata={"filename": "merged.bin"},
         )
         info = client.get_upload_info(final_url)
-        print(f"\n✓ final at {final_url}\n  length={info['length']}  complete={info['complete']}")
+        print(f"\nfinal at {final_url}\n  length={info['length']}  complete={info['complete']}")
+        if not info["complete"] or info["length"] != expected_length:
+            _failure(
+                f"manual partial/final — expected length={expected_length} complete=True, "
+                f"got length={info['length']} complete={info['complete']}"
+            )
+            sys.exit(1)
+        _success(f"manual partial/final — merged {expected_length} bytes at {final_url}")
 
 
 def main() -> None:

@@ -20,6 +20,19 @@ from resumable_upload.exceptions import TusCommunicationError, TusUploadFailed
 from resumable_upload.url_storage import FileURLStorage
 
 
+def _banner(label: str, message: str) -> None:
+    line = "=" * 60
+    print(f"\n{line}\n{label}: {message}\n{line}")
+
+
+def _success(message: str) -> None:
+    _banner("SUCCESS", message)
+
+
+def _failure(message: str) -> None:
+    _banner("FAILURE", message)
+
+
 def progress_bar(stats: UploadStats) -> None:
     if stats.total_bytes == 0:
         return
@@ -45,7 +58,7 @@ def main():
     file_path = sys.argv[2]
 
     if not os.path.exists(file_path):
-        print(f"File not found: {file_path}")
+        _failure(f"File not found: {file_path}")
         sys.exit(1)
 
     # FileURLStorage persists { fingerprint → upload_url } between runs.
@@ -77,18 +90,21 @@ def main():
         print()
         print("Run this script again with the same file — it will detect the")
         print("completed upload via the stored URL and skip re-uploading.")
+        _success(f"resume — upload finished and URL stored ({upload_url})")
 
     except KeyboardInterrupt:
         print("\n\nInterrupted.")
         print("The partial upload URL has been saved to .tus_urls.json.")
         print("Run this script again to resume from where it stopped.")
+        _banner("INTERRUPTED", "partial state saved — re-run to resume")
+        sys.exit(130)
 
     except TusUploadFailed as e:
-        print(f"\nUpload failed: {e}")
+        _failure(f"Upload failed: {e}")
         sys.exit(1)
 
     except TusCommunicationError as e:
-        print(f"\nCommunication error: {e}")
+        _failure(f"Communication error: {e}")
         sys.exit(1)
 
 
