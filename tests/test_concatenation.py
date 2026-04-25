@@ -3,6 +3,7 @@
 import os
 import shutil
 import tempfile
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -113,6 +114,28 @@ class TestConcatenation:
         assert total == len(chunk) * 6
         assert storage.read_file(final_id) == chunk * 6
 
+    def test_concatenate_records_expires_at(self, storage):
+        # The expiration extension must apply to merged uploads too,
+        # otherwise concatenated objects live forever.
+        p1 = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+        p2 = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+        _fill(storage, p1, b"foo", is_partial=True)
+        _fill(storage, p2, b"bar", is_partial=True)
+
+        expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+        final_id = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
+        storage.concatenate_uploads(
+            final_id=final_id,
+            partial_ids=[p1, p2],
+            metadata={},
+            expires_at=expires_at,
+        )
+
+        final = storage.get_upload(final_id)
+        assert final["expires_at"] is not None
+        # SQLite returns aware datetimes; compare on second precision.
+        assert abs((final["expires_at"] - expires_at).total_seconds()) < 1
+
 
 class TestConcatenationServer:
     """Server-level tests for Upload-Concat handling."""
@@ -200,6 +223,53 @@ class TestConcatenationServer:
         assert stored["completed"] is True
         assert stored["is_partial"] is False
         assert server.storage.read_file(final_id) == b"hello-world"
+
+    def test_create_final_includes_upload_expires_when_expiry_set(self, storage):
+        from resumable_upload.server import TusServer
+
+        server = TusServer(storage=storage, base_path="/files", upload_expiry=3600)
+
+        p1 = self._create_and_fill_partial(server, 5, b"hello")
+        p2 = self._create_and_fill_partial(server, 6, b"-world")
+
+        status, headers, _ = server.handle_request(
+            "POST",
+            "/files",
+            self._h(**{"Upload-Concat": f"final;/files/{p1} /files/{p2}"}),
+            b"",
+        )
+        assert status == 201
+        assert "Upload-Expires" in headers, (
+            "concatenation final response must carry Upload-Expires when upload_expiry is set"
+        )
+
+        final_id = headers["Location"].rsplit("/", 1)[1]
+        stored = server.storage.get_upload(final_id)
+        assert stored["expires_at"] is not None
+
+        # HEAD on the final upload must surface the same Upload-Expires header
+        # so clients querying status see the expiry too.
+        status, head_headers, _ = server.handle_request(
+            "HEAD", f"/files/{final_id}", self._h(), b""
+        )
+        assert status == 200
+        assert head_headers.get("Upload-Expires") == headers["Upload-Expires"]
+
+    def test_create_final_omits_upload_expires_when_expiry_disabled(self, server):
+        # Server fixture has upload_expiry=None — concatenation must not invent an expiry.
+        p1 = self._create_and_fill_partial(server, 5, b"hello")
+        status, headers, _ = server.handle_request(
+            "POST",
+            "/files",
+            self._h(**{"Upload-Concat": f"final;/files/{p1}"}),
+            b"",
+        )
+        assert status == 201
+        assert "Upload-Expires" not in headers
+
+        final_id = headers["Location"].rsplit("/", 1)[1]
+        stored = server.storage.get_upload(final_id)
+        assert stored["expires_at"] is None
 
     def test_patch_rejected_on_final_upload(self, server):
         p1 = self._create_and_fill_partial(server, 2, b"hi")

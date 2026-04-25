@@ -396,6 +396,8 @@ class GCSStorage(Storage):
         final_id: str,
         partial_ids: list[str],
         metadata: dict[str, str],
+        *,
+        expires_at: Optional[datetime] = None,
     ) -> int:
         """Merge partial uploads into a final GCS object via ``compose``.
 
@@ -439,7 +441,7 @@ class GCSStorage(Storage):
                 "offset": total_length,
                 "metadata": metadata,
                 "created_at": datetime.now(timezone.utc).isoformat(),
-                "expires_at": None,
+                "expires_at": expires_at.isoformat() if expires_at else None,
                 "completed": True,
                 "is_partial": False,
                 "parts": [],

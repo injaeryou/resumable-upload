@@ -128,6 +128,8 @@ class Storage(ABC):
         final_id: str,
         partial_ids: list[str],
         metadata: dict[str, str],
+        *,
+        expires_at: Optional[datetime] = None,
     ) -> int:
         """Create a final upload by concatenating completed partial uploads.
 
@@ -135,6 +137,9 @@ class Storage(ABC):
             final_id: UUID for the new final upload.
             partial_ids: Ordered list of partial upload IDs to merge.
             metadata: Metadata for the resulting final upload.
+            expires_at: Optional expiry timestamp to record on the final
+                upload so the expiration extension applies to merged objects
+                just like it does to ordinary uploads.
 
         Returns:
             Total byte length of the concatenated upload.
@@ -405,6 +410,8 @@ class SQLiteStorage(Storage):
         final_id: str,
         partial_ids: list[str],
         metadata: dict[str, str],
+        *,
+        expires_at: Optional[datetime] = None,
     ) -> int:
         """Concatenate partial uploads into a single final upload.
 
@@ -426,7 +433,7 @@ class SQLiteStorage(Storage):
         total_length = sum(p["upload_length"] for p in partials)
 
         # Create the final upload row so get_file_path(final_id) is valid.
-        self.create_upload(final_id, total_length, metadata, is_partial=False)
+        self.create_upload(final_id, total_length, metadata, expires_at, is_partial=False)
 
         # Stream each partial's file into the final file, in order.
         final_path = self.get_file_path(final_id)

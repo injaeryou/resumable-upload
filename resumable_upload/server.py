@@ -562,8 +562,22 @@ class TusServer:
             return self._error_response(400, err)
 
         final_id = str(uuid.uuid4())
+
+        # Compute expiry for the merged upload, mirroring _handle_post.
+        expires_at = None
+        if self.upload_expiry is not None:
+            expires_at = datetime.now(timezone.utc) + timedelta(seconds=self.upload_expiry)
+
+        # Only pass expires_at when set so third-party Storage subclasses
+        # predating this fix don't need to adapt their concatenate_uploads
+        # signature (matches the is_partial pattern in _handle_post).
+        concat_kwargs: dict = {}
+        if expires_at is not None:
+            concat_kwargs["expires_at"] = expires_at
         try:
-            total_length = self.storage.concatenate_uploads(final_id, partial_ids, metadata)
+            total_length = self.storage.concatenate_uploads(
+                final_id, partial_ids, metadata, **concat_kwargs
+            )
         except ValueError as e:
             return self._error_response(400, str(e))
         except NotImplementedError as e:
@@ -593,6 +607,8 @@ class TusServer:
             "Upload-Offset": str(total_length),
             "Upload-Length": str(total_length),
         }
+        if expires_at:
+            response_headers["Upload-Expires"] = self._format_expiry(expires_at)
         return (201, response_headers, b"")
 
     def _handle_head(
