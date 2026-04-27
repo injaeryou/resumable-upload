@@ -35,6 +35,19 @@ class TusASGIApp:
     def __init__(self, server: TusServer) -> None:
         self._server = server
 
+    def _handle_get(self, path: str) -> tuple[int, dict[str, str], bytes]:
+        if self._server.metrics is not None and path == self._server.metrics_path:
+            body = self._server.metrics.render().encode("utf-8")
+            return (
+                200,
+                {
+                    "Content-Type": "text/plain; version=0.0.4; charset=utf-8",
+                    "Content-Length": str(len(body)),
+                },
+                body,
+            )
+        return (404, {}, b"")
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] == "lifespan":
             # No lifespan events to manage — accept and idle.
@@ -68,9 +81,12 @@ class TusASGIApp:
                 return
         body = b"".join(body_chunks)
 
-        status, resp_headers, resp_body = await asyncio.to_thread(
-            self._server.handle_request, method, path, headers, body
-        )
+        if method == "GET":
+            status, resp_headers, resp_body = self._handle_get(path)
+        else:
+            status, resp_headers, resp_body = await asyncio.to_thread(
+                self._server.handle_request, method, path, headers, body
+            )
 
         await send(
             {

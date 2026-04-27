@@ -11,6 +11,7 @@ import pytest
 httpx = pytest.importorskip("httpx")
 
 from resumable_upload.asgi import TusASGIApp  # noqa: E402
+from resumable_upload.metrics import MetricsRegistry  # noqa: E402
 from resumable_upload.server import TusServer  # noqa: E402
 from resumable_upload.storage import SQLiteStorage  # noqa: E402
 
@@ -24,6 +25,24 @@ def app():
             upload_dir=os.path.join(temp_dir, "files"),
         )
         server = TusServer(storage=storage, base_path="/files")
+        yield TusASGIApp(server)
+    finally:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+
+
+@pytest.fixture
+def app_with_metrics():
+    temp_dir = tempfile.mkdtemp()
+    try:
+        storage = SQLiteStorage(
+            db_path=os.path.join(temp_dir, "u.db"),
+            upload_dir=os.path.join(temp_dir, "files"),
+        )
+        server = TusServer(
+            storage=storage,
+            base_path="/files",
+            metrics_registry=MetricsRegistry(),
+        )
         yield TusASGIApp(server)
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -83,6 +102,25 @@ async def test_asgi_404_on_unknown_upload(app):
             headers={"Tus-Resumable": "1.0.0"},
         )
         assert r.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_asgi_metrics_disabled_by_default(app):
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        r = await c.get("/metrics")
+        assert r.status_code == 404
+
+
+@pytest.mark.anyio
+async def test_asgi_metrics_exposed_when_registry_attached(app_with_metrics):
+    transport = httpx.ASGITransport(app=app_with_metrics)
+    async with httpx.AsyncClient(transport=transport, base_url="http://t") as c:
+        await c.options("/files")
+        r = await c.get("/metrics")
+        assert r.status_code == 200
+        assert r.headers["Content-Type"].startswith("text/plain")
+        assert "tusd_requests_total" in r.text
 
 
 @pytest.fixture

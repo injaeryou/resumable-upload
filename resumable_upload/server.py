@@ -158,6 +158,14 @@ class TusServer:
                 "tusd_bytes_received_total", "Total bytes received across all PATCH requests"
             )
 
+    @property
+    def metrics(self) -> Optional[MetricsRegistry]:
+        return self._metrics
+
+    @property
+    def metrics_path(self) -> str:
+        return self._metrics_path
+
     def _invoke_pre_hook(self, hook: Callable, *args: Any) -> Any:
         """Invoke a pre-hook, converting exceptions to HTTP error responses.
 
@@ -848,10 +856,10 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
         """Serve /metrics when a metrics registry is attached; otherwise 404."""
         if (
             self.tus_server is not None
-            and self.tus_server._metrics is not None
-            and self.path == self.tus_server._metrics_path
+            and self.tus_server.metrics is not None
+            and self.path == self.tus_server.metrics_path
         ):
-            body = self.tus_server._metrics.render().encode("utf-8")
+            body = self.tus_server.metrics.render().encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
