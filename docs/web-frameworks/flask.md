@@ -35,4 +35,4 @@ def handle_upload(upload_id=None):
     flask run
     ```
 
-See `examples/flask_server.py` for a complete working example.
+See `examples/server/flask_app.py` for a complete working example.

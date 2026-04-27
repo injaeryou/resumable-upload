@@ -24,6 +24,16 @@ from resumable_upload import SQLiteStorage
 
 `update_offset_atomic()` uses `UPDATE ... WHERE offset = expected` — if another request already advanced the offset, it returns `False` and the server responds with `409`.
 
+### Concatenation Support
+
+`SQLiteStorage` implements `concatenate_uploads(final_id, partial_ids, metadata, *, expires_at=None)` — the SQL backend stitches partial uploads into a single file on disk, records the final upload row, and propagates `expires_at` (so concatenated uploads still honor the expiration extension).
+
+The cloud backends (`S3Storage`, `GCSStorage`, `AzureBlobStorage`) implement the same contract using the appropriate native primitive (multipart upload-part-copy, GCS `compose`, Azure block list). Partial uploads created by the client carry an `is_partial` flag; the server never fires `on_upload_complete` for partials individually — only for the final merged upload.
+
+### Deferred Length
+
+The default implementation of `set_upload_length(upload_id, upload_length)` raises `NotImplementedError`. `SQLiteStorage` (and the cloud backends) override it to commit the final length when the client sends `Upload-Defer-Length: 1` at creation and follows up with `Upload-Length: N` on the first PATCH.
+
 ### Custom Storage Backends
 
 Subclass `Storage` to implement a custom backend:
@@ -32,7 +42,7 @@ Subclass `Storage` to implement a custom backend:
 from resumable_upload.storage import Storage
 
 class MyStorage(Storage):
-    def create_upload(self, upload_id, upload_length, metadata, expires_at=None): ...
+    def create_upload(self, upload_id, upload_length, metadata, expires_at=None, is_partial=False): ...
     def get_upload(self, upload_id): ...
     def update_offset(self, upload_id, offset): ...
     def delete_upload(self, upload_id): ...
@@ -41,8 +51,11 @@ class MyStorage(Storage):
     def get_file_path(self, upload_id): ...
     def get_expired_uploads(self): ...
     def cleanup_expired_uploads(self): ...
-    # Optional override for true atomicity (default: non-atomic read-then-write):
+    # Optional overrides:
     def update_offset_atomic(self, upload_id, expected_offset, new_offset) -> bool: ...
+    def set_upload_length(self, upload_id, upload_length) -> None: ...
+    def concatenate_uploads(self, final_id, partial_ids, metadata, *, expires_at=None) -> int: ...
+    def complete_upload(self, upload_id) -> bool: ...  # cloud-only finalize
 ```
 
 ---
@@ -75,6 +88,8 @@ storage = S3Storage(
 Each upload maps to an S3 multipart upload. Chunks are buffered until `part_size` is reached, then flushed as S3 parts. Call `complete_upload(upload_id)` after the upload finishes to assemble the final object.
 
 For small files (all data fits in the buffer), a single `PutObject` is used instead.
+
+Concatenation is implemented via `UploadPartCopy` so partial-to-final merge happens entirely on the S3 side.
 
 ```python
 storage.complete_upload(upload_id)  # Assembles the final S3 object
@@ -110,7 +125,7 @@ storage = GCSStorage(
 
 ### How it Works
 
-Chunks are buffered and flushed as individual part blobs. On `complete_upload()`, parts are assembled using GCS `compose()` (handles the 32-object limit via hierarchical composition). For small files, a direct upload is used.
+Chunks are buffered and flushed as individual part blobs. On `complete_upload()`, parts are assembled using GCS `compose()` (handles the 32-object limit via hierarchical composition). For small files, a direct upload is used. Concatenation also uses `compose()`.
 
 ```python
 storage.complete_upload(upload_id)
@@ -147,7 +162,7 @@ storage = AzureBlobStorage(
 
 ### How it Works
 
-Chunks are buffered and staged as Azure blocks via `stage_block()`. On `complete_upload()`, all blocks are committed via `commit_block_list()` to form the final blob. For small files, a direct `upload_blob()` is used.
+Chunks are buffered and staged as Azure blocks via `stage_block()`. On `complete_upload()`, all blocks are committed via `commit_block_list()` to form the final blob. For small files, a direct `upload_blob()` is used. Concatenation reuses the block-list mechanism — partials are committed by referencing their staged blocks in the final blob's block list.
 
 ```python
 storage.complete_upload(upload_id)
@@ -157,25 +172,49 @@ info = storage.get_file_info(upload_id)
 
 ---
 
-## FileURLStorage
+## URL Storage Backends
+
+All three implement the `URLStorage` ABC (`get_url(fingerprint)`, `set_url(fingerprint, url)`, `remove_url(fingerprint)`).
+
+### FileURLStorage
 
 JSON file-based URL storage for cross-session resumability.
 
 ```python
 from resumable_upload import FileURLStorage
+storage = FileURLStorage(".tus_urls.json")
 ```
 
-### Parameters
-
-| Parameter | Type | Default | Description |
-|-----------|------|---------|-------------|
-| `storage_path` | str | `".tus_urls.json"` | Path to the JSON storage file |
-
-### Concurrency
+| Parameter | Type | Default |
+|-----------|------|---------|
+| `storage_path` | str | `".tus_urls.json"` |
 
 - **In-process (threads)**: `threading.Lock` serializes all reads and writes.
 - **Cross-process (multi-worker)**: `fcntl.flock(LOCK_SH/LOCK_EX)` provides shared/exclusive POSIX file locks on a companion `.lock` file. Falls back gracefully on non-POSIX systems.
 - Writes use `os.replace()` (atomic rename) to prevent torn reads.
+
+### SQLiteURLStorage
+
+SQLite-backed URL storage. Preferred over `FileURLStorage` for multi-process clients on the same host — SQLite's own locks serialize writes without an extra `.lock` file.
+
+```python
+from resumable_upload import SQLiteURLStorage
+storage = SQLiteURLStorage("tus_urls.db")
+```
+
+| Parameter | Type | Default |
+|-----------|------|---------|
+| `db_path` | str | `"tus_urls.db"` |
+| `timeout` | float | `5.0` |
+
+### InMemoryURLStorage
+
+Fast, process-local URL storage. Everything is forgotten when the process exits — useful for tests and short-lived upload sessions.
+
+```python
+from resumable_upload import InMemoryURLStorage
+storage = InMemoryURLStorage()
+```
 
 ### Custom URL Storage Backends
 

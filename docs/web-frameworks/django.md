@@ -49,4 +49,4 @@ urlpatterns = [
     python manage.py runserver
     ```
 
-See `examples/django_server.py` for a complete working example.
+See `examples/server/django_app.py` for a complete working example.

@@ -1,5 +1,27 @@
 # FastAPI
 
+FastAPI users have two integrations to choose from. Pick **ASGI mount** unless you have a reason to handle the request manually.
+
+## Option 1 — ASGI mount (recommended)
+
+`TusASGIApp` runs the synchronous `TusServer.handle_request` on a thread pool, so the event loop stays free. One line to wire up:
+
+```python
+from fastapi import FastAPI
+from resumable_upload import SQLiteStorage, TusServer
+from resumable_upload.asgi import TusASGIApp
+
+app = FastAPI()
+tus = TusServer(storage=SQLiteStorage(), base_path="/files")
+app.mount("/files", TusASGIApp(tus))
+```
+
+See [ASGI](asgi.md) for the full adapter reference (Starlette, Quart, custom mount paths).
+
+## Option 2 — Manual route
+
+If you need to wrap the request in middleware, dependencies, or a custom auth flow, call `handle_request` yourself:
+
 ```python
 from fastapi import FastAPI, Request, Response
 from resumable_upload import TusServer, SQLiteStorage
@@ -33,4 +55,4 @@ async def handle_upload(request: Request):
     uvicorn main:app --reload
     ```
 
-See `examples/fastapi_server.py` for a complete working example.
+See `examples/server/fastapi_app.py` for a complete working example.

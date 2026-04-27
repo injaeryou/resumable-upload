@@ -54,11 +54,18 @@ nav:
   - Advanced Usage:
       - Retry & Error Handling: advanced-usage/retry.md
       - Resume & Partial Uploads: advanced-usage/resume.md
+      - Concatenation & Parallel Uploads: advanced-usage/concatenation.md
+      - Observability & Retry Gating: advanced-usage/observability.md
       - Low-Level Uploader: advanced-usage/uploader.md
   - Web Frameworks:
       - Flask: web-frameworks/flask.md
       - FastAPI: web-frameworks/fastapi.md
       - Django: web-frameworks/django.md
+      - ASGI (generic): web-frameworks/asgi.md
+  - Operations:
+      - CLI: operations/cli.md
+      - Metrics: operations/metrics.md
+      - Distributed Locks: operations/locks.md
   - API Reference:
       - Client: api-reference/client.md
       - Server: api-reference/server.md
