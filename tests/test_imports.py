@@ -59,3 +59,31 @@ def test_cloud_storage_legacy_paths_alias_new_paths(legacy_module, new_module, a
     new_cls = _attr(new_module, attr)
     legacy_cls = _attr(legacy_module, attr)
     assert new_cls is legacy_cls
+
+
+# ---- URL storage ----------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "attr",
+    ["URLStorage", "FileURLStorage", "InMemoryURLStorage", "SQLiteURLStorage"],
+)
+def test_url_storage_top_level_paths_unchanged(attr):
+    import resumable_upload as ru
+
+    assert getattr(ru, attr) is _attr("resumable_upload.url_storage", attr)
+
+
+@pytest.mark.parametrize(
+    ("submodule", "attr"),
+    [
+        ("resumable_upload.url_storage.base", "URLStorage"),
+        ("resumable_upload.url_storage.memory_url_storage", "InMemoryURLStorage"),
+        ("resumable_upload.url_storage.sqlite_url_storage", "SQLiteURLStorage"),
+        ("resumable_upload.url_storage.file_url_storage", "FileURLStorage"),
+    ],
+)
+def test_url_storage_classes_live_in_dedicated_submodules(submodule, attr):
+    new_cls = _attr(submodule, attr)
+    legacy_cls = _attr("resumable_upload.url_storage", attr)
+    assert new_cls is legacy_cls
