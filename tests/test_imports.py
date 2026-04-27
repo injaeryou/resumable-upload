@@ -58,7 +58,12 @@ def test_sqlite_storage_lives_in_sqlite_storage_submodule():
 @pytest.mark.parametrize(
     ("legacy_module", "new_module", "attr", "sdk_module"),
     [
-        ("resumable_upload.storage_s3", "resumable_upload.storage.s3_storage", "S3Storage", "boto3"),
+        (
+            "resumable_upload.storage_s3",
+            "resumable_upload.storage.s3_storage",
+            "S3Storage",
+            "boto3",
+        ),
         (
             "resumable_upload.storage_gcs",
             "resumable_upload.storage.gcs_storage",
