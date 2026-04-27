@@ -87,3 +87,26 @@ def test_url_storage_classes_live_in_dedicated_submodules(submodule, attr):
     new_cls = _attr(submodule, attr)
     legacy_cls = _attr("resumable_upload.url_storage", attr)
     assert new_cls is legacy_cls
+
+
+# ---- Locks ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("submodule", "attr"),
+    [
+        ("resumable_upload.locks.base", "LockBackend"),
+        ("resumable_upload.locks.memory_lock", "InMemoryLockBackend"),
+        ("resumable_upload.locks.redis_lock", "RedisLockBackend"),
+    ],
+)
+def test_locks_classes_live_in_dedicated_submodules(submodule, attr):
+    new_cls = _attr(submodule, attr)
+    legacy_cls = _attr("resumable_upload.locks", attr)
+    assert new_cls is legacy_cls
+
+
+def test_locks_redis_legacy_path_aliases_new_path():
+    new_cls = _attr("resumable_upload.locks.redis_lock", "RedisLockBackend")
+    legacy_cls = _attr("resumable_upload.locks_redis", "RedisLockBackend")
+    assert new_cls is legacy_cls
