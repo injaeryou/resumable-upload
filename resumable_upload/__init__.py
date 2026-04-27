@@ -9,7 +9,7 @@ __version__ = "0.0.5"
 from resumable_upload.client import TusClient, Uploader, UploadStats
 from resumable_upload.exceptions import TusCommunicationError, TusHookError, TusUploadFailed
 from resumable_upload.fingerprint import CallableFingerprint, Fingerprint, PartialMD5Fingerprint
-from resumable_upload.server import TusHTTPRequestHandler, TusServer
+from resumable_upload.server import TusHTTPRequestHandler, TusServer, TusServerCore
 from resumable_upload.storage import SQLiteStorage, Storage
 from resumable_upload.url_storage import (
     FileURLStorage,
@@ -35,6 +35,7 @@ except ImportError:
     AzureBlobStorage = None  # type: ignore[assignment,misc]
 
 __all__ = [
+    "TusServerCore",
     "TusServer",
     "TusHTTPRequestHandler",
     "TusClient",

@@ -133,3 +133,13 @@ def test_server_classes_live_in_dedicated_submodules(submodule, attr):
     new_cls = _attr(submodule, attr)
     legacy_cls = _attr("resumable_upload.server", attr)
     assert new_cls is legacy_cls
+
+
+def test_tus_server_core_exists_and_tus_server_subclasses_it():
+    core = _attr("resumable_upload.server.core", "TusServerCore")
+    server = _attr("resumable_upload.server", "TusServer")
+    assert issubclass(server, core)
+    # Top-level export so users can subclass the core directly.
+    import resumable_upload as ru
+
+    assert ru.TusServerCore is core
