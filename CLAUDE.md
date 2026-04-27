@@ -16,24 +16,61 @@ This file describes how Claude Code (and other AI coding agents) should work in 
 ```
 resumable_upload/
 ├── __init__.py            — public exports (keep surface minimal)
-├── server.py              — TusServer + TusHTTPRequestHandler (sync http.server)
-├── storage.py             — Storage ABC + SQLiteStorage (default)
-├── storage_s3.py          — S3 backend (optional, boto3)
-├── storage_gcs.py         — GCS backend (optional, google-cloud-storage)
-├── storage_azure.py       — Azure backend (optional, azure-storage-blob)
-├── url_storage.py         — FileURLStorage for cross-session resume
-├── fingerprint.py         — default SHA-256 full-file fingerprint
 ├── exceptions.py          — TusHookError, TusCommunicationError, TusUploadFailed
-└── client/
-    ├── base.py            — TusClient (high-level API)
-    ├── uploader.py        — Uploader (low-level chunk control)
-    └── stats.py           — UploadStats
+├── checksum.py            — multi-algorithm checksum registry
+├── fingerprint.py         — default SHA-256 full-file fingerprint
+├── metrics.py             — zero-dependency Prometheus counter registry
+├── asgi.py                — TusASGIApp (FastAPI / Starlette adapter)
+├── cli.py / __main__.py   — `resumable-upload serve` entry point
+│
+├── server/
+│   ├── __init__.py        — re-exports TusServer, TusServerCore, TusHTTPRequestHandler
+│   ├── core.py            — TusServerCore (full TUS 1.0.0 implementation)
+│   ├── server.py          — TusServer(TusServerCore), the canonical class to instantiate
+│   └── http_handler.py    — TusHTTPRequestHandler (sync http.server glue)
+│
+├── client/
+│   ├── __init__.py        — re-exports TusClient, Uploader, UploadStats
+│   ├── client.py          — TusClient (mixes the three mixins below)
+│   ├── _mixin_base.py     — _ClientAttrs: shared attribute / method shape used by mixins
+│   ├── protocol.py        — ProtocolMixin: encode_metadata, get_metadata, get_upload_info, get_server_info
+│   ├── concatenation.py   — ConcatenationMixin: create_partial_upload, create_final_upload
+│   ├── parallel.py        — ParallelUploadMixin: _upload_parallel
+│   ├── uploader.py        — Uploader (low-level chunk control)
+│   └── stats.py           — UploadStats
+│
+├── storage/
+│   ├── __init__.py        — re-exports Storage, SQLiteStorage, S3/GCS/Azure (lazy)
+│   ├── base.py            — Storage ABC
+│   ├── sqlite_storage.py  — SQLiteStorage (default)
+│   ├── s3_storage.py      — S3 backend (optional, boto3)
+│   ├── gcs_storage.py     — GCS backend (optional, google-cloud-storage)
+│   └── azure_storage.py   — Azure backend (optional, azure-storage-blob)
+│
+├── url_storage/
+│   ├── __init__.py        — re-exports URLStorage + 3 implementations
+│   ├── base.py            — URLStorage ABC
+│   ├── memory_url_storage.py
+│   ├── sqlite_url_storage.py
+│   └── file_url_storage.py
+│
+└── locks/
+    ├── __init__.py        — re-exports LockBackend + implementations
+    ├── base.py            — LockBackend ABC
+    ├── memory_lock.py     — InMemoryLockBackend (default)
+    └── redis_lock.py      — RedisLockBackend (optional, redis)
 
 tests/                     — pytest, one test file per module
 examples/                  — runnable Flask/FastAPI/Django integration examples
 docs/                      — user-facing mkdocs site (do not repurpose)
 .docs/                     — AI-only artifacts (gitignored) — see below
 ```
+
+Top-level `server.py`, `storage_s3.py`, `storage_gcs.py`, `storage_azure.py`,
+`url_storage.py`, `locks.py`, `locks_redis.py`, `client/base.py` either
+fold into the new packages (`server.py` is now the package) or remain as
+one-line `sys.modules` aliases for backward compatibility — every legacy
+import path keeps resolving to the same class object.
 
 ## Tech Stack & Constraints
 
