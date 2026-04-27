@@ -9,7 +9,7 @@ moto = pytest.importorskip("moto")
 
 from moto import mock_aws  # noqa: E402
 
-from resumable_upload.storage_s3 import S3Storage  # noqa: E402
+from resumable_upload.storage.s3_storage import S3Storage  # noqa: E402
 
 TEST_BUCKET = "test-tus-uploads"
 TEST_REGION = "us-east-1"

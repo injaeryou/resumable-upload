@@ -112,7 +112,7 @@ def _serve(args: argparse.Namespace) -> int:
             raise SystemExit("--redis-url is required when --lock-backend=redis")
         import redis
 
-        from resumable_upload.locks_redis import RedisLockBackend
+        from resumable_upload.locks.redis_lock import RedisLockBackend
 
         lock_backend = RedisLockBackend(client=redis.from_url(args.redis_url))
 

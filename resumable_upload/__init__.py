@@ -20,17 +20,17 @@ from resumable_upload.url_storage import (
 
 # Optional cloud storage backends
 try:
-    from resumable_upload.storage_s3 import S3Storage
+    from resumable_upload.storage.s3_storage import S3Storage
 except ImportError:
     S3Storage = None  # type: ignore[assignment,misc]
 
 try:
-    from resumable_upload.storage_gcs import GCSStorage
+    from resumable_upload.storage.gcs_storage import GCSStorage
 except ImportError:
     GCSStorage = None  # type: ignore[assignment,misc]
 
 try:
-    from resumable_upload.storage_azure import AzureBlobStorage
+    from resumable_upload.storage.azure_storage import AzureBlobStorage
 except ImportError:
     AzureBlobStorage = None  # type: ignore[assignment,misc]
 

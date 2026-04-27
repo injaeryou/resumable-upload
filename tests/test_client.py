@@ -440,7 +440,7 @@ class TestTusClient:
         client = TusClient(url)
 
         urlopen_err = patch(
-            "resumable_upload.client.base.urlopen", side_effect=URLError("network error")
+            "resumable_upload.client.client.urlopen", side_effect=URLError("network error")
         )
         with urlopen_err, pytest.raises(TusCommunicationError):
             client.upload_file(test_file)
@@ -554,7 +554,7 @@ class TestTusClient:
 
         open_patch = patch("builtins.open", side_effect=tracking_open)
         urlopen_err = patch(
-            "resumable_upload.client.base.urlopen", side_effect=URLError("network error")
+            "resumable_upload.client.client.urlopen", side_effect=URLError("network error")
         )
         with open_patch, urlopen_err, pytest.raises(TusCommunicationError):
             client.upload_file(test_file)

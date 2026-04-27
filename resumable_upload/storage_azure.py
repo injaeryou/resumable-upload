@@ -1,11 +1,16 @@
-"""Legacy import path. Prefer ``resumable_upload.storage.azure_storage``.
-
-Aliases this module to the implementation module so that ``importlib.reload``
-on the legacy path reloads the canonical implementation.
-"""
+"""Deprecated import path. Use ``resumable_upload.storage.azure_storage`` instead."""
 
 import sys
+import warnings
 
-from resumable_upload.storage import azure_storage as _impl
+warnings.warn(
+    "resumable_upload.storage_azure is deprecated since 0.0.6 and will be "
+    "removed in 0.0.8 / 0.1.0; import from "
+    "resumable_upload.storage.azure_storage instead.",
+    DeprecationWarning,
+    stacklevel=2,
+)
+
+from resumable_upload.storage import azure_storage as _impl  # noqa: E402
 
 sys.modules[__name__] = _impl

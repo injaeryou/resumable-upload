@@ -35,7 +35,7 @@ class TestS3Concatenation:
 
     def test_concatenate_two_partials(self, s3_bucket):
         bucket, client = s3_bucket
-        from resumable_upload.storage_s3 import S3Storage
+        from resumable_upload.storage.s3_storage import S3Storage
 
         storage = S3Storage(bucket=bucket, s3_client=client)
 
@@ -64,7 +64,7 @@ class TestS3Concatenation:
 
     def test_concatenate_preserves_order(self, s3_bucket):
         bucket, client = s3_bucket
-        from resumable_upload.storage_s3 import S3Storage
+        from resumable_upload.storage.s3_storage import S3Storage
 
         storage = S3Storage(bucket=bucket, s3_client=client)
 
@@ -86,7 +86,7 @@ class TestS3Concatenation:
 
     def test_concatenate_rejects_incomplete_partial(self, s3_bucket):
         bucket, client = s3_bucket
-        from resumable_upload.storage_s3 import S3Storage
+        from resumable_upload.storage.s3_storage import S3Storage
 
         storage = S3Storage(bucket=bucket, s3_client=client)
 
@@ -104,7 +104,7 @@ class TestS3Concatenation:
 
     def test_concatenate_rejects_non_partial(self, s3_bucket):
         bucket, client = s3_bucket
-        from resumable_upload.storage_s3 import S3Storage
+        from resumable_upload.storage.s3_storage import S3Storage
 
         storage = S3Storage(bucket=bucket, s3_client=client)
 
@@ -124,7 +124,7 @@ class TestS3Concatenation:
 
     def test_concatenate_missing_partial_raises(self, s3_bucket):
         bucket, client = s3_bucket
-        from resumable_upload.storage_s3 import S3Storage
+        from resumable_upload.storage.s3_storage import S3Storage
 
         storage = S3Storage(bucket=bucket, s3_client=client)
         with pytest.raises(ValueError, match="not found"):
@@ -140,7 +140,7 @@ class TestGCSConcatenation:
 
     def test_compose_called_with_sources_and_destination(self):
         pytest.importorskip("google.cloud.storage")
-        from resumable_upload.storage_gcs import GCSStorage
+        from resumable_upload.storage.gcs_storage import GCSStorage
 
         # Build a mock client that behaves like google.cloud.storage.Client
         recorded = {}
@@ -225,7 +225,7 @@ class TestAzureConcatenation:
 
     def test_commit_block_list_after_staging(self):
         pytest.importorskip("azure.storage.blob")
-        from resumable_upload.storage_azure import AzureBlobStorage
+        from resumable_upload.storage.azure_storage import AzureBlobStorage
 
         staged_blocks: dict[str, bytes] = {}
         committed: list[list] = []

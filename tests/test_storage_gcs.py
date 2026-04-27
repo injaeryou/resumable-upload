@@ -131,7 +131,7 @@ def storage(gcs_client):
     # Force reimport to pick up mocked modules
     import importlib
 
-    import resumable_upload.storage_gcs as mod
+    import resumable_upload.storage.gcs_storage as mod
 
     importlib.reload(mod)
     s = mod.GCSStorage(
@@ -326,7 +326,7 @@ class TestGCSStorageWithServer:
         """GCSStorage works as drop-in replacement in TusServer."""
         import importlib
 
-        import resumable_upload.storage_gcs as mod
+        import resumable_upload.storage.gcs_storage as mod
 
         importlib.reload(mod)
         from resumable_upload import TusServer

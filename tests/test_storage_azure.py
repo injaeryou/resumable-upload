@@ -171,7 +171,7 @@ def container_client():
 def storage(container_client):
     import importlib
 
-    import resumable_upload.storage_azure as mod
+    import resumable_upload.storage.azure_storage as mod
 
     importlib.reload(mod)
     s = mod.AzureBlobStorage(
@@ -366,7 +366,7 @@ class TestAzureStorageWithServer:
         """AzureBlobStorage works as drop-in replacement in TusServer."""
         import importlib
 
-        import resumable_upload.storage_azure as mod
+        import resumable_upload.storage.azure_storage as mod
 
         importlib.reload(mod)
         from resumable_upload import TusServer

@@ -18,7 +18,7 @@ _IMPLS: list[str] = ["memory"]
 try:
     import fakeredis  # noqa: F401
 
-    from resumable_upload.locks_redis import RedisLockBackend  # noqa: F401
+    from resumable_upload.locks.redis_lock import RedisLockBackend  # noqa: F401
 
     _IMPLS.append("redis")
 except ImportError:
@@ -29,7 +29,7 @@ def _make(impl: str):
     if impl == "redis":
         import fakeredis
 
-        from resumable_upload.locks_redis import RedisLockBackend
+        from resumable_upload.locks.redis_lock import RedisLockBackend
 
         return RedisLockBackend(client=fakeredis.FakeRedis())
     return InMemoryLockBackend()

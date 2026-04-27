@@ -66,11 +66,14 @@ docs/                      — user-facing mkdocs site (do not repurpose)
 .docs/                     — AI-only artifacts (gitignored) — see below
 ```
 
-Top-level `server.py`, `storage_s3.py`, `storage_gcs.py`, `storage_azure.py`,
-`url_storage.py`, `locks.py`, `locks_redis.py`, `client/base.py` either
-fold into the new packages (`server.py` is now the package) or remain as
-one-line `sys.modules` aliases for backward compatibility — every legacy
-import path keeps resolving to the same class object.
+Legacy import paths are kept alive but emit ``DeprecationWarning`` on
+first use, **deprecated in 0.0.6, scheduled for removal in 0.0.8 or
+0.1.0**:
+``resumable_upload.storage_s3``, ``storage_gcs``, ``storage_azure``,
+``locks_redis``, and ``client.base`` are ``sys.modules`` aliases for the
+new submodules. New code (and the project's own tests / examples / docs)
+should import directly from the new packages; the aliases exist only to
+give downstream users one release cycle to migrate.
 
 ## Tech Stack & Constraints
 

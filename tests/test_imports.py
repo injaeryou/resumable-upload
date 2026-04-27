@@ -9,6 +9,7 @@ slip through.
 from __future__ import annotations
 
 import importlib
+import sys
 
 import pytest
 
@@ -19,6 +20,17 @@ def _import(name: str):
 
 def _attr(module_name: str, attr: str):
     return getattr(_import(module_name), attr)
+
+
+def _import_legacy(module_name: str):
+    """Import a deprecated path, asserting it emits ``DeprecationWarning``.
+
+    Removes the cached module beforehand so the deprecation warning fires on
+    re-import (Python only runs the module body once otherwise).
+    """
+    sys.modules.pop(module_name, None)
+    with pytest.warns(DeprecationWarning, match=module_name):
+        return importlib.import_module(module_name)
 
 
 # ---- Storage ---------------------------------------------------------------
@@ -55,10 +67,10 @@ def test_sqlite_storage_lives_in_sqlite_storage_submodule():
         ),
     ],
 )
-def test_cloud_storage_legacy_paths_alias_new_paths(legacy_module, new_module, attr):
+def test_cloud_storage_legacy_paths_warn_and_alias(legacy_module, new_module, attr):
     new_cls = _attr(new_module, attr)
-    legacy_cls = _attr(legacy_module, attr)
-    assert new_cls is legacy_cls
+    legacy_mod = _import_legacy(legacy_module)
+    assert getattr(legacy_mod, attr) is new_cls
 
 
 # ---- URL storage ----------------------------------------------------------
@@ -106,10 +118,16 @@ def test_locks_classes_live_in_dedicated_submodules(submodule, attr):
     assert new_cls is legacy_cls
 
 
-def test_locks_redis_legacy_path_aliases_new_path():
+def test_locks_redis_legacy_path_warns_and_aliases():
     new_cls = _attr("resumable_upload.locks.redis_lock", "RedisLockBackend")
-    legacy_cls = _attr("resumable_upload.locks_redis", "RedisLockBackend")
-    assert new_cls is legacy_cls
+    legacy_mod = _import_legacy("resumable_upload.locks_redis")
+    assert legacy_mod.RedisLockBackend is new_cls
+
+
+def test_client_base_legacy_path_warns_and_aliases():
+    new_mod = _import("resumable_upload.client.client")
+    legacy_mod = _import_legacy("resumable_upload.client.base")
+    assert legacy_mod is new_mod
 
 
 # ---- Server ---------------------------------------------------------------
