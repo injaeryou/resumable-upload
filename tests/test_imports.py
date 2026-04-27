@@ -110,3 +110,26 @@ def test_locks_redis_legacy_path_aliases_new_path():
     new_cls = _attr("resumable_upload.locks.redis_lock", "RedisLockBackend")
     legacy_cls = _attr("resumable_upload.locks_redis", "RedisLockBackend")
     assert new_cls is legacy_cls
+
+
+# ---- Server ---------------------------------------------------------------
+
+
+def test_server_top_level_paths_unchanged():
+    import resumable_upload as ru
+
+    assert ru.TusServer is _attr("resumable_upload.server", "TusServer")
+    assert ru.TusHTTPRequestHandler is _attr("resumable_upload.server", "TusHTTPRequestHandler")
+
+
+@pytest.mark.parametrize(
+    ("submodule", "attr"),
+    [
+        ("resumable_upload.server.server", "TusServer"),
+        ("resumable_upload.server.http_handler", "TusHTTPRequestHandler"),
+    ],
+)
+def test_server_classes_live_in_dedicated_submodules(submodule, attr):
+    new_cls = _attr(submodule, attr)
+    legacy_cls = _attr("resumable_upload.server", attr)
+    assert new_cls is legacy_cls
