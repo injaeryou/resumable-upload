@@ -34,7 +34,7 @@ def _lock_backend_from_env() -> LockBackend:
         return InMemoryLockBackend()
     import redis  # type: ignore[import-not-found]
 
-    from resumable_upload.locks_redis import RedisLockBackend
+    from resumable_upload.locks import RedisLockBackend
 
     return RedisLockBackend(client=redis.from_url(redis_url))
 
