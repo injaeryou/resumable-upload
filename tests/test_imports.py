@@ -56,18 +56,25 @@ def test_sqlite_storage_lives_in_sqlite_storage_submodule():
 
 
 @pytest.mark.parametrize(
-    ("legacy_module", "new_module", "attr"),
+    ("legacy_module", "new_module", "attr", "sdk_module"),
     [
-        ("resumable_upload.storage_s3", "resumable_upload.storage.s3_storage", "S3Storage"),
-        ("resumable_upload.storage_gcs", "resumable_upload.storage.gcs_storage", "GCSStorage"),
+        ("resumable_upload.storage_s3", "resumable_upload.storage.s3_storage", "S3Storage", "boto3"),
+        (
+            "resumable_upload.storage_gcs",
+            "resumable_upload.storage.gcs_storage",
+            "GCSStorage",
+            "google.cloud.storage",
+        ),
         (
             "resumable_upload.storage_azure",
             "resumable_upload.storage.azure_storage",
             "AzureBlobStorage",
+            "azure.storage.blob",
         ),
     ],
 )
-def test_cloud_storage_legacy_paths_warn_and_alias(legacy_module, new_module, attr):
+def test_cloud_storage_legacy_paths_warn_and_alias(legacy_module, new_module, attr, sdk_module):
+    pytest.importorskip(sdk_module)
     new_cls = _attr(new_module, attr)
     legacy_mod = _import_legacy(legacy_module)
     assert getattr(legacy_mod, attr) is new_cls
