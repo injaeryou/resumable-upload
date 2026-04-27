@@ -80,12 +80,28 @@ def main():
     print("Store: .tus_urls.json")
     print()
 
-    try:
-        upload_url = client.upload_file(
+    def do_upload() -> str:
+        return client.upload_file(
             file_path,
             metadata={"filename": os.path.basename(file_path)},
             progress_callback=progress_bar,
         )
+
+    try:
+        try:
+            upload_url = do_upload()
+        except (TusUploadFailed, TusCommunicationError) as e:
+            # Stored URL may be stale (server moved/restarted on a different
+            # host/port, upload terminated, or expired). Drop it once and retry
+            # with a fresh upload before giving up.
+            fingerprint = client.fingerprinter.get_fingerprint(file_path)
+            if url_storage.get_url(fingerprint):
+                print(f"\nresume failed ({e}); dropping stored URL and starting fresh")
+                url_storage.remove_url(fingerprint)
+                upload_url = do_upload()
+            else:
+                raise
+
         print(f"Upload complete: {upload_url}")
         print()
         print("Run this script again with the same file — it will detect the")

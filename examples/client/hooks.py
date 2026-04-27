@@ -24,7 +24,7 @@ import sys
 from pathlib import Path
 
 from resumable_upload import SQLiteURLStorage, TusClient
-from resumable_upload.exceptions import TusUploadFailed
+from resumable_upload.exceptions import TusCommunicationError, TusUploadFailed
 
 
 def _banner(label: str, message: str) -> None:
@@ -83,8 +83,10 @@ def main() -> None:
         print(f"Resuming previous upload at {url}\n")
         try:
             client.resume_upload(file_path, url)
-        except TusUploadFailed as e:
-            # Stored URL may have expired / been terminated server-side.
+        except (TusUploadFailed, TusCommunicationError) as e:
+            # Stored URL may be stale: server moved/restarted on a different
+            # host/port, upload was terminated, or it expired. Drop the
+            # cached URL and start fresh.
             print(f"resume failed ({e}); starting fresh")
             url_storage.remove_url(previous[0]["fingerprint"])
             url = client.upload_file(file_path, metadata={"filename": Path(file_path).name})
