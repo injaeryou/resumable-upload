@@ -92,6 +92,22 @@ upload_url = client.upload_file(
 print(f"Upload complete: {upload_url}")
 ```
 
+### Async client
+
+```python
+# Async client — pip install "resumable-upload[async]"
+import asyncio
+from resumable_upload import AsyncTusClient
+
+async def main():
+    async with AsyncTusClient("http://localhost:8080/files") as client:
+        url = await client.upload_file("large_file.bin")
+
+asyncio.run(main())
+```
+
+Every sync `TusClient` method has an awaitable equivalent (upload, resume, delete, concatenation, `parallel_uploads=N`, protocol queries).
+
 ### Checksum algorithms
 
 Pick any subset of `sha1`, `sha256`, `sha512`, `md5` to advertise and validate:
@@ -151,7 +167,7 @@ tus = TusServer(storage=SQLiteStorage(), base_path="/files")
 app.mount("/files", TusASGIApp(tus))
 ```
 
-The adapter runs the synchronous `TusServer.handle_request` on a thread pool via `asyncio.to_thread`, so the event loop stays free.
+The adapter awaits `TusServer.handle_request_async` directly. Storage backends that keep the default `*_async` implementations inherit `asyncio.to_thread`-based wrappers, so the event loop stays free with no rewrite required. Storage backends that override `*_async` with native async I/O run non-blocking end-to-end.
 
 ### Command-line Server
 

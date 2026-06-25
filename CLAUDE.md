@@ -25,23 +25,29 @@ resumable_upload/
 │
 ├── server/
 │   ├── __init__.py        — re-exports TusServer, TusServerCore, TusHTTPRequestHandler
-│   ├── core.py            — TusServerCore (full TUS 1.0.0 implementation)
+│   ├── core.py            — TusServerCore (full TUS 1.0.0 implementation; exposes handle_request + handle_request_async)
 │   ├── server.py          — TusServer(TusServerCore), the canonical class to instantiate
 │   └── http_handler.py    — TusHTTPRequestHandler (sync http.server glue)
 │
 ├── client/
-│   ├── __init__.py        — re-exports TusClient, Uploader, UploadStats
+│   ├── __init__.py        — re-exports TusClient, Uploader, UploadStats, AsyncTusClient
 │   ├── client.py          — TusClient (mixes the three mixins below)
 │   ├── _mixin_base.py     — _ClientAttrs: shared attribute / method shape used by mixins
+│   ├── _protocol.py       — pure transport-agnostic helpers shared by sync + async clients
 │   ├── protocol.py        — ProtocolMixin: encode_metadata, get_metadata, get_upload_info, get_server_info
 │   ├── concatenation.py   — ConcatenationMixin: create_partial_upload, create_final_upload
 │   ├── parallel.py        — ParallelUploadMixin: _upload_parallel
 │   ├── uploader.py        — Uploader (low-level chunk control)
-│   └── stats.py           — UploadStats
+│   ├── stats.py           — UploadStats
+│   └── aio/               — async client package (httpx, requires [async] extra)
+│       ├── __init__.py    — re-exports AsyncTusClient, AsyncUploader
+│       ├── _http.py       — lazy httpx import + request/error mapping
+│       ├── client.py      — AsyncTusClient (async equivalent of TusClient)
+│       └── uploader.py    — AsyncUploader (async chunk control)
 │
 ├── storage/
 │   ├── __init__.py        — re-exports Storage, SQLiteStorage, S3/GCS/Azure (lazy)
-│   ├── base.py            — Storage ABC
+│   ├── base.py            — Storage ABC; sync interface + *_async surface (defaults to asyncio.to_thread)
 │   ├── sqlite_storage.py  — SQLiteStorage (default)
 │   ├── s3_storage.py      — S3 backend (optional, boto3)
 │   ├── gcs_storage.py     — GCS backend (optional, google-cloud-storage)

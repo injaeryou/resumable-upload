@@ -77,6 +77,22 @@ upload_url = client.upload_file(
 print(f"업로드 완료: {upload_url}")
 ```
 
+### 비동기 클라이언트
+
+```python
+# Async client — pip install "resumable-upload[async]"
+import asyncio
+from resumable_upload import AsyncTusClient
+
+async def main():
+    async with AsyncTusClient("http://localhost:8080/files") as client:
+        url = await client.upload_file("large_file.bin")
+
+asyncio.run(main())
+```
+
+동기 `TusClient`의 모든 메서드(업로드, 재개, 삭제, concatenation, `parallel_uploads=N`, 프로토콜 조회)는 awaitable 등가 메서드를 갖습니다.
+
 ### 체크섬 알고리즘
 
 `sha1`, `sha256`, `sha512`, `md5` 중 원하는 조합을 advertise하고 검증합니다:
@@ -136,7 +152,7 @@ tus = TusServer(storage=SQLiteStorage(), base_path="/files")
 app.mount("/files", TusASGIApp(tus))
 ```
 
-어댑터는 동기 `TusServer.handle_request`를 `asyncio.to_thread`로 감싸 스레드풀에서 실행하므로 이벤트 루프가 블로킹되지 않습니다.
+어댑터는 `TusServer.handle_request_async`를 직접 await합니다. 기본 `*_async` 구현을 유지하는 스토리지 백엔드는 `asyncio.to_thread` 기반 래퍼를 그대로 사용하므로 별도 수정 없이 이벤트 루프가 블로킹되지 않습니다. `*_async`를 네이티브 비동기 I/O로 오버라이드한 백엔드는 논블로킹으로 end-to-end 실행됩니다.
 
 ### 커맨드라인 서버
 

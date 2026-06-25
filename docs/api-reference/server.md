@@ -95,7 +95,13 @@ Requests using algorithms not in the enabled set return `400`. The client picks 
 server.handle_request(method, path, headers, body) -> (status, headers, body)
 ```
 
-Framework-agnostic request handler. See [Web Frameworks](../web-frameworks/flask.md) for Flask / FastAPI / Django adapters, or [`TusASGIApp`](../web-frameworks/asgi.md) for a generic ASGI mount.
+Framework-agnostic synchronous request handler. See [Web Frameworks](../web-frameworks/flask.md) for Flask / FastAPI / Django adapters.
+
+```python
+await server.handle_request_async(method, path, headers, body) -> (status, headers, body)
+```
+
+Async sibling used by `TusASGIApp`. Storage backends that keep the default `*_async` implementations delegate to `asyncio.to_thread` automatically; backends that override `*_async` with native async I/O run non-blocking end-to-end. See [`TusASGIApp`](../web-frameworks/asgi.md).
 
 ---
 
