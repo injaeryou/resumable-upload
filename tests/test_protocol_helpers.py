@@ -34,3 +34,10 @@ def test_parse_server_info_extensions_and_max_size():
     assert info["extensions"] == ["creation", "concatenation"]
     assert info["max_size"] == 1024
     assert P.parse_server_info(None, "", None, "1.0.0")["max_size"] is None
+
+
+def test_parse_server_info_empty_version_header_stays_empty():
+    # Present-but-empty header must NOT fall back to the default.
+    assert P.parse_server_info("", "creation", None, "1.0.0")["version"] == ""
+    # Absent (None) header falls back.
+    assert P.parse_server_info(None, "creation", None, "1.0.0")["version"] == "1.0.0"

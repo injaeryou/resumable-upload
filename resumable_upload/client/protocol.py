@@ -16,7 +16,7 @@ from resumable_upload.exceptions import TusCommunicationError
 class ProtocolMixin(_ClientAttrs):
     """TUS protocol queries and metadata helpers."""
 
-    def encode_metadata(self, metadata: dict[str, str]) -> list:
+    def encode_metadata(self, metadata: dict[str, str]) -> list[str]:
         """
         Encode metadata according to TUS protocol specification.
 

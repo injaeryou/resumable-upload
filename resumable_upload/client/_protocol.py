@@ -56,7 +56,7 @@ def parse_server_info(
 ) -> dict[str, Any]:
     extensions = [e.strip() for e in extension.split(",") if e.strip()] if extension else []
     return {
-        "version": version or default_version,
+        "version": default_version if version is None else version,
         "extensions": extensions,
         "max_size": int(max_size) if max_size else None,
     }
