@@ -5,6 +5,7 @@ clients. No urllib / httpx imports — only header strings in, data out."""
 from __future__ import annotations
 
 import base64
+import hashlib
 import re
 from typing import Any
 
@@ -60,3 +61,39 @@ def parse_server_info(
         "extensions": extensions,
         "max_size": int(max_size) if max_size else None,
     }
+
+
+def resolve_checksum_algorithm(checksum: bool | str | None) -> str | None:
+    """Normalise the ``checksum`` parameter to a hashlib algorithm name or ``None``."""
+    if checksum is False or checksum is None:
+        return None
+    if checksum is True:
+        return "sha1"
+    return str(checksum).lower()
+
+
+def checksum_header(algo: str, data: bytes) -> str:
+    """Return an ``Upload-Checksum`` header value for *data* using *algo*."""
+    hasher = hashlib.new(algo)
+    hasher.update(data)
+    return f"{algo} {base64.b64encode(hasher.digest()).decode('ascii')}"
+
+
+def retry_delay(base: float, attempt: int) -> float:
+    """Exponential back-off capped at 60 seconds."""
+    return min(base * (2**attempt), 60.0)
+
+
+def split_boundaries(file_size: int, parts: int) -> list[tuple[int, int]]:
+    """Divide *file_size* bytes into at most *parts* non-empty ``(start, end)`` ranges."""
+    if file_size == 0 or parts == 0:
+        return []
+    base = file_size // parts
+    out: list[tuple[int, int]] = []
+    start = 0
+    for i in range(parts):
+        end = file_size if i == parts - 1 else start + base
+        if end > start:
+            out.append((start, end))
+        start = end
+    return out

@@ -1,7 +1,5 @@
 """TUS protocol uploader for fine-grained upload control."""
 
-import base64
-import hashlib
 import os
 import ssl
 import threading
@@ -10,6 +8,7 @@ from typing import IO, Callable, Optional, Union
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
+from resumable_upload.client import _protocol
 from resumable_upload.client.stats import UploadStats
 from resumable_upload.exceptions import TusCommunicationError, TusUploadFailed
 
@@ -182,12 +181,7 @@ class Uploader:
 
     def _resolve_checksum_algorithm(self) -> Optional[str]:
         """Normalize ``self.checksum`` to a hashlib algorithm name or None."""
-        if self.checksum is False or self.checksum is None:
-            return None
-        if self.checksum is True:
-            return "sha1"
-        # String: trust it; hashlib.new() will raise if unknown.
-        return str(self.checksum).lower()
+        return _protocol.resolve_checksum_algorithm(self.checksum)
 
     def _upload_chunk_once(self, data: bytes) -> None:
         """Upload a chunk of data (single attempt)."""
@@ -203,10 +197,7 @@ class Uploader:
         # algorithm name (e.g. "sha256", "md5", "sha512").
         algo = self._resolve_checksum_algorithm()
         if algo is not None:
-            hasher = hashlib.new(algo)
-            hasher.update(data)
-            checksum_b64 = base64.b64encode(hasher.digest()).decode("ascii")
-            headers["Upload-Checksum"] = f"{algo} {checksum_b64}"
+            headers["Upload-Checksum"] = _protocol.checksum_header(algo, data)
 
         if self._before_request is not None:
             self._before_request("PATCH", self.url, headers)
@@ -279,7 +270,7 @@ class Uploader:
                     ) from e
                 if attempt < self.max_retries:
                     # Exponential backoff capped at 60 seconds; interruptible via stop_event
-                    delay = min(self.retry_delay * (2**attempt), 60.0)
+                    delay = _protocol.retry_delay(self.retry_delay, attempt)
                     if self._stop_event.wait(timeout=delay):
                         raise TusUploadFailed("Upload cancelled via stop_event") from e
                 else:
