@@ -18,7 +18,8 @@ examples/
     ├── resume.py             Cross-session resume via fingerprint
     ├── low_level_uploader.py Fine-grained Uploader control
     ├── parallel_upload.py    parallel_uploads + manual partial/final
-    └── hooks.py              before_request / after_response / on_should_retry
+    ├── hooks.py              before_request / after_response / on_should_retry
+    └── async_upload.py       AsyncTusClient — async upload with progress + resume
 ```
 
 ## Quick Start
@@ -42,6 +43,7 @@ python examples/client/resume.py               http://localhost:8080/files /tmp/
 python examples/client/low_level_uploader.py   http://localhost:8080/files /tmp/test.bin
 python examples/client/parallel_upload.py      http://localhost:8080/files /tmp/test.bin 4
 python examples/client/hooks.py                http://localhost:8080/files /tmp/test.bin
+python examples/client/async_upload.py         http://localhost:8080/files /tmp/test.bin
 ```
 
 ---
@@ -235,6 +237,27 @@ python examples/client/hooks.py <server_url> <file_path>
 # First run uploads fresh; run again to see resume via find_previous_uploads
 python examples/client/hooks.py http://localhost:8080/files large.bin
 ```
+
+---
+
+### `client/async_upload.py` — Async upload with progress and resume
+
+`AsyncTusClient` counterpart to `basic_upload.py`. Demonstrates async/await
+usage, parallel chunks, and cross-session resume — all within a single
+`async with` block.
+
+```bash
+pip install "resumable-upload[async]"
+python examples/client/async_upload.py <server_url> <file_path> [parallel_n]
+
+# Upload with 4 parallel chunks
+python examples/client/async_upload.py http://localhost:8080/files large.bin 4
+
+# Re-run to resume automatically via stored fingerprint
+python examples/client/async_upload.py http://localhost:8080/files large.bin
+```
+
+Requires `httpx` (installed via the `[async]` extra).
 
 ---
 

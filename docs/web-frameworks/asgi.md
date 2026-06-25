@@ -43,3 +43,10 @@ app = Starlette(routes=[Mount("/files", app=TusASGIApp(tus))])
 - `examples/server/asgi_app.py` — `TusASGIApp` served directly by uvicorn (async dispatch over the default `SQLiteStorage`).
 - `examples/server/async_storage.py` — a native-async `Storage` backend (`AsyncDictStorage`) that awaits real non-blocking I/O end-to-end, served over `TusASGIApp`. The template to copy for `aiofiles` / `aioboto3` / `asyncpg` backends.
 - `examples/server/fastapi_app.py` — thin FastAPI route wrapper (calls the sync `handle_request`).
+
+## Async client
+
+For an async *client* that pairs with the async server above, see
+[AsyncTusClient](../api-reference/client.md#async-client) and
+`examples/client/async_upload.py`. It uses `httpx` under the hood and is
+installed via `pip install "resumable-upload[async]"`.
