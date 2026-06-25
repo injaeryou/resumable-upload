@@ -10,7 +10,8 @@ examples/
 │   ├── flask_app.py          Flask integration
 │   ├── fastapi_app.py        FastAPI (thin route wrapper)
 │   ├── django_app.py         Django view
-│   ├── asgi_app.py           FastAPI mount via TusASGIApp
+│   ├── asgi_app.py           Direct uvicorn serve via TusASGIApp (async dispatch)
+│   ├── async_storage.py      Native-async Storage backend over TusASGIApp
 │   └── with_metrics.py       Prometheus /metrics + optional Redis lock
 └── client/
     ├── basic_upload.py       Upload a file with progress + retry
@@ -29,6 +30,7 @@ python examples/server/flask_app.py             # :5000
 python examples/server/fastapi_app.py           # :8000
 python examples/server/django_app.py            # :8000
 python examples/server/asgi_app.py              # :8000  (via TusASGIApp)
+python examples/server/async_storage.py         # :8000  (native-async backend)
 python examples/server/with_metrics.py          # :8080  (/metrics exposed)
 
 # 2. Create a test file
@@ -91,8 +93,28 @@ pip install fastapi uvicorn
 python examples/server/asgi_app.py              # → :8000
 ```
 
-The adapter runs the sync handler on a worker thread via `asyncio.to_thread`,
-so the event loop stays free.
+The adapter awaits `TusServer.handle_request_async`. With the default
+`SQLiteStorage`, each storage call falls back to a single `asyncio.to_thread`
+hop, so the event loop stays free without any async rewrite.
+
+---
+
+### `server/async_storage.py` — Native-async storage backend
+
+A **true-async** `Storage` backend (`AsyncDictStorage`) that overrides the
+`*_async` surface so `handle_request_async` awaits real non-blocking I/O end
+to end — never the `to_thread` fallback. The in-memory store stands in for a
+production `aiofiles` / `aioboto3` / `asyncpg` backend; copy its shape and swap
+the `await asyncio.sleep(0)` calls for real awaited I/O.
+
+```bash
+pip install uvicorn
+python examples/server/async_storage.py         # → :8000
+```
+
+`tests/test_storage_async_native.py` pins the contract: it forbids the
+`to_thread` fallback (monkeypatched to raise) and still completes a full
+upload, proving every awaited I/O hits a native override.
 
 ---
 

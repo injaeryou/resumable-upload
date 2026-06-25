@@ -78,6 +78,8 @@ class S3AsyncStorage(S3Storage):
 
 The sync methods stay the canonical surface, so any code path that calls `storage.write_chunk(...)` directly (the stdlib `TusHTTPRequestHandler`, CLI, Flask/Django integrations) keeps working unchanged.
 
+A complete, runnable native-async backend lives in `examples/server/async_storage.py` (`AsyncDictStorage`): sync and async methods share private `_do_*` helpers so the protocol logic is written once, and only the `*_async` methods `await`. `tests/test_storage_async_native.py` proves the dispatch never falls back to `to_thread` by monkeypatching it to raise while completing a full upload — copy that pattern to verify your own backend stays non-blocking.
+
 ---
 
 ## S3Storage

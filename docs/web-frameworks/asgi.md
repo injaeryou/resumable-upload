@@ -40,5 +40,6 @@ app = Starlette(routes=[Mount("/files", app=TusASGIApp(tus))])
 
 ## Examples
 
-- `examples/server/asgi_app.py` — minimal Starlette mount.
-- `examples/server/fastapi_app.py` — full FastAPI integration.
+- `examples/server/asgi_app.py` — `TusASGIApp` served directly by uvicorn (async dispatch over the default `SQLiteStorage`).
+- `examples/server/async_storage.py` — a native-async `Storage` backend (`AsyncDictStorage`) that awaits real non-blocking I/O end-to-end, served over `TusASGIApp`. The template to copy for `aiofiles` / `aioboto3` / `asyncpg` backends.
+- `examples/server/fastapi_app.py` — thin FastAPI route wrapper (calls the sync `handle_request`).
