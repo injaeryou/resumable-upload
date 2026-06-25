@@ -269,3 +269,60 @@ class TestAsyncServerExamples:
             cwd=workdir,
         )
         _assert_success(result, "resume (async server)")
+
+
+class TestFrameworkServerExamples:
+    """Smoke-test the framework server example FILES themselves.
+
+    The test_*_integration.py suites validate the protocol against each
+    framework, but they build their own apps — the example files (flask_app.py
+    etc.) are never executed there, so an import typo or wiring bug in an
+    example would go unnoticed. Here we spawn each example as a real subprocess
+    and run an actual upload through it. Frameworks are optional, so the cases
+    skip when their dependency is absent (e.g. under the tox matrix).
+    """
+
+    @pytest.mark.parametrize(
+        "script,modules",
+        [
+            ("flask_app.py", ["flask"]),
+            ("fastapi_app.py", ["fastapi", "uvicorn"]),
+            ("django_app.py", ["django"]),
+        ],
+    )
+    def test_upload(
+        self, script: str, modules: list[str], sample_file: Path, workdir: Path
+    ) -> None:
+        for module in modules:
+            pytest.importorskip(module)
+        port = _find_free_port()
+        proc = _spawn_server(port, workdir, script=script)
+        try:
+            result = _run_client(
+                "basic_upload.py",
+                [f"http://127.0.0.1:{port}/files", str(sample_file)],
+                cwd=workdir,
+            )
+            _assert_success(result, f"basic_upload ({script})")
+        finally:
+            _stop(proc)
+
+    def test_with_metrics_example(self, sample_file: Path, workdir: Path) -> None:
+        # Pure stdlib (in-memory lock by default) — runs everywhere, incl. tox.
+        port = _find_free_port()
+        proc = _spawn_server(port, workdir, script="with_metrics.py")
+        try:
+            result = _run_client(
+                "basic_upload.py",
+                [f"http://127.0.0.1:{port}/files", str(sample_file)],
+                cwd=workdir,
+            )
+            _assert_success(result, "basic_upload (with_metrics)")
+            # /metrics exposes Prometheus output and reflects the upload just made.
+            with urllib.request.urlopen(f"http://127.0.0.1:{port}/metrics", timeout=2) as resp:
+                assert resp.status == 200
+                body = resp.read().decode()
+            assert "tusd_requests_total" in body
+            assert "tusd_uploads_created_total" in body
+        finally:
+            _stop(proc)
