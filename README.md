@@ -2,7 +2,7 @@
 
 [![Python Version](https://img.shields.io/pypi/pyversions/resumable-upload.svg)](https://pypi.org/project/resumable-upload/)
 [![PyPI Version](https://img.shields.io/pypi/v/resumable-upload.svg)](https://pypi.org/project/resumable-upload/)
-[![License](https://img.shields.io/pypi/l/resumable-upload.svg)](https://github.com/sts07142/resumable-upload/blob/main/LICENSE)
+[![License](https://img.shields.io/pypi/l/resumable-upload.svg)](https://github.com/injaeryou/resumable-upload/blob/main/LICENSE)
 
 **English** | [한국어](README.ko.md)
 
@@ -193,19 +193,19 @@ final_url = client.create_final_upload(
 
 ## 🔧 Advanced Usage
 
-For detailed guides see the **[Advanced Usage section on the docs site](https://sts07142.github.io/resumable-upload/advanced-usage/retry/)**:
+For detailed guides see the **[Advanced Usage section on the docs site](https://injaeryou.github.io/resumable-upload/advanced-usage/retry/)**:
 
-- Automatic retry with exponential backoff and `on_should_retry` gating — [Retry & Error Handling](https://sts07142.github.io/resumable-upload/advanced-usage/retry/)
-- Resume interrupted uploads (in-session and cross-session) — [Resume & Partial Uploads](https://sts07142.github.io/resumable-upload/advanced-usage/resume/)
-- Concatenation extension and `parallel_uploads=N` — [Concatenation & Parallel Uploads](https://sts07142.github.io/resumable-upload/advanced-usage/concatenation/)
-- Tracing and retry hooks — [Observability & Retry Gating](https://sts07142.github.io/resumable-upload/advanced-usage/observability/)
-- Low-level chunk control via `Uploader` + cancellation with `stop_event` — [Low-Level Uploader](https://sts07142.github.io/resumable-upload/advanced-usage/uploader/)
-- Web framework integration: [Flask](https://sts07142.github.io/resumable-upload/web-frameworks/flask/), [FastAPI](https://sts07142.github.io/resumable-upload/web-frameworks/fastapi/), [Django](https://sts07142.github.io/resumable-upload/web-frameworks/django/), [generic ASGI](https://sts07142.github.io/resumable-upload/web-frameworks/asgi/)
-- Operations: [CLI](https://sts07142.github.io/resumable-upload/operations/cli/), [Metrics](https://sts07142.github.io/resumable-upload/operations/metrics/), [Distributed Locks](https://sts07142.github.io/resumable-upload/operations/locks/)
+- Automatic retry with exponential backoff and `on_should_retry` gating — [Retry & Error Handling](https://injaeryou.github.io/resumable-upload/advanced-usage/retry/)
+- Resume interrupted uploads (in-session and cross-session) — [Resume & Partial Uploads](https://injaeryou.github.io/resumable-upload/advanced-usage/resume/)
+- Concatenation extension and `parallel_uploads=N` — [Concatenation & Parallel Uploads](https://injaeryou.github.io/resumable-upload/advanced-usage/concatenation/)
+- Tracing and retry hooks — [Observability & Retry Gating](https://injaeryou.github.io/resumable-upload/advanced-usage/observability/)
+- Low-level chunk control via `Uploader` + cancellation with `stop_event` — [Low-Level Uploader](https://injaeryou.github.io/resumable-upload/advanced-usage/uploader/)
+- Web framework integration: [Flask](https://injaeryou.github.io/resumable-upload/web-frameworks/flask/), [FastAPI](https://injaeryou.github.io/resumable-upload/web-frameworks/fastapi/), [Django](https://injaeryou.github.io/resumable-upload/web-frameworks/django/), [generic ASGI](https://injaeryou.github.io/resumable-upload/web-frameworks/asgi/)
+- Operations: [CLI](https://injaeryou.github.io/resumable-upload/operations/cli/), [Metrics](https://injaeryou.github.io/resumable-upload/operations/metrics/), [Distributed Locks](https://injaeryou.github.io/resumable-upload/operations/locks/)
 
 ## 📚 API Reference
 
-Full API documentation is available on the docs site: [Client](https://sts07142.github.io/resumable-upload/api-reference/client/), [Server](https://sts07142.github.io/resumable-upload/api-reference/server/), [Storage](https://sts07142.github.io/resumable-upload/api-reference/storage/), [Exceptions & Utilities](https://sts07142.github.io/resumable-upload/api-reference/exceptions/).
+Full API documentation is available on the docs site: [Client](https://injaeryou.github.io/resumable-upload/api-reference/client/), [Server](https://injaeryou.github.io/resumable-upload/api-reference/server/), [Storage](https://injaeryou.github.io/resumable-upload/api-reference/storage/), [Exceptions & Utilities](https://injaeryou.github.io/resumable-upload/api-reference/exceptions/).
 
 ### Quick Reference
 
@@ -230,7 +230,7 @@ Full API documentation is available on the docs site: [Client](https://sts07142.
 
 ## 🔍 TUS Protocol Compliance
 
-This library implements [TUS protocol v1.0.0](https://tus.io/protocols/resumable-upload.html). Full compliance details: **[TUS Compliance](https://sts07142.github.io/resumable-upload/compliance/)**.
+This library implements [TUS protocol v1.0.0](https://tus.io/protocols/resumable-upload.html). Full compliance details: **[TUS Compliance](https://injaeryou.github.io/resumable-upload/compliance/)**.
 
 ### Extensions
 
@@ -284,12 +284,12 @@ make ci                # Run full CI checks (lint + format + test)
 
 ## 📖 Documentation
 
-- **Docs site**: [sts07142.github.io/resumable-upload](https://sts07142.github.io/resumable-upload/)
-- **English README**: [README.md](https://github.com/sts07142/resumable-upload/blob/main/README.md)
-- **한국어 README**: [README.ko.md](https://github.com/sts07142/resumable-upload/blob/main/README.ko.md)
-- **Advanced Usage**: [advanced-usage/retry](https://sts07142.github.io/resumable-upload/advanced-usage/retry/)
-- **Full API Reference**: [api-reference/client](https://sts07142.github.io/resumable-upload/api-reference/client/)
-- **TUS Protocol Compliance**: [compliance](https://sts07142.github.io/resumable-upload/compliance/)
+- **Docs site**: [injaeryou.github.io/resumable-upload](https://injaeryou.github.io/resumable-upload/)
+- **English README**: [README.md](https://github.com/injaeryou/resumable-upload/blob/main/README.md)
+- **한국어 README**: [README.ko.md](https://github.com/injaeryou/resumable-upload/blob/main/README.ko.md)
+- **Advanced Usage**: [advanced-usage/retry](https://injaeryou.github.io/resumable-upload/advanced-usage/retry/)
+- **Full API Reference**: [api-reference/client](https://injaeryou.github.io/resumable-upload/api-reference/client/)
+- **TUS Protocol Compliance**: [compliance](https://injaeryou.github.io/resumable-upload/compliance/)
 
 ## 🤝 Contributing
 
@@ -305,6 +305,6 @@ This library is inspired by the official [TUS Python client](https://github.com/
 
 ## 📞 Support
 
-- 📫 Issues: [GitHub Issues](https://github.com/sts07142/resumable-upload/issues)
-- 📖 Documentation: [sts07142.github.io/resumable-upload](https://sts07142.github.io/resumable-upload/)
+- 📫 Issues: [GitHub Issues](https://github.com/injaeryou/resumable-upload/issues)
+- 📖 Documentation: [injaeryou.github.io/resumable-upload](https://injaeryou.github.io/resumable-upload/)
 - 🌟 Star us on GitHub!

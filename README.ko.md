@@ -2,7 +2,7 @@
 
 [![Python Version](https://img.shields.io/pypi/pyversions/resumable-upload.svg)](https://pypi.org/project/resumable-upload/)
 [![PyPI Version](https://img.shields.io/pypi/v/resumable-upload.svg)](https://pypi.org/project/resumable-upload/)
-[![License](https://img.shields.io/pypi/l/resumable-upload.svg)](https://github.com/sts07142/resumable-upload/blob/main/LICENSE)
+[![License](https://img.shields.io/pypi/l/resumable-upload.svg)](https://github.com/injaeryou/resumable-upload/blob/main/LICENSE)
 
 [English](README.md) | **한국어**
 
@@ -178,19 +178,19 @@ final_url = client.create_final_upload(
 
 ## 🔧 고급 사용법
 
-자세한 가이드는 **[문서 사이트의 Advanced Usage 섹션](https://sts07142.github.io/resumable-upload/advanced-usage/retry/)**을 참조하세요:
+자세한 가이드는 **[문서 사이트의 Advanced Usage 섹션](https://injaeryou.github.io/resumable-upload/advanced-usage/retry/)**을 참조하세요:
 
-- 지수 백오프 자동 재시도와 `on_should_retry` 제어 — [Retry & Error Handling](https://sts07142.github.io/resumable-upload/advanced-usage/retry/)
-- 중단된 업로드 재개 (세션 내 및 세션 간) — [Resume & Partial Uploads](https://sts07142.github.io/resumable-upload/advanced-usage/resume/)
-- Concatenation 확장 + `parallel_uploads=N` — [Concatenation & Parallel Uploads](https://sts07142.github.io/resumable-upload/advanced-usage/concatenation/)
-- 트레이싱·재시도 훅 — [Observability & Retry Gating](https://sts07142.github.io/resumable-upload/advanced-usage/observability/)
-- `Uploader`를 통한 청크 단위 제어 + `stop_event` 취소 — [Low-Level Uploader](https://sts07142.github.io/resumable-upload/advanced-usage/uploader/)
-- 웹 프레임워크 통합: [Flask](https://sts07142.github.io/resumable-upload/web-frameworks/flask/), [FastAPI](https://sts07142.github.io/resumable-upload/web-frameworks/fastapi/), [Django](https://sts07142.github.io/resumable-upload/web-frameworks/django/), [범용 ASGI](https://sts07142.github.io/resumable-upload/web-frameworks/asgi/)
-- 운영: [CLI](https://sts07142.github.io/resumable-upload/operations/cli/), [Metrics](https://sts07142.github.io/resumable-upload/operations/metrics/), [Distributed Locks](https://sts07142.github.io/resumable-upload/operations/locks/)
+- 지수 백오프 자동 재시도와 `on_should_retry` 제어 — [Retry & Error Handling](https://injaeryou.github.io/resumable-upload/advanced-usage/retry/)
+- 중단된 업로드 재개 (세션 내 및 세션 간) — [Resume & Partial Uploads](https://injaeryou.github.io/resumable-upload/advanced-usage/resume/)
+- Concatenation 확장 + `parallel_uploads=N` — [Concatenation & Parallel Uploads](https://injaeryou.github.io/resumable-upload/advanced-usage/concatenation/)
+- 트레이싱·재시도 훅 — [Observability & Retry Gating](https://injaeryou.github.io/resumable-upload/advanced-usage/observability/)
+- `Uploader`를 통한 청크 단위 제어 + `stop_event` 취소 — [Low-Level Uploader](https://injaeryou.github.io/resumable-upload/advanced-usage/uploader/)
+- 웹 프레임워크 통합: [Flask](https://injaeryou.github.io/resumable-upload/web-frameworks/flask/), [FastAPI](https://injaeryou.github.io/resumable-upload/web-frameworks/fastapi/), [Django](https://injaeryou.github.io/resumable-upload/web-frameworks/django/), [범용 ASGI](https://injaeryou.github.io/resumable-upload/web-frameworks/asgi/)
+- 운영: [CLI](https://injaeryou.github.io/resumable-upload/operations/cli/), [Metrics](https://injaeryou.github.io/resumable-upload/operations/metrics/), [Distributed Locks](https://injaeryou.github.io/resumable-upload/operations/locks/)
 
 ## 📚 API 참조
 
-전체 API 문서는 문서 사이트 참조: [Client](https://sts07142.github.io/resumable-upload/api-reference/client/), [Server](https://sts07142.github.io/resumable-upload/api-reference/server/), [Storage](https://sts07142.github.io/resumable-upload/api-reference/storage/), [Exceptions & Utilities](https://sts07142.github.io/resumable-upload/api-reference/exceptions/).
+전체 API 문서는 문서 사이트 참조: [Client](https://injaeryou.github.io/resumable-upload/api-reference/client/), [Server](https://injaeryou.github.io/resumable-upload/api-reference/server/), [Storage](https://injaeryou.github.io/resumable-upload/api-reference/storage/), [Exceptions & Utilities](https://injaeryou.github.io/resumable-upload/api-reference/exceptions/).
 
 ### 빠른 참조
 
@@ -215,7 +215,7 @@ final_url = client.create_final_upload(
 
 ## 🔍 TUS 프로토콜 준수
 
-[TUS 프로토콜 v1.0.0](https://tus.io/protocols/resumable-upload.html) 구현. 전체 준수 현황: **[TUS Compliance](https://sts07142.github.io/resumable-upload/compliance/)**.
+[TUS 프로토콜 v1.0.0](https://tus.io/protocols/resumable-upload.html) 구현. 전체 준수 현황: **[TUS Compliance](https://injaeryou.github.io/resumable-upload/compliance/)**.
 
 ### 확장 기능
 
@@ -257,12 +257,12 @@ make ci                # 전체 CI 검사 (린팅 + 포맷팅 + 테스트)
 
 ## 📖 문서
 
-- **문서 사이트**: [sts07142.github.io/resumable-upload](https://sts07142.github.io/resumable-upload/)
-- **English README**: [README.md](https://github.com/sts07142/resumable-upload/blob/main/README.md)
-- **한국어 README**: [README.ko.md](https://github.com/sts07142/resumable-upload/blob/main/README.ko.md)
-- **고급 사용법**: [advanced-usage/retry](https://sts07142.github.io/resumable-upload/advanced-usage/retry/)
-- **전체 API 참조**: [api-reference/client](https://sts07142.github.io/resumable-upload/api-reference/client/)
-- **TUS 프로토콜 준수**: [compliance](https://sts07142.github.io/resumable-upload/compliance/)
+- **문서 사이트**: [injaeryou.github.io/resumable-upload](https://injaeryou.github.io/resumable-upload/)
+- **English README**: [README.md](https://github.com/injaeryou/resumable-upload/blob/main/README.md)
+- **한국어 README**: [README.ko.md](https://github.com/injaeryou/resumable-upload/blob/main/README.ko.md)
+- **고급 사용법**: [advanced-usage/retry](https://injaeryou.github.io/resumable-upload/advanced-usage/retry/)
+- **전체 API 참조**: [api-reference/client](https://injaeryou.github.io/resumable-upload/api-reference/client/)
+- **TUS 프로토콜 준수**: [compliance](https://injaeryou.github.io/resumable-upload/compliance/)
 
 ## 🤝 기여하기
 
@@ -278,6 +278,6 @@ MIT License - 자세한 내용은 [LICENSE](LICENSE) 파일을 참조하세요.
 
 ## 📞 지원
 
-- 📫 Issues: [GitHub Issues](https://github.com/sts07142/resumable-upload/issues)
-- 📖 Documentation: [sts07142.github.io/resumable-upload](https://sts07142.github.io/resumable-upload/)
+- 📫 Issues: [GitHub Issues](https://github.com/injaeryou/resumable-upload/issues)
+- 📖 Documentation: [injaeryou.github.io/resumable-upload](https://injaeryou.github.io/resumable-upload/)
 - 🌟 GitHub에서 스타를 눌러주세요!

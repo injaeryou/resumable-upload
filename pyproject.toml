@@ -31,11 +31,11 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/sts07142/resumable-upload"
-Documentation = "https://sts07142.github.io/resumable-upload/"
-Repository = "https://github.com/sts07142/resumable-upload"
-Issues = "https://github.com/sts07142/resumable-upload/issues"
-Changelog = "https://github.com/sts07142/resumable-upload/releases"
+Homepage = "https://github.com/injaeryou/resumable-upload"
+Documentation = "https://injaeryou.github.io/resumable-upload/"
+Repository = "https://github.com/injaeryou/resumable-upload"
+Issues = "https://github.com/injaeryou/resumable-upload/issues"
+Changelog = "https://github.com/injaeryou/resumable-upload/releases"
 
 [project.scripts]
 resumable-upload = "resumable_upload.cli:main"

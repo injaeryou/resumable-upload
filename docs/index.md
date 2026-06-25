@@ -109,5 +109,5 @@ Implements TUS v1.0.0 core plus the `creation`, `creation-with-upload`, `creatio
 
 ## README
 
-- [English README](https://github.com/sts07142/resumable-upload/blob/main/README.md)
-- [한국어 README](https://github.com/sts07142/resumable-upload/blob/main/README.ko.md)
+- [English README](https://github.com/injaeryou/resumable-upload/blob/main/README.md)
+- [한국어 README](https://github.com/injaeryou/resumable-upload/blob/main/README.ko.md)
