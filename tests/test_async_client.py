@@ -136,3 +136,23 @@ async def test_async_concatenation_merges_partials(asgi_base, tmp_path):
         final = await client.create_final_upload([p1, p2], metadata={"filename": "hw.bin"})
         info = await client.get_upload_info(final)
         assert info["length"] == 11
+
+
+@pytest.mark.anyio
+async def test_create_partial_upload_requires_source(asgi_base):
+    from resumable_upload.client.aio.client import AsyncTusClient
+
+    transport, base = asgi_base
+    async with AsyncTusClient(base, _transport=transport) as client:
+        with pytest.raises(ValueError, match="file_path or file_stream"):
+            await client.create_partial_upload()
+
+
+@pytest.mark.anyio
+async def test_create_final_upload_requires_urls(asgi_base):
+    from resumable_upload.client.aio.client import AsyncTusClient
+
+    transport, base = asgi_base
+    async with AsyncTusClient(base, _transport=transport) as client:
+        with pytest.raises(ValueError, match="at least one"):
+            await client.create_final_upload([])

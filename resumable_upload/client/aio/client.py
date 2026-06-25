@@ -460,7 +460,7 @@ class AsyncTusClient:
         )
         try:
             await up.upload(progress_callback=progress_callback)
-            return url
+            return up.url
         finally:
             await up.aclose()
 
