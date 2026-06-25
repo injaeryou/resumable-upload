@@ -250,3 +250,26 @@ def test_concatenation_final_merges_partials(server, dispatch):
     )
     assert status == 201
     assert headers["Upload-Length"] == "11"
+
+
+def test_head_partial_advertises_upload_concat(server, dispatch):
+    # Concatenation extension: HEAD on a partial upload must echo Upload-Concat.
+    _, post_headers, _ = dispatch(
+        server,
+        "POST",
+        "/files",
+        _h(**{"Upload-Length": "5", "Upload-Concat": "partial"}),
+        b"",
+    )
+    location = post_headers["Location"]
+    status, headers, _ = dispatch(server, "HEAD", location, _h(), b"")
+    assert status == 200
+    assert headers.get("Upload-Concat") == "partial"
+
+
+def test_head_non_partial_omits_upload_concat(server, dispatch):
+    _, post_headers, _ = dispatch(server, "POST", "/files", _h(**{"Upload-Length": "5"}), b"")
+    location = post_headers["Location"]
+    status, headers, _ = dispatch(server, "HEAD", location, _h(), b"")
+    assert status == 200
+    assert "Upload-Concat" not in headers

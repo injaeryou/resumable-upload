@@ -51,7 +51,9 @@ Compliance status against the [TUS resumable upload protocol v1.0.0](https://tus
 | DELETE removes upload, returns `204` | ✅ | |
 | DELETE returns `404` for unknown upload | ✅ | |
 | `Upload-Concat: partial` creates a partial upload | ✅ | Partials never fire `on_upload_complete` individually |
+| HEAD on a partial echoes `Upload-Concat: partial` | ✅ | Lets a conformant client distinguish a partial from a normal upload |
 | `Upload-Concat: final;…` merges partials into a final upload | ✅ | Returns `400` if any partial is missing or incomplete |
+| HEAD on a final echoes `Upload-Concat: final;…` | ⚠️ Not implemented | Source partial URLs aren't persisted, so the original `final;…` value isn't reconstructed on HEAD. Finals complete synchronously on POST (`Upload-Offset == Upload-Length`), so the post-concatenation offset/length requirement is met; only the header echo is absent. |
 | Concurrent PATCH/DELETE serialized via `LockBackend` | ✅ | Optional; `423 Locked` on contention beyond `lock_wait_seconds` |
 | Malformed `Content-Length` header → `400` | ✅ | |
 | Negative `Content-Length` → `400` | ✅ | |

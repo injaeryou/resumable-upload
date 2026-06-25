@@ -70,4 +70,11 @@ def _build_head_response(
             encoded_metadata.append(f"{key} {encoded_value}")
         response_headers["Upload-Metadata"] = ",".join(encoded_metadata)
 
+    # Concatenation extension: a partial upload's HEAD response must advertise
+    # Upload-Concat so a spec-conformant client can tell it apart from a normal
+    # upload. (Final uploads complete synchronously on POST and are never
+    # observable as an in-progress concat here, so only "partial" is echoed.)
+    if upload.get("is_partial"):
+        response_headers["Upload-Concat"] = "partial"
+
     return (200, response_headers, b"")
