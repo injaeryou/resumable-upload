@@ -186,7 +186,10 @@ class AsyncTusClient:
         if not location:
             raise TusCommunicationError("Server did not return Location header")
 
-        return urljoin(self.url + "/", location)
+        if not location.startswith("http"):
+            location = urljoin(self.url, location)
+
+        return location
 
     # ------------------------------------------------------------------
     # Public API
@@ -284,6 +287,7 @@ class AsyncTusClient:
             file_stream=file_stream,
             chunk_size=self.chunk_size,
             checksum=self.checksum,
+            metadata_encoding=self.metadata_encoding,
             headers=self.headers.copy(),
             max_retries=self.max_retries,
             retry_delay=self.retry_delay,
@@ -308,7 +312,7 @@ class AsyncTusClient:
     ) -> str:
         """Placeholder for parallel async uploads (implemented in Task 4.2)."""
         raise NotImplementedError(
-            "parallel_uploads is implemented in AsyncTusClient as of Task 4.2"
+            "parallel async uploads are not yet implemented (landing in a later task)"
         )
 
     async def resume_upload(
@@ -347,6 +351,7 @@ class AsyncTusClient:
             file_stream=file_stream,
             chunk_size=self.chunk_size,
             checksum=self.checksum,
+            metadata_encoding=self.metadata_encoding,
             headers=self.headers.copy(),
             max_retries=self.max_retries,
             retry_delay=self.retry_delay,
@@ -450,6 +455,7 @@ class AsyncTusClient:
             file_stream=file_stream,
             chunk_size=actual_chunk_size,
             checksum=self.checksum,
+            metadata_encoding=self.metadata_encoding,
             headers=self.headers.copy(),
             max_retries=self.max_retries,
             retry_delay=self.retry_delay,
