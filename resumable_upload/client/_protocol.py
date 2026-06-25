@@ -1,0 +1,62 @@
+# resumable_upload/client/_protocol.py
+"""Pure, transport-agnostic TUS client helpers shared by the sync and async
+clients. No urllib / httpx imports — only header strings in, data out."""
+
+from __future__ import annotations
+
+import base64
+import re
+from typing import Any
+
+_KEY_RE = re.compile(r"^$|[\s,]+")
+
+
+def encode_metadata(metadata: dict[str, str], encoding: str) -> list[str]:
+    encoded: list[str] = []
+    for key, value in metadata.items():
+        key_str = str(key)
+        if _KEY_RE.search(key_str):
+            raise ValueError(
+                f'Upload-metadata key "{key_str}" cannot be empty nor contain spaces or commas.'
+            )
+        encoded.append(f"{key_str} {base64.b64encode(value.encode(encoding)).decode('ascii')}")
+    return encoded
+
+
+def parse_upload_metadata(header_value: str | None, encoding: str) -> dict[str, str]:
+    if not header_value:
+        return {}
+    out: dict[str, str] = {}
+    for pair in header_value.split(","):
+        pair = pair.strip()
+        if " " in pair:
+            key, value = pair.split(" ", 1)
+            try:
+                out[key] = base64.b64decode(value).decode(encoding)
+            except (ValueError, UnicodeDecodeError):
+                out[key] = value
+    return out
+
+
+def parse_upload_info(
+    offset: str | None, length: str | None, metadata: str | None, encoding: str
+) -> dict[str, Any]:
+    off = int(offset) if offset else 0
+    ln = int(length) if length else 0
+    return {
+        "offset": off,
+        "length": ln,
+        "complete": ln > 0 and off >= ln,
+        "metadata": parse_upload_metadata(metadata, encoding),
+    }
+
+
+def parse_server_info(
+    version: str | None, extension: str | None, max_size: str | None, default_version: str
+) -> dict[str, Any]:
+    extensions = [e.strip() for e in extension.split(",") if e.strip()] if extension else []
+    return {
+        "version": version or default_version,
+        "extensions": extensions,
+        "max_size": int(max_size) if max_size else None,
+    }
