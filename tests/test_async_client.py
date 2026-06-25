@@ -40,3 +40,48 @@ async def test_http_request_helper_returns_response(asgi_base):
     async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as c:
         resp = await _http.request(c, "OPTIONS", base, headers={})
         assert resp.status_code == 204
+
+
+@pytest.mark.anyio
+async def test_async_uploader_uploads_in_chunks(asgi_base):
+    import io
+    import os
+
+    from resumable_upload.client.aio.uploader import AsyncUploader
+
+    transport, base = asgi_base
+    payload = os.urandom(50_000)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as c:
+        # create an upload via raw POST
+        r = await c.request(
+            "POST", base, headers={"Tus-Resumable": "1.0.0", "Upload-Length": str(len(payload))}
+        )
+        url = r.headers["Location"]
+        up = await AsyncUploader.open(c, url, file_stream=io.BytesIO(payload), chunk_size=16_384)
+        await up.upload()
+        assert up.is_complete
+        # verify server offset == length
+        head = await c.request("HEAD", url, headers={"Tus-Resumable": "1.0.0"})
+        assert head.headers["Upload-Offset"] == str(len(payload))
+
+
+@pytest.mark.anyio
+async def test_async_uploader_checksum_roundtrip(asgi_base):
+    import io
+
+    from resumable_upload.client.aio.uploader import AsyncUploader
+
+    transport, base = asgi_base
+    data = b"hello async world"
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as c:
+        r = await c.request(
+            "POST",
+            base,
+            headers={"Tus-Resumable": "1.0.0", "Upload-Length": str(len(data))},
+        )
+        url = r.headers["Location"]
+        up = await AsyncUploader.open(
+            c, url, file_stream=io.BytesIO(data), checksum="sha1", chunk_size=4
+        )
+        await up.upload()
+        assert up.is_complete
