@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from typing import Any
 
 from resumable_upload.exceptions import TusCommunicationError
@@ -10,7 +11,7 @@ from resumable_upload.exceptions import TusCommunicationError
 def import_httpx() -> Any:
     try:
         import httpx
-    except ModuleNotFoundError as e:  # pragma: no cover - exercised via subprocess
+    except ImportError as e:  # pragma: no cover - exercised via subprocess
         raise ImportError(
             "The async client requires httpx. Install it with: "
             "pip install resumable-upload[async]"
@@ -19,7 +20,7 @@ def import_httpx() -> Any:
 
 
 async def request(
-    client: Any, method: str, url: str, *, headers: dict, content: bytes = b""
+    client: Any, method: str, url: str, *, headers: Mapping[str, str], content: bytes = b""
 ) -> Any:
     """Issue a request; map transport errors to TusCommunicationError.
 

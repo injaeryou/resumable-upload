@@ -33,7 +33,7 @@ def asgi_base(tmp_path):
 
 
 @pytest.mark.anyio
-async def test_http_helper_maps_errors(asgi_base):
+async def test_http_request_helper_returns_response(asgi_base):
     from resumable_upload.client.aio import _http
 
     transport, base = asgi_base
