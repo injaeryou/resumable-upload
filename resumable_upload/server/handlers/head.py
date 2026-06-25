@@ -19,6 +19,19 @@ def handle_head(
     server: TusServerCore, upload_id: str, headers: dict[str, str]
 ) -> tuple[int, dict[str, str], bytes]:
     upload = server.storage.get_upload(upload_id)
+    return _build_head_response(server, upload_id, upload)
+
+
+async def handle_head_async(
+    server: TusServerCore, upload_id: str, headers: dict[str, str]
+) -> tuple[int, dict[str, str], bytes]:
+    upload = await server.storage.get_upload_async(upload_id)
+    return _build_head_response(server, upload_id, upload)
+
+
+def _build_head_response(
+    server: TusServerCore, upload_id: str, upload: dict | None
+) -> tuple[int, dict[str, str], bytes]:
     if not upload:
         logger.warning("Upload not found: %s", upload_id)
         return server._error_response(404, "Upload not found")

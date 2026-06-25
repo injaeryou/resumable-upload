@@ -45,9 +45,7 @@ def _new_id() -> str:
 @pytest.mark.anyio
 async def test_create_upload_async_delegates_and_matches(storage):
     upload_id = _new_id()
-    with patch.object(
-        storage, "create_upload", wraps=storage.create_upload
-    ) as spy:
+    with patch.object(storage, "create_upload", wraps=storage.create_upload) as spy:
         await storage.create_upload_async(upload_id, 5, {"filename": "x"})
     spy.assert_called_once()
     args, _ = spy.call_args
@@ -69,9 +67,7 @@ async def test_get_upload_async_matches_sync(storage):
 async def test_update_offset_async_persists(storage):
     upload_id = _new_id()
     storage.create_upload(upload_id, 10, {})
-    with patch.object(
-        storage, "update_offset", wraps=storage.update_offset
-    ) as spy:
+    with patch.object(storage, "update_offset", wraps=storage.update_offset) as spy:
         await storage.update_offset_async(upload_id, 4)
     spy.assert_called_once_with(upload_id, 4)
     assert storage.get_upload(upload_id)["offset"] == 4
@@ -82,9 +78,7 @@ async def test_update_offset_atomic_async_returns_bool(storage):
     upload_id = _new_id()
     storage.create_upload(upload_id, 10, {})
     storage.update_offset(upload_id, 0)
-    with patch.object(
-        storage, "update_offset_atomic", wraps=storage.update_offset_atomic
-    ) as spy:
+    with patch.object(storage, "update_offset_atomic", wraps=storage.update_offset_atomic) as spy:
         ok = await storage.update_offset_atomic_async(upload_id, 0, 5)
         stale = await storage.update_offset_atomic_async(upload_id, 0, 7)
     assert ok is True
@@ -99,9 +93,7 @@ async def test_complete_upload_async_delegates(storage):
     storage.create_upload(upload_id, 3, {})
     storage.write_chunk(upload_id, 0, b"abc")
     storage.update_offset(upload_id, 3)
-    with patch.object(
-        storage, "complete_upload", wraps=storage.complete_upload
-    ) as spy:
+    with patch.object(storage, "complete_upload", wraps=storage.complete_upload) as spy:
         result = await storage.complete_upload_async(upload_id)
     spy.assert_called_once_with(upload_id)
     # SQLiteStorage always returns True; this contract is per-backend.
@@ -113,9 +105,7 @@ async def test_complete_upload_async_delegates(storage):
 async def test_delete_upload_async_removes_record(storage):
     upload_id = _new_id()
     storage.create_upload(upload_id, 3, {})
-    with patch.object(
-        storage, "delete_upload", wraps=storage.delete_upload
-    ) as spy:
+    with patch.object(storage, "delete_upload", wraps=storage.delete_upload) as spy:
         await storage.delete_upload_async(upload_id)
     spy.assert_called_once_with(upload_id)
     assert storage.get_upload(upload_id) is None
@@ -125,9 +115,7 @@ async def test_delete_upload_async_removes_record(storage):
 async def test_write_chunk_async_persists_bytes(storage):
     upload_id = _new_id()
     storage.create_upload(upload_id, 5, {})
-    with patch.object(
-        storage, "write_chunk", wraps=storage.write_chunk
-    ) as spy:
+    with patch.object(storage, "write_chunk", wraps=storage.write_chunk) as spy:
         await storage.write_chunk_async(upload_id, 0, b"hello")
     spy.assert_called_once_with(upload_id, 0, b"hello")
     assert storage.read_file(upload_id) == b"hello"
@@ -148,9 +136,7 @@ async def test_read_file_async_matches_sync(storage):
 async def test_set_upload_length_async_commits_deferred(storage):
     upload_id = _new_id()
     storage.create_upload(upload_id, None, {})
-    with patch.object(
-        storage, "set_upload_length", wraps=storage.set_upload_length
-    ) as spy:
+    with patch.object(storage, "set_upload_length", wraps=storage.set_upload_length) as spy:
         await storage.set_upload_length_async(upload_id, 7)
     spy.assert_called_once_with(upload_id, 7)
     assert storage.get_upload(upload_id)["upload_length"] == 7
@@ -165,9 +151,7 @@ async def test_get_expired_uploads_async_returns_list(storage):
         {},
         expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
     )
-    with patch.object(
-        storage, "get_expired_uploads", wraps=storage.get_expired_uploads
-    ) as spy:
+    with patch.object(storage, "get_expired_uploads", wraps=storage.get_expired_uploads) as spy:
         result = await storage.get_expired_uploads_async()
     spy.assert_called_once_with()
     assert expired_id in result
@@ -209,9 +193,7 @@ async def test_concatenate_uploads_async_merges_partials(storage):
         "concatenate_uploads",
         wraps=storage.concatenate_uploads,
     ) as spy:
-        total = await storage.concatenate_uploads_async(
-            final_id, [p1, p2], {"name": "merged"}
-        )
+        total = await storage.concatenate_uploads_async(final_id, [p1, p2], {"name": "merged"})
     spy.assert_called_once()
     assert total == len(b"hello-world")
     assert storage.read_file(final_id) == b"hello-world"

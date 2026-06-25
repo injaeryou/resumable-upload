@@ -26,3 +26,10 @@ def handle_options(
         response_headers["Tus-Max-Size"] = str(server.max_size)
 
     return (204, response_headers, b"")
+
+
+async def handle_options_async(
+    server: TusServerCore, path: str, headers: dict[str, str]
+) -> tuple[int, dict[str, str], bytes]:
+    # No storage I/O — defer to the sync implementation.
+    return handle_options(server, path, headers)

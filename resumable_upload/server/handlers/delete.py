@@ -20,6 +20,22 @@ def handle_delete(
         return server._error_response(404, "Upload not found")
 
     server.storage.delete_upload(upload_id)
+    return _finalize_delete(server, upload_id)
+
+
+async def handle_delete_async(
+    server: TusServerCore, upload_id: str, headers: dict[str, str]
+) -> tuple[int, dict[str, str], bytes]:
+    upload = await server.storage.get_upload_async(upload_id)
+    if not upload:
+        logger.warning("Upload not found for deletion: %s", upload_id)
+        return server._error_response(404, "Upload not found")
+
+    await server.storage.delete_upload_async(upload_id)
+    return _finalize_delete(server, upload_id)
+
+
+def _finalize_delete(server: TusServerCore, upload_id: str) -> tuple[int, dict[str, str], bytes]:
     logger.info("Deleted upload %s", upload_id)
     if server._metrics is not None:
         server._metrics.inc("tusd_uploads_terminated_total")

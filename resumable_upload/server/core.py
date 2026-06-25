@@ -1,7 +1,9 @@
 """TUS protocol server implementation."""
 
+import asyncio
 import logging
 import threading
+from collections.abc import Awaitable
 from datetime import datetime, timezone
 from typing import Any, Callable, Optional
 
@@ -11,12 +13,20 @@ from resumable_upload.locks import LockBackend
 from resumable_upload.metrics import MetricsRegistry
 from resumable_upload.server.handlers import (
     handle_create,
+    handle_create_async,
     handle_delete,
+    handle_delete_async,
     handle_head,
+    handle_head_async,
     handle_options,
+    handle_options_async,
     handle_patch,
+    handle_patch_async,
 )
-from resumable_upload.server.handlers.create import handle_create_final
+from resumable_upload.server.handlers.create import (
+    handle_create_final,
+    handle_create_final_async,
+)
 from resumable_upload.server.headers import (
     add_cors_headers,
     format_expiry,
@@ -208,6 +218,30 @@ class TusServerCore:
         finally:
             self._locks.release(upload_id, token)
 
+    async def _with_lock_async(
+        self,
+        upload_id: str,
+        fn: Callable[[], Awaitable[tuple[int, dict, bytes]]],
+    ) -> tuple[int, dict, bytes]:
+        """Async sibling of :meth:`_with_lock`. ``LockBackend`` stays sync;
+        ``acquire``/``release`` run on a worker thread while the wrapped
+        coroutine is awaited under the held lock.
+        """
+        if self._locks is None:
+            return await fn()
+        token = await asyncio.to_thread(
+            self._locks.acquire,
+            upload_id,
+            ttl_seconds=self._lock_ttl,
+            wait_timeout=self._lock_wait,
+        )
+        if token is None:
+            return self._error_response(423, "Upload locked; retry later")
+        try:
+            return await fn()
+        finally:
+            await asyncio.to_thread(self._locks.release, upload_id, token)
+
     def _add_cors_headers(self, headers: dict) -> dict:
         """Add CORS headers if cors_allow_origins is configured."""
         return add_cors_headers(headers, self.cors_allow_origins)
@@ -344,6 +378,118 @@ class TusServerCore:
 
         return (status, self._add_cors_headers(resp_headers), resp_body)
 
+    async def handle_request_async(
+        self, method: str, path: str, headers: dict[str, str], body: bytes = b""
+    ) -> tuple[int, dict[str, str], bytes]:
+        """Async sibling of :meth:`handle_request`.
+
+        Mirrors the same protocol surface but awaits storage I/O so true-async
+        backends (overrides on Storage's ``*_async`` methods) gain non-blocking
+        behavior end-to-end. Default sync backends fall back to the
+        ``asyncio.to_thread`` wrappers on the Storage ABC — same throughput as
+        :meth:`handle_request`.
+        """
+        logger.info("Received %s request for %s", method, path)
+
+        headers = {k.lower(): v for k, v in headers.items()}
+
+        if self._metrics is not None:
+            self._metrics.inc("tusd_requests_total", labels={"method": method})
+
+        if method == "POST":
+            override = headers.get("x-http-method-override", "").strip().upper()
+            if override:
+                allowed_overrides = {"PATCH", "DELETE", "HEAD"}
+                if override not in allowed_overrides:
+                    status, resp_headers, resp_body = self._error_response(
+                        400, f"Unsupported X-HTTP-Method-Override value: {override}"
+                    )
+                    return (status, self._add_cors_headers(resp_headers), resp_body)
+                method = override
+
+        if method == "PATCH" and self.max_chunk_size > 0 and len(body) > self.max_chunk_size:
+            return self._error_response(413, "Chunk exceeds maximum chunk size")
+        if self.max_size > 0 and len(body) > self.max_size:
+            return self._error_response(413, "Request entity too large")
+
+        if self._on_incoming_request:
+            try:
+                self._invoke_pre_hook(self._on_incoming_request, method, path, headers)
+            except TusHookError as e:
+                return (
+                    e.status_code,
+                    self._add_cors_headers({"Tus-Resumable": self.TUS_VERSION}),
+                    e.body.encode(),
+                )
+
+        if method != "OPTIONS":
+            tus_version = headers.get("tus-resumable")
+            if tus_version != self.TUS_VERSION:
+                logger.warning(
+                    "Invalid TUS version: %s, expected %s", tus_version, self.TUS_VERSION
+                )
+                status, resp_headers, resp_body = (
+                    412,
+                    {"Tus-Resumable": self.TUS_VERSION},
+                    b"Precondition Failed: Invalid TUS version",
+                )
+                return (status, self._add_cors_headers(resp_headers), resp_body)
+
+        if method == "OPTIONS":
+            result = await self._handle_options_async(path, headers)
+        elif method == "POST" and path == self.base_path:
+            result = await self._handle_create_async(headers, body)
+        elif method == "HEAD" and path.startswith(self.base_path + "/"):
+            upload_id = path[len(self.base_path) + 1 :]
+            if not self._validate_upload_id(upload_id):
+                result = self._error_response(400, "Invalid upload ID format")
+            else:
+                result = await self._handle_head_async(upload_id, headers)
+        elif method == "PATCH" and path.startswith(self.base_path + "/"):
+            upload_id = path[len(self.base_path) + 1 :]
+            if not self._validate_upload_id(upload_id):
+                result = self._error_response(400, "Invalid upload ID format")
+            else:
+                result = await self._with_lock_async(
+                    upload_id,
+                    lambda: self._handle_patch_async(upload_id, headers, body),
+                )
+        elif method == "DELETE" and path.startswith(self.base_path + "/"):
+            upload_id = path[len(self.base_path) + 1 :]
+            if not self._validate_upload_id(upload_id):
+                result = self._error_response(400, "Invalid upload ID format")
+            else:
+                result = await self._with_lock_async(
+                    upload_id,
+                    lambda: self._handle_delete_async(upload_id, headers),
+                )
+        else:
+            logger.warning("Route not found: %s %s", method, path)
+            result = self._error_response(404, "Not Found")
+
+        status, resp_headers, resp_body = result
+
+        if self.upload_expiry is not None:
+            now = datetime.now(timezone.utc)
+            if (
+                self._last_cleanup is None
+                or (now - self._last_cleanup).total_seconds() >= self.cleanup_interval
+            ):
+                with self._cleanup_lock:
+                    if (
+                        self._last_cleanup is None
+                        or (now - self._last_cleanup).total_seconds() >= self.cleanup_interval
+                    ):
+                        self._last_cleanup = now
+                        count = await self.storage.cleanup_expired_uploads_async()
+                        if count:
+                            logger.info("Cleaned up %s expired upload(s)", count)
+
+        if self._metrics is not None and status >= 400:
+            self._metrics.inc("tusd_errors_total", labels={"status": str(status)})
+
+        return (status, self._add_cors_headers(resp_headers), resp_body)
+
     # --- Per-method delegates ---------------------------------------------
     # These exist so subclasses can override a single method without rewiring
     # the dispatch in ``handle_request``. The real bodies live in
@@ -378,3 +524,35 @@ class TusServerCore:
         self, upload_id: str, headers: dict[str, str]
     ) -> tuple[int, dict[str, str], bytes]:
         return handle_delete(self, upload_id, headers)
+
+    # --- Async per-method delegates ---------------------------------------
+
+    async def _handle_options_async(
+        self, path: str, headers: dict[str, str]
+    ) -> tuple[int, dict[str, str], bytes]:
+        return await handle_options_async(self, path, headers)
+
+    async def _handle_create_async(
+        self, headers: dict[str, str], body: bytes
+    ) -> tuple[int, dict[str, str], bytes]:
+        return await handle_create_async(self, headers, body)
+
+    async def _handle_create_final_async(
+        self, concat_header: str, headers: dict[str, str]
+    ) -> tuple[int, dict[str, str], bytes]:
+        return await handle_create_final_async(self, concat_header, headers)
+
+    async def _handle_head_async(
+        self, upload_id: str, headers: dict[str, str]
+    ) -> tuple[int, dict[str, str], bytes]:
+        return await handle_head_async(self, upload_id, headers)
+
+    async def _handle_patch_async(
+        self, upload_id: str, headers: dict[str, str], body: bytes
+    ) -> tuple[int, dict[str, str], bytes]:
+        return await handle_patch_async(self, upload_id, headers, body)
+
+    async def _handle_delete_async(
+        self, upload_id: str, headers: dict[str, str]
+    ) -> tuple[int, dict[str, str], bytes]:
+        return await handle_delete_async(self, upload_id, headers)
