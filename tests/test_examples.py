@@ -163,6 +163,13 @@ class TestClientExamples:
         _assert_success(result, "resume")
         assert (workdir / ".tus_urls.json").exists()
 
+    def test_async_upload(self, server: int, sample_file: Path, workdir: Path) -> None:
+        pytest.importorskip("httpx")
+        result = _run_client(
+            "async_upload.py", [f"http://127.0.0.1:{server}/files", str(sample_file)], cwd=workdir
+        )
+        _assert_success(result, "async_upload")
+
 
 class TestStaleStoredURLFallback:
     """Regression: stored URLs persist across runs but are keyed only by file
