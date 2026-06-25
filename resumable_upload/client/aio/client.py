@@ -465,6 +465,59 @@ class AsyncTusClient:
             on_should_retry=self.on_should_retry,
         )
 
+    async def get_metadata(self, upload_url: str) -> dict[str, str]:
+        """Get metadata for an upload via HEAD request.
+
+        Args:
+            upload_url: URL of the upload.
+
+        Returns:
+            Dictionary of metadata key-value pairs.
+
+        Raises:
+            TusCommunicationError: If the HEAD request fails.
+        """
+        headers: dict[str, str] = {
+            "Tus-Resumable": self.TUS_VERSION,
+            **self.headers,
+        }
+        client = await self._ensure_client()
+        resp = await _http.request(
+            client, "HEAD", upload_url, headers=headers, timeout=self.timeout
+        )
+        if resp.status_code >= 400:
+            raise TusCommunicationError(
+                f"Failed to get metadata: server returned {resp.status_code}"
+            )
+        return _protocol.parse_upload_metadata(
+            resp.headers.get("Upload-Metadata"), self.metadata_encoding
+        )
+
+    async def get_server_info(self) -> dict[str, Any]:
+        """Get server information and capabilities via OPTIONS request.
+
+        Returns:
+            Dictionary containing:
+                - version (str): TUS protocol version supported by server
+                - extensions (list[str]): List of supported TUS extensions
+                - max_size (int | None): Maximum upload size in bytes (None if unlimited)
+
+        Raises:
+            TusCommunicationError: If the OPTIONS request fails.
+        """
+        client = await self._ensure_client()
+        resp = await _http.request(client, "OPTIONS", self.url, headers={}, timeout=self.timeout)
+        if resp.status_code >= 400:
+            raise TusCommunicationError(
+                f"Failed to get server info: server returned {resp.status_code}"
+            )
+        return _protocol.parse_server_info(
+            resp.headers.get("Tus-Version"),
+            resp.headers.get("Tus-Extension"),
+            resp.headers.get("Tus-Max-Size"),
+            self.TUS_VERSION,
+        )
+
     async def get_upload_info(self, upload_url: str) -> dict[str, Any]:
         """Get upload status: offset, length, complete flag, and metadata.
 

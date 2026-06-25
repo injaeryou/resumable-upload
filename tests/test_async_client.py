@@ -103,3 +103,19 @@ async def test_async_client_upload_file_roundtrip(asgi_base, tmp_path):
         await client.delete_upload(url)
         # second delete tolerated (404)
         await client.delete_upload(url)
+
+
+@pytest.mark.anyio
+async def test_async_client_server_info_and_metadata(asgi_base, tmp_path):
+    from resumable_upload.client.aio.client import AsyncTusClient
+
+    transport, base = asgi_base
+    f = tmp_path / "m.bin"
+    f.write_bytes(b"xyz")
+    async with AsyncTusClient(base, _transport=transport) as client:
+        info = await client.get_server_info()
+        assert info["version"] == "1.0.0"
+        assert "creation" in info["extensions"]
+        url = await client.upload_file(str(f), metadata={"filename": "m.bin"})
+        md = await client.get_metadata(url)
+        assert md["filename"] == "m.bin"
