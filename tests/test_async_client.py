@@ -22,9 +22,7 @@ def asgi_base(tmp_path):
     handle_request_async, so this also exercises the real async server path.
     """
     tus = TusServer(
-        storage=SQLiteStorage(
-            db_path=str(tmp_path / "u.db"), upload_dir=str(tmp_path / "files")
-        ),
+        storage=SQLiteStorage(db_path=str(tmp_path / "u.db"), upload_dir=str(tmp_path / "files")),
         base_path="/files",
     )
     app = TusASGIApp(tus)
@@ -85,3 +83,23 @@ async def test_async_uploader_checksum_roundtrip(asgi_base):
         )
         await up.upload()
         assert up.is_complete
+
+
+@pytest.mark.anyio
+async def test_async_client_upload_file_roundtrip(asgi_base, tmp_path):
+    import os
+
+    from resumable_upload.client.aio.client import AsyncTusClient
+
+    transport, base = asgi_base
+    f = tmp_path / "data.bin"
+    payload = os.urandom(40_000)
+    f.write_bytes(payload)
+    async with AsyncTusClient(base, _transport=transport, chunk_size=8192) as client:
+        url = await client.upload_file(str(f))
+        info = await client.get_upload_info(url)
+        assert info["complete"] is True
+        assert info["offset"] == len(payload)
+        await client.delete_upload(url)
+        # second delete tolerated (404)
+        await client.delete_upload(url)
