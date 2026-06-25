@@ -97,10 +97,14 @@ class AsyncUploader:
         """
         self = cls(client, url, **kwargs)
         await self._init_io()
-        self.offset = await self._get_offset()
-        fh = self._file_handle
-        assert fh is not None
-        await asyncio.to_thread(fh.seek, self.offset)
+        try:
+            self.offset = await self._get_offset()
+            fh = self._file_handle
+            assert fh is not None
+            await asyncio.to_thread(fh.seek, self.offset)
+        except BaseException:
+            await self.aclose()
+            raise
         self._update_stats_after_chunk()
         return self
 
@@ -148,11 +152,11 @@ class AsyncUploader:
             "Tus-Resumable": self.TUS_VERSION,
             **self.headers,
         }
-        resp = await _http.request(self._client, "HEAD", self.url, headers=headers)
+        resp = await _http.request(
+            self._client, "HEAD", self.url, headers=headers, timeout=self.timeout
+        )
         if resp.status_code >= 400:
-            raise TusCommunicationError(
-                f"Failed to get offset: server returned {resp.status_code}"
-            )
+            raise TusCommunicationError(f"Failed to get offset: server returned {resp.status_code}")
         offset = resp.headers.get("Upload-Offset")
         if offset is None:
             raise TusCommunicationError("Server did not return Upload-Offset header")
@@ -185,7 +189,9 @@ class AsyncUploader:
         if self._before_request is not None:
             self._before_request("PATCH", self.url, headers)
 
-        resp = await _http.request(self._client, "PATCH", self.url, headers=headers, content=data)
+        resp = await _http.request(
+            self._client, "PATCH", self.url, headers=headers, content=data, timeout=self.timeout
+        )
 
         if resp.status_code == 409:
             raise _OffsetMismatch(

@@ -13,14 +13,19 @@ def import_httpx() -> Any:
         import httpx
     except ImportError as e:  # pragma: no cover - exercised via subprocess
         raise ImportError(
-            "The async client requires httpx. Install it with: "
-            "pip install resumable-upload[async]"
+            "The async client requires httpx. Install it with: pip install resumable-upload[async]"
         ) from e
     return httpx
 
 
 async def request(
-    client: Any, method: str, url: str, *, headers: Mapping[str, str], content: bytes = b""
+    client: Any,
+    method: str,
+    url: str,
+    *,
+    headers: Mapping[str, str],
+    content: bytes = b"",
+    timeout: float | None = None,
 ) -> Any:
     """Issue a request; map transport errors to TusCommunicationError.
 
@@ -29,6 +34,6 @@ async def request(
     """
     httpx = import_httpx()
     try:
-        return await client.request(method, url, headers=headers, content=content)
+        return await client.request(method, url, headers=headers, content=content, timeout=timeout)
     except httpx.HTTPError as e:
         raise TusCommunicationError(f"{method} {url} failed: {e}") from e
