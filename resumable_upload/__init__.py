@@ -56,4 +56,14 @@ __all__ = [
     "InMemoryURLStorage",
     "SQLiteURLStorage",
     "TusHookError",
+    "AsyncTusClient",
+    "AsyncUploader",
 ]
+
+
+def __getattr__(name: str) -> object:
+    if name in ("AsyncTusClient", "AsyncUploader"):
+        from resumable_upload.client.aio import AsyncTusClient, AsyncUploader
+
+        return {"AsyncTusClient": AsyncTusClient, "AsyncUploader": AsyncUploader}[name]
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

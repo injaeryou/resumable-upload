@@ -9,6 +9,13 @@ from resumable_upload.asgi import TusASGIApp
 httpx = pytest.importorskip("httpx")
 
 
+def test_async_symbols_lazily_exported():
+    import resumable_upload
+
+    assert "AsyncTusClient" in resumable_upload.__all__
+    from resumable_upload import AsyncTusClient, AsyncUploader  # noqa: F401
+
+
 @pytest.fixture
 def anyio_backend():
     return "asyncio"
