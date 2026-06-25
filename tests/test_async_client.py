@@ -119,3 +119,20 @@ async def test_async_client_server_info_and_metadata(asgi_base, tmp_path):
         url = await client.upload_file(str(f), metadata={"filename": "m.bin"})
         md = await client.get_metadata(url)
         assert md["filename"] == "m.bin"
+
+
+@pytest.mark.anyio
+async def test_async_concatenation_merges_partials(asgi_base, tmp_path):
+    from resumable_upload.client.aio.client import AsyncTusClient
+
+    transport, base = asgi_base
+    a = tmp_path / "a"
+    a.write_bytes(b"hello")
+    b = tmp_path / "b"
+    b.write_bytes(b"-world")
+    async with AsyncTusClient(base, _transport=transport) as client:
+        p1 = await client.create_partial_upload(str(a))
+        p2 = await client.create_partial_upload(str(b))
+        final = await client.create_final_upload([p1, p2], metadata={"filename": "hw.bin"})
+        info = await client.get_upload_info(final)
+        assert info["length"] == 11

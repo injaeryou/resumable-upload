@@ -405,6 +405,118 @@ class AsyncTusClient:
         """
         return await self._create_upload(file_size=0, metadata=metadata or {}, defer_length=True)
 
+    async def create_partial_upload(
+        self,
+        file_path: str | None = None,
+        file_stream: IO[bytes] | None = None,
+        metadata: dict[str, str] | None = None,
+        progress_callback: Callable[[UploadStats], None] | None = None,
+    ) -> str:
+        """Create and fully upload a partial upload (TUS concatenation extension).
+
+        Partial uploads are the building blocks of a concatenated final upload.
+        Pair this with :meth:`create_final_upload` to merge them server-side.
+
+        Args:
+            file_path: Path to file to upload (required if file_stream not provided).
+            file_stream: File stream to upload (alternative to file_path).
+            metadata: Optional metadata dictionary sent on creation.
+            progress_callback: Optional callback that receives UploadStats.
+
+        Returns:
+            URL of the completed partial upload.
+
+        Raises:
+            ValueError: If neither file_path nor file_stream is provided.
+            TusCommunicationError: If the upload fails.
+        """
+        if not file_path and not file_stream:
+            raise ValueError("Either file_path or file_stream must be provided")
+
+        file_size = self.get_file_size(file_path or file_stream)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+
+        url = await self._create_upload(
+            file_size,
+            metadata or {},
+            extra_headers={"Upload-Concat": "partial"},
+        )
+
+        client = await self._ensure_client()
+        up = await AsyncUploader.open(
+            client,
+            url,
+            file_path=file_path,
+            file_stream=file_stream,
+            chunk_size=self.chunk_size,
+            checksum=self.checksum,
+            metadata_encoding=self.metadata_encoding,
+            headers=self.headers.copy(),
+            max_retries=self.max_retries,
+            retry_delay=self.retry_delay,
+            timeout=self.timeout,
+            before_request=self.before_request,
+            after_response=self.after_response,
+            on_should_retry=self.on_should_retry,
+        )
+        try:
+            await up.upload(progress_callback=progress_callback)
+            return url
+        finally:
+            await up.aclose()
+
+    async def create_final_upload(
+        self,
+        partial_urls: list[str],
+        metadata: dict[str, str] | None = None,
+    ) -> str:
+        """Create a final upload that concatenates the given partial upload URLs.
+
+        The server merges the listed partials (in order) into a single completed
+        upload. All partials must already be fully uploaded; incomplete partials
+        cause the server to return 400.
+
+        Args:
+            partial_urls: Ordered list of partial upload URLs.
+            metadata: Metadata to attach to the final upload.
+
+        Returns:
+            URL of the new final upload.
+
+        Raises:
+            ValueError: If partial_urls is empty.
+            TusCommunicationError: If the server rejects the final-creation.
+        """
+        if not partial_urls:
+            raise ValueError("partial_urls must contain at least one URL")
+
+        concat_header = "final;" + " ".join(partial_urls)
+        encoded = _protocol.encode_metadata(metadata or {}, self.metadata_encoding)
+
+        headers: dict[str, str] = {
+            "Tus-Resumable": self.TUS_VERSION,
+            "Upload-Concat": concat_header,
+            **self.headers,
+        }
+        if encoded:
+            headers["Upload-Metadata"] = ",".join(encoded)
+
+        client = await self._ensure_client()
+        resp = await _http.request(client, "POST", self.url, headers=headers, timeout=self.timeout)
+
+        if resp.status_code >= 400:
+            raise TusCommunicationError(
+                f"Failed to create final upload: server returned {resp.status_code}"
+            )
+
+        location: str | None = resp.headers.get("Location")
+        if not location:
+            raise TusCommunicationError("Server did not return Location header")
+
+        if not location.startswith("http"):
+            location = urljoin(self.url, location)
+
+        return location
+
     async def create_uploader(
         self,
         file_path: str | None = None,
