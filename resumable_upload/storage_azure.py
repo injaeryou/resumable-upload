@@ -5,7 +5,7 @@ import warnings
 
 warnings.warn(
     "resumable_upload.storage_azure is deprecated since 0.0.6 and will be "
-    "removed in 0.0.8 / 0.1.0; import from "
+    "removed after 0.1.2; import from "
     "resumable_upload.storage.azure_storage instead.",
     DeprecationWarning,
     stacklevel=2,

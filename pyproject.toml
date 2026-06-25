@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "resumable-upload"
-version = "0.0.5"
+version = "0.1.0"
 description = "A Python implementation of the `TUS resumable upload protocol` for server and client, with zero runtime dependencies."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -35,7 +35,8 @@ Homepage = "https://github.com/injaeryou/resumable-upload"
 Documentation = "https://injaeryou.github.io/resumable-upload/"
 Repository = "https://github.com/injaeryou/resumable-upload"
 Issues = "https://github.com/injaeryou/resumable-upload/issues"
-Changelog = "https://github.com/injaeryou/resumable-upload/releases"
+Changelog = "https://github.com/injaeryou/resumable-upload/blob/main/CHANGELOG.md"
+Releases = "https://github.com/injaeryou/resumable-upload/releases"
 
 [project.scripts]
 resumable-upload = "resumable_upload.cli:main"

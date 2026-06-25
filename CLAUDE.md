@@ -73,8 +73,7 @@ docs/                      — user-facing mkdocs site (do not repurpose)
 ```
 
 Legacy import paths are kept alive but emit ``DeprecationWarning`` on
-first use, **deprecated in 0.0.6, scheduled for removal in 0.0.8 or
-0.1.0**:
+first use, **deprecated in 0.0.6, scheduled for removal after 0.1.2**:
 ``resumable_upload.storage_s3``, ``storage_gcs``, ``storage_azure``,
 ``locks_redis``, and ``client.base`` are ``sys.modules`` aliases for the
 new submodules. New code (and the project's own tests / examples / docs)
