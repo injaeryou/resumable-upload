@@ -1,4 +1,5 @@
 """The [async] extra declares httpx; core import must not require it."""
+
 import re
 import subprocess
 import sys

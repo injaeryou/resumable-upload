@@ -9,7 +9,7 @@ __all__ = ["TusClient", "UploadStats", "Uploader", "AsyncTusClient", "AsyncUploa
 
 def __getattr__(name: str) -> object:
     if name in ("AsyncTusClient", "AsyncUploader"):
-        from resumable_upload.client.aio import AsyncTusClient, AsyncUploader
+        import resumable_upload.client.aio as _aio
 
-        return {"AsyncTusClient": AsyncTusClient, "AsyncUploader": AsyncUploader}[name]
+        return getattr(_aio, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
