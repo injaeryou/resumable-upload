@@ -43,9 +43,9 @@ def _wait_until_ready(port: int, timeout: float = 5.0) -> None:
     pytest.fail(f"example server did not come up on :{port}: {last_err}")
 
 
-def _spawn_server(port: int, cwd: Path) -> subprocess.Popen:
+def _spawn_server(port: int, cwd: Path, script: str = "http_server.py") -> subprocess.Popen:
     proc = subprocess.Popen(
-        [sys.executable, str(EXAMPLES / "server" / "http_server.py"), str(port)],
+        [sys.executable, str(EXAMPLES / "server" / script), str(port)],
         cwd=str(cwd),
         stdout=subprocess.DEVNULL,
         stderr=subprocess.PIPE,
@@ -235,3 +235,37 @@ class TestStaleStoredURLFallback:
             )
         finally:
             _stop(proc_b)
+
+
+class TestAsyncServerExamples:
+    """The ASGI server examples drive ``handle_request_async`` over a real
+    uvicorn event loop. ``asgi_app.py`` uses the default SQLite storage (async
+    via the to_thread surface); ``async_storage.py`` uses a native-async
+    backend. Both must serve the ordinary sync TUS client unchanged.
+    """
+
+    @pytest.fixture(params=["asgi_app.py", "async_storage.py"])
+    def async_server(self, request, workdir: Path):
+        pytest.importorskip("uvicorn")
+        port = _find_free_port()
+        proc = _spawn_server(port, workdir, script=request.param)
+        try:
+            yield port
+        finally:
+            _stop(proc)
+
+    def test_basic_upload(self, async_server: int, sample_file: Path, workdir: Path) -> None:
+        result = _run_client(
+            "basic_upload.py",
+            [f"http://127.0.0.1:{async_server}/files", str(sample_file)],
+            cwd=workdir,
+        )
+        _assert_success(result, "basic_upload (async server)")
+
+    def test_resume(self, async_server: int, sample_file: Path, workdir: Path) -> None:
+        result = _run_client(
+            "resume.py",
+            [f"http://127.0.0.1:{async_server}/files", str(sample_file)],
+            cwd=workdir,
+        )
+        _assert_success(result, "resume (async server)")
