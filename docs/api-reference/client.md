@@ -253,7 +253,7 @@ lookup with no I/O, so there is no async variant.
 ### AsyncUploader
 
 ```python
-from resumable_upload.client.async_uploader import AsyncUploader
+from resumable_upload import AsyncUploader
 ```
 
 Typically obtained via `AsyncTusClient.create_uploader()`. Mirrors `Uploader`
