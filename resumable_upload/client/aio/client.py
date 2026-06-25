@@ -225,21 +225,22 @@ class AsyncTusClient:
             metadata: Optional metadata dictionary.
             progress_callback: Callback receiving UploadStats after each chunk.
             stop_at: Stop uploading at this byte offset (for partial uploads).
-            parallel_uploads: Number of concurrent partial uploads.
+            parallel_uploads: Number of concurrent partial uploads to run.
                 When > 1 the file is split into ``parallel_uploads`` byte ranges,
                 each uploaded as a TUS partial, then merged server-side via the
                 concatenation extension. Requires ``file_path`` (streams are not
                 split) and is incompatible with ``stop_at``. Server must support
-                the concatenation extension. Parallel async uploads land in Task 4.2.
+                the concatenation extension.
 
         Returns:
             URL of the completed upload.
 
         Raises:
-            ValueError: If validation fails.
+            ValueError: If neither file_path nor file_stream provided,
+                parallel_uploads < 1, parallel_uploads > 1 with a stream,
+                or parallel_uploads > 1 with stop_at.
             FileNotFoundError: If file_path does not exist.
             TusCommunicationError: If the upload fails.
-            NotImplementedError: If parallel_uploads > 1 (not yet implemented).
         """
         if parallel_uploads < 1:
             raise ValueError(f"parallel_uploads must be >= 1, got {parallel_uploads}")
@@ -332,7 +333,12 @@ class AsyncTusClient:
         """
         file_size = self.get_file_size(file_path)
         if file_size == 0:
-            return await self.upload_file(file_path, metadata=metadata, parallel_uploads=1)
+            return await self.upload_file(
+                file_path,
+                metadata=metadata,
+                parallel_uploads=1,
+                progress_callback=progress_callback,
+            )
 
         boundaries = _protocol.split_boundaries(file_size, parallel_uploads)
 
