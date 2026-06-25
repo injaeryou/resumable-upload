@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+import io
 import os
 from collections.abc import Callable
 from typing import IO, Any
@@ -14,6 +16,17 @@ from resumable_upload.client.stats import UploadStats
 from resumable_upload.exceptions import TusCommunicationError
 from resumable_upload.fingerprint import Fingerprint
 from resumable_upload.url_storage import FileURLStorage, URLStorage
+
+
+def _read_slice(path: str, lo: int, length: int) -> bytes:
+    """Read ``length`` bytes from ``path`` starting at byte ``lo``.
+
+    Designed to be called via ``asyncio.to_thread`` so the blocking
+    file I/O is offloaded from the event loop.
+    """
+    with open(path, "rb") as f:
+        f.seek(lo)
+        return f.read(length)
 
 
 class AsyncTusClient:
@@ -310,10 +323,61 @@ class AsyncTusClient:
         parallel_uploads: int,
         progress_callback: Callable[[UploadStats], None] | None,
     ) -> str:
-        """Placeholder for parallel async uploads (implemented in Task 4.2)."""
-        raise NotImplementedError(
-            "parallel async uploads are not yet implemented (landing in a later task)"
-        )
+        """Upload a file in parallel slices using asyncio.gather + a Semaphore.
+
+        Splits the file into ``parallel_uploads`` byte ranges, uploads each as
+        a TUS partial (concatenation extension), then creates a final upload
+        that merges them server-side. Falls back to a single upload for empty
+        files.
+        """
+        file_size = self.get_file_size(file_path)
+        if file_size == 0:
+            return await self.upload_file(file_path, metadata=metadata, parallel_uploads=1)
+
+        boundaries = _protocol.split_boundaries(file_size, parallel_uploads)
+
+        if "filename" not in metadata:
+            metadata = {**metadata, "filename": os.path.basename(file_path)}
+
+        sem = asyncio.Semaphore(parallel_uploads)
+
+        async def upload_slice(lo: int, hi: int) -> str:
+            async with sem:
+                length = hi - lo
+                url = await self._create_upload(
+                    length, {}, extra_headers={"Upload-Concat": "partial"}
+                )
+                buf = await asyncio.to_thread(_read_slice, file_path, lo, length)
+                client = await self._ensure_client()
+                up = await AsyncUploader.open(
+                    client,
+                    url,
+                    file_stream=io.BytesIO(buf),
+                    chunk_size=self.chunk_size,
+                    checksum=self.checksum,
+                    metadata_encoding=self.metadata_encoding,
+                    headers=self.headers.copy(),
+                    max_retries=self.max_retries,
+                    retry_delay=self.retry_delay,
+                    timeout=self.timeout,
+                    before_request=self.before_request,
+                    after_response=self.after_response,
+                    on_should_retry=self.on_should_retry,
+                )
+                try:
+                    await up.upload()
+                    return url
+                finally:
+                    await up.aclose()
+
+        partial_urls = await asyncio.gather(*(upload_slice(lo, hi) for lo, hi in boundaries))
+
+        if progress_callback:
+            stats = UploadStats(total_bytes=file_size)
+            stats.uploaded_bytes = file_size
+            progress_callback(stats)
+
+        return await self.create_final_upload(list(partial_urls), metadata=metadata)
 
     async def resume_upload(
         self,

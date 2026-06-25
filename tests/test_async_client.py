@@ -156,3 +156,20 @@ async def test_create_final_upload_requires_urls(asgi_base):
     async with AsyncTusClient(base, _transport=transport) as client:
         with pytest.raises(ValueError, match="at least one"):
             await client.create_final_upload([])
+
+
+@pytest.mark.anyio
+async def test_async_parallel_upload_merges(asgi_base, tmp_path):
+    import os
+
+    from resumable_upload.client.aio.client import AsyncTusClient
+
+    transport, base = asgi_base
+    f = tmp_path / "big.bin"
+    payload = os.urandom(100_000)
+    f.write_bytes(payload)
+    async with AsyncTusClient(base, _transport=transport, chunk_size=8192) as client:
+        url = await client.upload_file(str(f), parallel_uploads=4)
+        info = await client.get_upload_info(url)
+        assert info["length"] == len(payload)
+        assert info["complete"] is True
