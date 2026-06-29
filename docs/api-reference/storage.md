@@ -58,6 +58,28 @@ class MyStorage(Storage):
     def complete_upload(self, upload_id) -> bool: ...  # cloud-only finalize
 ```
 
+### Async-native backends
+
+Every I/O method on `Storage` has a matching `*_async` sibling — `create_upload_async`, `write_chunk_async`, `update_offset_atomic_async`, and so on. The default implementation just wraps the sync method via `asyncio.to_thread`, so subclasses inherit working async behavior with no extra code. `TusASGIApp` always awaits the async surface, and `TusServer.handle_request_async` is the public entry point.
+
+To deliver true non-blocking I/O — e.g. wrapping `aioboto3` or `gcloud-aio-storage` — override only the methods you have native async implementations for and leave the rest at the inherited default:
+
+```python
+class S3AsyncStorage(S3Storage):
+    async def write_chunk_async(self, upload_id, offset, data):
+        # native non-blocking upload-part call
+        ...
+
+    async def complete_upload_async(self, upload_id):
+        ...
+
+    # everything else inherits the to_thread default
+```
+
+The sync methods stay the canonical surface, so any code path that calls `storage.write_chunk(...)` directly (the stdlib `TusHTTPRequestHandler`, CLI, Flask/Django integrations) keeps working unchanged.
+
+A complete, runnable native-async backend lives in `examples/server/async_storage.py` (`AsyncDictStorage`): sync and async methods share private `_do_*` helpers so the protocol logic is written once, and only the `*_async` methods `await`. `tests/test_storage_async_native.py` proves the dispatch never falls back to `to_thread` by monkeypatching it to raise while completing a full upload — copy that pattern to verify your own backend stays non-blocking.
+
 ---
 
 ## S3Storage

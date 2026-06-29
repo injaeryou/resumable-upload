@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import os
@@ -12,6 +13,11 @@ import pytest
 
 from resumable_upload.server import TusServer
 from resumable_upload.storage import SQLiteStorage
+
+# Every algorithm the checksum registry ships. The server fixture enables all
+# of them so each one is exercised end-to-end (registry entries with no test
+# are how sha512 silently rotted before).
+ALL_ALGORITHMS = ("sha1", "sha256", "sha512", "md5")
 
 
 @pytest.fixture
@@ -24,7 +30,7 @@ def server():
                 upload_dir=os.path.join(temp_dir, "files"),
             ),
             base_path="/files",
-            checksum_algorithms=("sha1", "sha256", "md5"),
+            checksum_algorithms=ALL_ALGORITHMS,
         )
     finally:
         shutil.rmtree(temp_dir, ignore_errors=True)
@@ -36,6 +42,17 @@ def _h(**extra):
     return base
 
 
+def _dispatch(server, mode: str, method: str, path: str, headers: dict, body: bytes):
+    """Route a request through the sync or async dispatch path.
+
+    Both share ``_plan_patch`` for checksum validation, so running the same
+    matrix through each proves the single-sourced logic holds on both.
+    """
+    if mode == "async":
+        return asyncio.run(server.handle_request_async(method, path, headers, body))
+    return server.handle_request(method, path, headers, body)
+
+
 def _create_upload(server, length: int) -> str:
     _, headers, _ = server.handle_request(
         "POST", "/files", _h(**{"Upload-Length": str(length)}), b""
@@ -43,82 +60,51 @@ def _create_upload(server, length: int) -> str:
     return headers["Location"]
 
 
+def _checksum_patch(server, mode, location, algo, body, *, digest_src=None):
+    """PATCH ``body`` with an ``Upload-Checksum`` for ``algo``.
+
+    ``digest_src`` defaults to ``body``; pass different bytes to forge a
+    mismatching checksum.
+    """
+    src = body if digest_src is None else digest_src
+    digest = base64.b64encode(hashlib.new(algo, src).digest()).decode()
+    return _dispatch(
+        server,
+        mode,
+        "PATCH",
+        location,
+        _h(
+            **{
+                "Upload-Offset": "0",
+                "Content-Type": "application/offset+octet-stream",
+                "Upload-Checksum": f"{algo} {digest}",
+            }
+        ),
+        body,
+    )
+
+
 class TestChecksumAlgorithms:
     def test_options_advertises_all_algorithms(self, server):
         status, headers, _ = server.handle_request("OPTIONS", "/files", {}, b"")
         assert status == 204
         algos = set(headers["Tus-Checksum-Algorithm"].split(","))
-        assert {"sha1", "sha256", "md5"} <= algos
+        assert set(ALL_ALGORITHMS) <= algos
 
-    def test_patch_with_sha1_still_works(self, server):
+    @pytest.mark.parametrize("mode", ["sync", "async"])
+    @pytest.mark.parametrize("algo", ALL_ALGORITHMS)
+    def test_patch_with_matching_checksum_accepted(self, server, algo, mode):
         location = _create_upload(server, 5)
-        data = b"hello"
-        digest = base64.b64encode(hashlib.sha1(data).digest()).decode()
-        status, _, _ = server.handle_request(
-            "PATCH",
-            location,
-            _h(
-                **{
-                    "Upload-Offset": "0",
-                    "Content-Type": "application/offset+octet-stream",
-                    "Upload-Checksum": f"sha1 {digest}",
-                }
-            ),
-            data,
-        )
+        status, headers, _ = _checksum_patch(server, mode, location, algo, b"hello")
         assert status == 204
+        assert headers["Upload-Offset"] == "5"
 
-    def test_patch_with_sha256_accepted(self, server):
+    @pytest.mark.parametrize("mode", ["sync", "async"])
+    @pytest.mark.parametrize("algo", ALL_ALGORITHMS)
+    def test_patch_with_mismatching_checksum_rejected(self, server, algo, mode):
         location = _create_upload(server, 5)
-        data = b"hello"
-        digest = base64.b64encode(hashlib.sha256(data).digest()).decode()
-        status, _, _ = server.handle_request(
-            "PATCH",
-            location,
-            _h(
-                **{
-                    "Upload-Offset": "0",
-                    "Content-Type": "application/offset+octet-stream",
-                    "Upload-Checksum": f"sha256 {digest}",
-                }
-            ),
-            data,
-        )
-        assert status == 204
-
-    def test_patch_with_md5_accepted(self, server):
-        location = _create_upload(server, 5)
-        data = b"hello"
-        digest = base64.b64encode(hashlib.md5(data).digest()).decode()
-        status, _, _ = server.handle_request(
-            "PATCH",
-            location,
-            _h(
-                **{
-                    "Upload-Offset": "0",
-                    "Content-Type": "application/offset+octet-stream",
-                    "Upload-Checksum": f"md5 {digest}",
-                }
-            ),
-            data,
-        )
-        assert status == 204
-
-    def test_patch_with_invalid_sha256_rejected(self, server):
-        location = _create_upload(server, 5)
-        wrong = base64.b64encode(b"0" * 32).decode()
-        status, _, _ = server.handle_request(
-            "PATCH",
-            location,
-            _h(
-                **{
-                    "Upload-Offset": "0",
-                    "Content-Type": "application/offset+octet-stream",
-                    "Upload-Checksum": f"sha256 {wrong}",
-                }
-            ),
-            b"hello",
-        )
+        # Digest computed over different bytes than the body -> 460.
+        status, _, _ = _checksum_patch(server, mode, location, algo, b"hello", digest_src=b"WRONG")
         assert status == 460
 
     def test_unsupported_algorithm_rejected(self, server):

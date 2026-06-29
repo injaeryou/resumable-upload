@@ -186,3 +186,101 @@ When the server returns `409 Conflict` (offset mismatch), the uploader automatic
 | `close()` | Release file handle |
 | `is_complete` | Property: `True` if offset ≥ file size |
 | `stats` | Property: `UploadStats` snapshot |
+
+---
+
+## Async client
+
+`AsyncTusClient` is a fully async counterpart to `TusClient`, backed by
+[httpx](https://www.python-httpx.org/) instead of `urllib`. Every public method
+is a coroutine; otherwise the API is identical to the sync client.
+
+### Installation
+
+```bash
+pip install "resumable-upload[async]"
+```
+
+This installs `httpx` alongside the core library. The async classes are not
+importable without it — a helpful `ImportError` is raised if you forget.
+
+### Quick start
+
+```python
+import asyncio
+from resumable_upload import AsyncTusClient
+
+async def main():
+    async with AsyncTusClient("http://localhost:8080/files") as client:
+        url = await client.upload_file("large.bin", progress_callback=print)
+        print("Uploaded to", url)
+
+asyncio.run(main())
+```
+
+### AsyncTusClient
+
+```python
+from resumable_upload import AsyncTusClient
+```
+
+Accepts the same constructor parameters as `TusClient`. Use as an async context
+manager (`async with`) so the underlying `httpx.AsyncClient` is properly closed.
+
+#### Awaitable methods
+
+Every sync method on `TusClient` has a direct async equivalent:
+
+| Async method | Description |
+|---|---|
+| `await client.upload_file(file_path, ...)` | Upload a file; returns the upload URL |
+| `await client.resume_upload(file_path, upload_url, ...)` | Resume from current server offset |
+| `await client.delete_upload(upload_url)` | Send `DELETE` request |
+| `await client.get_upload_info(upload_url)` | `{"offset", "length", "complete", "metadata"}` |
+| `await client.get_metadata(upload_url)` | Decoded metadata dict |
+| `await client.get_server_info()` | `{"version", "extensions", "max_size"}` |
+| `await client.create_partial_upload(file_path, ...)` | Partial upload (concatenation ext.) |
+| `await client.create_final_upload(partial_urls, metadata)` | Merge partials server-side |
+| `await client.create_deferred_upload(metadata)` | Deferred-length upload |
+| `await client.create_uploader(file_path, ...) ` | Returns an `AsyncUploader` |
+
+`parallel_uploads=N` on `upload_file` works the same as the sync client:
+the file is split into N byte ranges and uploaded concurrently via `asyncio.gather`.
+
+`find_previous_uploads` stays synchronous — it is a pure local fingerprint
+lookup with no I/O, so there is no async variant.
+
+### AsyncUploader
+
+```python
+from resumable_upload import AsyncUploader
+```
+
+Typically obtained via `AsyncTusClient.create_uploader()`. Mirrors `Uploader`
+with async entry points:
+
+| Method | Description |
+|---|---|
+| `await uploader.upload()` | Upload entire remaining file |
+| `await uploader.upload_chunk()` | Upload one chunk; returns `True` if more remain |
+| `uploader.close()` | Release file handle |
+| `uploader.is_complete` | Property: `True` if offset ≥ file size |
+| `uploader.stats` | Property: `UploadStats` snapshot |
+
+Because `__init__` cannot `await`, use the `AsyncUploader.open()` async
+class-method factory when you need to instantiate one directly:
+
+```python
+uploader = await AsyncUploader.open(
+    url=upload_url,
+    file_path="large.bin",
+    chunk_size=4 * 1024 * 1024,
+)
+await uploader.upload()
+```
+
+### Example
+
+See `examples/client/async_upload.py` for a self-contained script that
+uploads a file with progress reporting, parallel chunks, and cross-session
+resume.

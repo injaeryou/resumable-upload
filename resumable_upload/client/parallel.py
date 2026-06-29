@@ -8,6 +8,7 @@ single final-creation request.
 import os
 from typing import Callable, Optional
 
+from resumable_upload.client import _protocol
 from resumable_upload.client._mixin_base import _ClientAttrs
 from resumable_upload.client.stats import UploadStats
 from resumable_upload.client.uploader import Uploader
@@ -39,14 +40,7 @@ class ParallelUploadMixin(_ClientAttrs):
 
         # Compute byte boundaries; the last slice absorbs any remainder.
         # Slices start at `start` and end at `end` (exclusive).
-        base = file_size // parallel_uploads
-        boundaries: list[tuple[int, int]] = []
-        start = 0
-        for i in range(parallel_uploads):
-            end = file_size if i == parallel_uploads - 1 else start + base
-            if end > start:  # skip empty slices when parallel_uploads > file_size
-                boundaries.append((start, end))
-            start = end
+        boundaries = _protocol.split_boundaries(file_size, parallel_uploads)
 
         if "filename" not in metadata:
             metadata = {**metadata, "filename": os.path.basename(file_path)}

@@ -1,12 +1,22 @@
 """Storage abstract base class."""
 
+import asyncio
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any, Optional
 
 
 class Storage(ABC):
-    """Abstract base class for storage backends."""
+    """Abstract base class for storage backends.
+
+    Sync methods are the canonical surface every backend must implement.
+    Each I/O-bound sync method has a ``*_async`` sibling defined on this
+    class with a default implementation that offloads the sync call to a
+    worker thread via :func:`asyncio.to_thread`. ``TusASGIApp`` always
+    awaits the async siblings, so true-async backends can override the
+    specific methods they have native non-blocking implementations for
+    and inherit the rest. See ``.docs/plans/2026-04-29-async-native-storage.md``.
+    """
 
     @abstractmethod
     def create_upload(
@@ -139,4 +149,80 @@ class Storage(ABC):
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not support the TUS concatenation extension"
+        )
+
+    # ------------------------------------------------------------------
+    # Async I/O surface (default = thread offload)
+    #
+    # Each method below is a thin ``await asyncio.to_thread(...)`` wrapper
+    # around its sync sibling. True-async backends override these with
+    # native non-blocking implementations; sync-only backends inherit the
+    # defaults and gain async behavior for free.
+    # ------------------------------------------------------------------
+
+    async def create_upload_async(
+        self,
+        upload_id: str,
+        upload_length: Optional[int],
+        metadata: dict[str, str],
+        expires_at: Optional[datetime] = None,
+        is_partial: bool = False,
+    ) -> None:
+        await asyncio.to_thread(
+            self.create_upload,
+            upload_id,
+            upload_length,
+            metadata,
+            expires_at,
+            is_partial,
+        )
+
+    async def set_upload_length_async(self, upload_id: str, upload_length: int) -> None:
+        await asyncio.to_thread(self.set_upload_length, upload_id, upload_length)
+
+    async def get_upload_async(self, upload_id: str) -> Optional[dict[str, Any]]:
+        return await asyncio.to_thread(self.get_upload, upload_id)
+
+    async def update_offset_async(self, upload_id: str, offset: int) -> None:
+        await asyncio.to_thread(self.update_offset, upload_id, offset)
+
+    async def update_offset_atomic_async(
+        self, upload_id: str, expected_offset: int, new_offset: int
+    ) -> bool:
+        return await asyncio.to_thread(
+            self.update_offset_atomic, upload_id, expected_offset, new_offset
+        )
+
+    async def complete_upload_async(self, upload_id: str) -> bool:
+        return await asyncio.to_thread(self.complete_upload, upload_id)
+
+    async def delete_upload_async(self, upload_id: str) -> None:
+        await asyncio.to_thread(self.delete_upload, upload_id)
+
+    async def write_chunk_async(self, upload_id: str, offset: int, data: bytes) -> None:
+        await asyncio.to_thread(self.write_chunk, upload_id, offset, data)
+
+    async def read_file_async(self, upload_id: str) -> bytes:
+        return await asyncio.to_thread(self.read_file, upload_id)
+
+    async def get_expired_uploads_async(self) -> list[str]:
+        return await asyncio.to_thread(self.get_expired_uploads)
+
+    async def cleanup_expired_uploads_async(self) -> int:
+        return await asyncio.to_thread(self.cleanup_expired_uploads)
+
+    async def concatenate_uploads_async(
+        self,
+        final_id: str,
+        partial_ids: list[str],
+        metadata: dict[str, str],
+        *,
+        expires_at: Optional[datetime] = None,
+    ) -> int:
+        return await asyncio.to_thread(
+            self.concatenate_uploads,
+            final_id,
+            partial_ids,
+            metadata,
+            expires_at=expires_at,
         )

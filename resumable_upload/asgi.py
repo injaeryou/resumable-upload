@@ -1,9 +1,9 @@
-"""ASGI adapter wrapping TusServer.handle_request under asyncio.to_thread.
+"""ASGI adapter dispatching to ``TusServer.handle_request_async``.
 
-Gives users FastAPI / Starlette compatibility without having to rewrite
-``TusServer`` as async. The sync handler runs on a thread pool, so the event
-loop stays free. This keeps Phase B scoped — an async-native storage rewrite
-can come later without breaking this interface.
+Gives users FastAPI / Starlette compatibility while letting true-async
+``Storage`` backends drive non-blocking I/O end-to-end. Sync-only backends
+inherit the ``asyncio.to_thread`` defaults on the ``Storage`` ABC, so this
+adapter remains drop-in for them.
 
 Usage::
 
@@ -18,7 +18,6 @@ Usage::
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Awaitable
 from typing import Any, Callable
 
@@ -84,8 +83,8 @@ class TusASGIApp:
         if method == "GET":
             status, resp_headers, resp_body = self._handle_get(path)
         else:
-            status, resp_headers, resp_body = await asyncio.to_thread(
-                self._server.handle_request, method, path, headers, body
+            status, resp_headers, resp_body = await self._server.handle_request_async(
+                method, path, headers, body
             )
 
         await send(

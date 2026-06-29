@@ -1,4 +1,4 @@
-.PHONY: help install install-pip lint format test test-all test-all-versions ci clean
+.PHONY: help install install-pip lint format format-check type-check test test-all test-all-versions ci clean
 
 # Use Python from activated virtual environment if available, otherwise detect
 # Priority: .venv/bin/python > venv/bin/python > VIRTUAL_ENV/bin/python > python3 from PATH
@@ -12,11 +12,13 @@ help:
 	@echo "  make install          - Install package with all dependencies (using uv, recommended)"
 	@echo "  make install-pip      - Install package with all dependencies (using pip)"
 	@echo "  make lint             - Run ruff linting"
-	@echo "  make format           - Format code with ruff"
+	@echo "  make format           - Format code with ruff (auto-fix)"
+	@echo "  make format-check     - Verify formatting without modifying files"
+	@echo "  make type-check       - Run ty type checker on resumable_upload/"
 	@echo "  make test-minimal     - Run minimal tests (excluding web frameworks)"
 	@echo "  make test             - Run all tests (including web frameworks)"
 	@echo "  make test-all-versions - Run tests on all Python versions (requires tox)"
-	@echo "  make ci               - Run full CI checks (lint, format, test-all)"
+	@echo "  make ci               - Run full CI checks (lint, format-check, type-check, test)"
 	@echo "  make clean            - Clean build artifacts"
 	@echo ""
 	@echo "Note: Make sure to activate your virtual environment first:"
@@ -35,6 +37,12 @@ lint:
 format:
 	$(RUN) ruff format .
 
+format-check:
+	$(RUN) ruff format --check .
+
+type-check:
+	$(RUN) ty check resumable_upload
+
 test-minimal:
 	@echo "Running minimal tests... (excluding web frameworks)"
 	$(RUN) pytest --cov=resumable_upload --cov-report=term --cov-report=html -k "not test_flask and not test_fastapi and not test_django"
@@ -48,7 +56,7 @@ test-all-versions:
 	@echo "This requires tox to be installed: pip install tox"
 	$(RUN) tox
 
-ci: lint format test
+ci: lint format-check type-check test
 	@echo "✅ All CI checks passed!"
 
 clean:

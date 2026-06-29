@@ -5,7 +5,7 @@ import warnings
 
 warnings.warn(
     "resumable_upload.locks_redis is deprecated since 0.0.6 and will be "
-    "removed in 0.0.8 / 0.1.0; import from "
+    "removed after 0.1.2; import from "
     "resumable_upload.locks.redis_lock instead.",
     DeprecationWarning,
     stacklevel=2,

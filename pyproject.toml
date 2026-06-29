@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "resumable-upload"
-version = "0.0.5"
+version = "0.1.0"
 description = "A Python implementation of the `TUS resumable upload protocol` for server and client, with zero runtime dependencies."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -31,11 +31,12 @@ classifiers = [
 dependencies = []
 
 [project.urls]
-Homepage = "https://github.com/sts07142/resumable-upload"
-Documentation = "https://sts07142.github.io/resumable-upload/"
-Repository = "https://github.com/sts07142/resumable-upload"
-Issues = "https://github.com/sts07142/resumable-upload/issues"
-Changelog = "https://github.com/sts07142/resumable-upload/releases"
+Homepage = "https://github.com/injaeryou/resumable-upload"
+Documentation = "https://injaeryou.github.io/resumable-upload/"
+Repository = "https://github.com/injaeryou/resumable-upload"
+Issues = "https://github.com/injaeryou/resumable-upload/issues"
+Changelog = "https://github.com/injaeryou/resumable-upload/blob/main/CHANGELOG.md"
+Releases = "https://github.com/injaeryou/resumable-upload/releases"
 
 [project.scripts]
 resumable-upload = "resumable_upload.cli:main"
@@ -44,6 +45,8 @@ resumable-upload = "resumable_upload.cli:main"
 dev = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
+    "anyio>=4.0",
+    "httpx>=0.24",
     "ruff>=0.1.0",
     "pre-commit>=3.0.0",
     "tox>=4.0.0",
@@ -55,11 +58,15 @@ dev = [
 test = [
     "pytest>=7.0.0",
     "pytest-cov>=4.0.0",
+    "anyio>=4.0",
     "flask>=2.0.0",
     "fastapi>=0.100.0",
     "uvicorn>=0.38.0",
     "httpx>=0.24.0",
     "django>=3.2.0",
+]
+async = [
+    "httpx>=0.24",
 ]
 s3 = [
     "boto3>=1.26.0",

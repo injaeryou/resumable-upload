@@ -1,8 +1,8 @@
 site_name: Resumable Upload
 site_description: Python TUS resumable upload protocol — server and client
-site_url: https://sts07142.github.io/resumable-upload/
-repo_url: https://github.com/sts07142/resumable-upload
-repo_name: sts07142/resumable-upload
+site_url: https://injaeryou.github.io/resumable-upload/
+repo_url: https://github.com/injaeryou/resumable-upload
+repo_name: injaeryou/resumable-upload
 edit_uri: edit/main/docs/
 
 theme:

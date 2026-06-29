@@ -173,3 +173,21 @@ def test_tus_server_core_exists_and_tus_server_subclasses_it():
     import resumable_upload as ru
 
     assert ru.TusServerCore is core
+
+
+# ---- Zero-dependency invariant --------------------------------------------
+
+
+def test_import_resumable_upload_does_not_import_httpx():
+    import subprocess
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import resumable_upload, sys; "
+            "assert 'httpx' not in sys.modules, 'httpx eagerly imported'",
+        ],
+        capture_output=True,
+    )
+    assert result.returncode == 0, result.stderr.decode()

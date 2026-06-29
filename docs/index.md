@@ -10,6 +10,7 @@ A Python implementation of the [TUS resumable upload protocol](https://tus.io/) 
 - **Data Integrity** — `Upload-Checksum` extension with `sha1` / `sha256` / `sha512` / `md5` (configurable per server, client picks one)
 - **Retry Logic** — exponential backoff with configurable cap and a custom `on_should_retry` hook
 - **Progress Tracking** — detailed `UploadStats` callback
+- **Async** — awaitable `AsyncTusClient` (`[async]` extra, httpx) and an ASGI server adapter (`TusASGIApp`) that awaits `handle_request_async`
 - **Web Framework Support** — Flask, FastAPI, Django, plus a generic ASGI adapter (`TusASGIApp`)
 - **Command-line Server** — `resumable-upload serve` console script for running a TUS server with no Python boilerplate
 - **Concatenation Extension** — server-side merge of partial uploads (SQLite, S3, GCS, Azure); `parallel_uploads=N` on the client
@@ -109,5 +110,5 @@ Implements TUS v1.0.0 core plus the `creation`, `creation-with-upload`, `creatio
 
 ## README
 
-- [English README](https://github.com/sts07142/resumable-upload/blob/main/README.md)
-- [한국어 README](https://github.com/sts07142/resumable-upload/blob/main/README.ko.md)
+- [English README](https://github.com/injaeryou/resumable-upload/blob/main/README.md)
+- [한국어 README](https://github.com/injaeryou/resumable-upload/blob/main/README.ko.md)
