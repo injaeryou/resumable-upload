@@ -25,8 +25,9 @@ class ParallelUploadMixin(_ClientAttrs):
         progress_callback: Optional[Callable[[UploadStats], None]],
     ) -> str:
         """Split a file into N ranges, upload concurrently, and merge server-side."""
-        import io
         from concurrent.futures import ThreadPoolExecutor
+
+        from resumable_upload.client._fileslice import FileSlice
 
         file_size = os.path.getsize(file_path)
         if file_size == 0:
@@ -51,12 +52,12 @@ class ParallelUploadMixin(_ClientAttrs):
             upload_url = self._create_upload(
                 length, metadata={}, extra_headers={"Upload-Concat": "partial"}
             )
-            with open(file_path, "rb") as f:
-                f.seek(lo)
-                buf = io.BytesIO(f.read(length))
+            # Stream the slice from disk on demand instead of reading it all
+            # into memory; the uploader does not own the stream, so close it here.
+            file_slice = FileSlice(file_path, lo, length)
             uploader = Uploader(
                 url=upload_url,
-                file_stream=buf,
+                file_stream=file_slice,  # ty: ignore[invalid-argument-type]
                 chunk_size=self.chunk_size,
                 checksum=self.checksum,
                 metadata_encoding=self.metadata_encoding,
@@ -74,6 +75,7 @@ class ParallelUploadMixin(_ClientAttrs):
                 return upload_url
             finally:
                 uploader.close()
+                file_slice.close()
 
         with ThreadPoolExecutor(max_workers=parallel_uploads) as pool:
             futures = [pool.submit(upload_slice, lo, hi) for lo, hi in boundaries]

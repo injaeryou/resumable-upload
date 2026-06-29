@@ -3,30 +3,19 @@
 from __future__ import annotations
 
 import asyncio
-import io
 import os
 from collections.abc import Callable
 from typing import IO, Any
 from urllib.parse import urljoin
 
 from resumable_upload.client import _protocol
+from resumable_upload.client._fileslice import FileSlice
 from resumable_upload.client.aio import _http
 from resumable_upload.client.aio.uploader import AsyncUploader
 from resumable_upload.client.stats import UploadStats
 from resumable_upload.exceptions import TusCommunicationError
 from resumable_upload.fingerprint import Fingerprint
 from resumable_upload.url_storage import FileURLStorage, URLStorage
-
-
-def _read_slice(path: str, lo: int, length: int) -> bytes:
-    """Read ``length`` bytes from ``path`` starting at byte ``lo``.
-
-    Designed to be called via ``asyncio.to_thread`` so the blocking
-    file I/O is offloaded from the event loop.
-    """
-    with open(path, "rb") as f:
-        f.seek(lo)
-        return f.read(length)
 
 
 class AsyncTusClient:
@@ -356,12 +345,14 @@ class AsyncTusClient:
                 url = await self._create_upload(
                     length, {}, extra_headers={"Upload-Concat": "partial"}
                 )
-                buf = await asyncio.to_thread(_read_slice, file_path, lo, length)
+                # Stream the slice from disk on demand instead of reading it all
+                # into memory; opening the fd is blocking, so do it off-loop.
+                file_slice = await asyncio.to_thread(FileSlice, file_path, lo, length)
                 client = await self._ensure_client()
                 up = await AsyncUploader.open(
                     client,
                     url,
-                    file_stream=io.BytesIO(buf),
+                    file_stream=file_slice,
                     chunk_size=self.chunk_size,
                     checksum=self.checksum,
                     metadata_encoding=self.metadata_encoding,
@@ -378,6 +369,8 @@ class AsyncTusClient:
                     return url
                 finally:
                     await up.aclose()
+                    # Uploader does not own the injected stream — close it here.
+                    await asyncio.to_thread(file_slice.close)
 
         partial_urls = await asyncio.gather(*(upload_slice(lo, hi) for lo, hi in boundaries))
 
