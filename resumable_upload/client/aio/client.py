@@ -275,7 +275,10 @@ class AsyncTusClient:
             metadata["filename"] = os.path.basename(file_path)
 
         fingerprint = (
-            self.fingerprinter.get_fingerprint(file_path or file_stream)  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+            await asyncio.to_thread(
+                self.fingerprinter.get_fingerprint,
+                file_path or file_stream,  # type: ignore[arg-type]  # ty: ignore[invalid-argument-type]
+            )
             if self.store_url
             else None
         )

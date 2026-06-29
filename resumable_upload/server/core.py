@@ -131,6 +131,10 @@ class TusServerCore:
         self.request_timeout = request_timeout
         self._last_cleanup: Optional[datetime] = None
         self._cleanup_lock = threading.Lock()
+        # Async path uses a non-blocking flag instead of the lock above: holding
+        # a threading.Lock across an await would block the event loop (deadlock
+        # when cleanup_interval <= 0). Single event loop => a plain flag suffices.
+        self._cleanup_running = False
         self._on_incoming_request = on_incoming_request
         self._on_upload_create = on_upload_create
         self._on_upload_complete = on_upload_complete
@@ -471,19 +475,18 @@ class TusServerCore:
 
         if self.upload_expiry is not None:
             now = datetime.now(timezone.utc)
-            if (
+            if not self._cleanup_running and (
                 self._last_cleanup is None
                 or (now - self._last_cleanup).total_seconds() >= self.cleanup_interval
             ):
-                with self._cleanup_lock:
-                    if (
-                        self._last_cleanup is None
-                        or (now - self._last_cleanup).total_seconds() >= self.cleanup_interval
-                    ):
-                        self._last_cleanup = now
-                        count = await self.storage.cleanup_expired_uploads_async()
-                        if count:
-                            logger.info("Cleaned up %s expired upload(s)", count)
+                self._cleanup_running = True
+                self._last_cleanup = now
+                try:
+                    count = await self.storage.cleanup_expired_uploads_async()
+                    if count:
+                        logger.info("Cleaned up %s expired upload(s)", count)
+                finally:
+                    self._cleanup_running = False
 
         if self._metrics is not None and status >= 400:
             self._metrics.inc("tusd_errors_total", labels={"status": str(status)})
