@@ -273,3 +273,45 @@ def test_head_non_partial_omits_upload_concat(server, dispatch):
     status, headers, _ = dispatch(server, "HEAD", location, _h(), b"")
     assert status == 200
     assert "Upload-Concat" not in headers
+
+
+def test_async_cleanup_no_deadlock_with_zero_interval(tmp_path):
+    """Regression: concurrent async requests must not deadlock during cleanup.
+
+    With ``cleanup_interval <= 0`` the double-checked guard always passes, so
+    the old ``with self._cleanup_lock:`` (a threading.Lock held across an
+    ``await``) let a second coroutine block the event loop forever. The
+    non-blocking ``_cleanup_running`` flag must keep this lock-free.
+
+    Run the loop in a worker thread and join with a timeout: a true deadlock
+    freezes the loop thread, so an in-loop ``asyncio.wait_for`` could never
+    fire — only an outside thread can observe the hang.
+    """
+    import threading
+
+    srv = TusServer(
+        storage=SQLiteStorage(db_path=str(tmp_path / "u.db"), upload_dir=str(tmp_path / "f")),
+        base_path="/files",
+        upload_expiry=3600,
+        cleanup_interval=0,
+    )
+
+    results: list[tuple[int, dict[str, str], bytes]] = []
+
+    def run() -> None:
+        async def both() -> None:
+            # Two concurrent OPTIONS; each triggers end-of-dispatch cleanup.
+            results.extend(
+                await asyncio.gather(
+                    srv.handle_request_async("OPTIONS", "/files", _h(), b""),
+                    srv.handle_request_async("OPTIONS", "/files", _h(), b""),
+                )
+            )
+
+        asyncio.run(both())
+
+    t = threading.Thread(target=run, daemon=True)
+    t.start()
+    t.join(timeout=5)
+    assert not t.is_alive(), "async cleanup deadlocked (threading.Lock held across await)"
+    assert all(status == 204 for status, _, _ in results)
