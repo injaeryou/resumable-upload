@@ -274,6 +274,9 @@ class AsyncUploader:
         Raises:
             TusUploadFailed: If upload fails.
         """
+        if self._stop_event.is_set():
+            raise TusUploadFailed("Upload cancelled via stop_event")
+
         if self.offset >= self.file_size:
             return False
 
@@ -318,6 +321,9 @@ class AsyncUploader:
         max_offset = min(stop_at, self.file_size) if stop_at is not None else self.file_size
 
         while self.offset < max_offset:
+            if self._stop_event.is_set():
+                raise TusUploadFailed("Upload cancelled via stop_event")
+
             chunk_size = min(self.chunk_size, max_offset - self.offset)
             chunk = await asyncio.to_thread(self._read_at, self.offset, chunk_size)
 

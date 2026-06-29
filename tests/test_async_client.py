@@ -71,6 +71,32 @@ async def test_async_uploader_uploads_in_chunks(asgi_base):
 
 
 @pytest.mark.anyio
+async def test_async_uploader_stop_event_cancels_without_retries(asgi_base):
+    """stop_event must cancel even when chunks succeed and retries are off."""
+    import asyncio
+    import io
+    import os
+
+    from resumable_upload.client.aio.uploader import AsyncUploader
+    from resumable_upload.exceptions import TusUploadFailed
+
+    transport, base = asgi_base
+    payload = os.urandom(50_000)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as c:
+        r = await c.request(
+            "POST", base, headers={"Tus-Resumable": "1.0.0", "Upload-Length": str(len(payload))}
+        )
+        url = r.headers["Location"]
+        stop = asyncio.Event()
+        stop.set()
+        up = await AsyncUploader.open(
+            c, url, file_stream=io.BytesIO(payload), chunk_size=16_384, stop_event=stop
+        )
+        with pytest.raises(TusUploadFailed, match="cancelled via stop_event"):
+            await up.upload()
+
+
+@pytest.mark.anyio
 async def test_async_uploader_checksum_roundtrip(asgi_base):
     import io
 
