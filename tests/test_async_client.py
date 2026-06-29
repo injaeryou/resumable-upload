@@ -97,6 +97,61 @@ async def test_async_uploader_stop_event_cancels_without_retries(asgi_base):
 
 
 @pytest.mark.anyio
+async def test_async_uploader_chunk_stop_event(asgi_base):
+    """upload_chunk() honors stop_event before sending a chunk."""
+    import asyncio
+    import io
+    import os
+
+    from resumable_upload.client.aio.uploader import AsyncUploader
+    from resumable_upload.exceptions import TusUploadFailed
+
+    transport, base = asgi_base
+    payload = os.urandom(20_000)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as c:
+        r = await c.request(
+            "POST", base, headers={"Tus-Resumable": "1.0.0", "Upload-Length": str(len(payload))}
+        )
+        url = r.headers["Location"]
+        stop = asyncio.Event()
+        up = await AsyncUploader.open(
+            c, url, file_stream=io.BytesIO(payload), chunk_size=8192, stop_event=stop
+        )
+        # First chunk succeeds; then cancel and the next upload_chunk must refuse.
+        assert await up.upload_chunk() is True
+        stop.set()
+        with pytest.raises(TusUploadFailed, match="cancelled via stop_event"):
+            await up.upload_chunk()
+        # Offset did not advance past the one successful chunk (append-only preserved).
+        head = await c.request("HEAD", url, headers={"Tus-Resumable": "1.0.0"})
+        assert head.headers["Upload-Offset"] == "8192"
+
+
+@pytest.mark.anyio
+async def test_async_client_store_url_resumes(asgi_base, tmp_path):
+    """store_url path computes the fingerprint and reuses the stored URL."""
+    import os
+
+    from resumable_upload.client.aio.client import AsyncTusClient
+    from resumable_upload.url_storage import FileURLStorage
+
+    transport, base = asgi_base
+    f = tmp_path / "data.bin"
+    f.write_bytes(os.urandom(40_000))
+    async with AsyncTusClient(
+        base,
+        _transport=transport,
+        chunk_size=8192,
+        store_url=True,
+        url_storage=FileURLStorage(str(tmp_path / "urls.json")),
+    ) as client:
+        url1 = await client.upload_file(str(f))
+        # Second call for the same file returns the same stored URL (fingerprint hit).
+        url2 = await client.upload_file(str(f))
+        assert url1 == url2
+
+
+@pytest.mark.anyio
 async def test_async_uploader_checksum_roundtrip(asgi_base):
     import io
 
