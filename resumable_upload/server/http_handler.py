@@ -8,6 +8,7 @@ and call :meth:`TusServer.handle_request` directly.
 
 from __future__ import annotations
 
+import shutil
 from http.server import BaseHTTPRequestHandler
 from typing import Any
 
@@ -28,7 +29,11 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
         self._handle_request("OPTIONS")
 
     def do_GET(self) -> None:
-        """Serve /metrics when a metrics registry is attached; otherwise 404."""
+        """Serve /metrics when a metrics registry is attached, else delegate.
+
+        Non-metrics GETs go to the core, which serves downloads when
+        ``enable_downloads`` is set and 404s otherwise.
+        """
         if (
             self.tus_server is not None
             and self.tus_server.metrics is not None
@@ -41,8 +46,7 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(body)
             return
-        self.send_response(404)
-        self.end_headers()
+        self._handle_request("GET")
 
     def do_POST(self) -> None:
         """Handle POST request."""
@@ -212,8 +216,15 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
         for key, value in response_headers.items():
             self.send_header(key, value)
         self.end_headers()
-        if response_body:
-            self.wfile.write(response_body)
+        if isinstance(response_body, (bytes, bytearray)):
+            if response_body:
+                self.wfile.write(response_body)
+        else:
+            # GET download: stream the body instead of buffering it in RAM.
+            try:
+                shutil.copyfileobj(response_body, self.wfile, 64 * 1024)
+            finally:
+                response_body.close()
 
     def log_message(self, format: str, *args: Any) -> None:
         """Suppress default logging."""

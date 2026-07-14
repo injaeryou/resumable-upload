@@ -40,6 +40,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="SQLite database path (default: ./uploads.db)",
     )
     serve.add_argument(
+        "--enable-downloads",
+        action="store_true",
+        help="Serve completed uploads via GET (tusd-style download endpoint)",
+    )
+    serve.add_argument(
         "--max-size",
         type=int,
         default=0,
@@ -128,6 +133,7 @@ def _serve(args: argparse.Namespace) -> int:
         lock_backend=lock_backend,
         # The bundled stdlib transport parses chunked bodies + trailers.
         supports_checksum_trailer=True,
+        enable_downloads=args.enable_downloads,
     )
 
     class Handler(TusHTTPRequestHandler):

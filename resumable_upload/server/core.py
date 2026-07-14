@@ -5,7 +5,7 @@ import logging
 import threading
 from collections.abc import Awaitable
 from datetime import datetime, timezone
-from typing import Any, Callable, Optional
+from typing import Any, BinaryIO, Callable, Optional
 
 from resumable_upload.checksum import ChecksumAlgorithms
 from resumable_upload.exceptions import TusHookError
@@ -26,6 +26,10 @@ from resumable_upload.server.handlers import (
 from resumable_upload.server.handlers.create import (
     handle_create_final,
     handle_create_final_async,
+)
+from resumable_upload.server.handlers.get import (
+    handle_get_download,
+    handle_get_download_async,
 )
 from resumable_upload.server.headers import (
     add_cors_headers,
@@ -96,6 +100,7 @@ class TusServerCore:
         lock_wait_seconds: float = 5.0,
         checksum_algorithms: tuple[str, ...] = ("sha1",),
         supports_checksum_trailer: bool = False,
+        enable_downloads: bool = False,
     ):
         """Initialize TUS server.
 
@@ -131,6 +136,9 @@ class TusServerCore:
         #   (the bundled TusHTTPRequestHandler does; set the flag when yours
         #   does too and merges the trailing Upload-Checksum into headers).
         self.supports_checksum_trailer = supports_checksum_trailer
+        # Non-standard download endpoint (tusd-style GET). Opt-in because the
+        # library is usually embedded next to framework GET routes.
+        self.enable_downloads = enable_downloads
         extensions = list(type(self).SUPPORTED_EXTENSIONS)
         if getattr(self.storage, "supports_unfinished_concat", False):
             extensions.append("concatenation-unfinished")
@@ -274,7 +282,7 @@ class TusServerCore:
 
     def handle_request(
         self, method: str, path: str, headers: dict[str, str], body: bytes = b""
-    ) -> tuple[int, dict[str, str], bytes]:
+    ) -> tuple[int, dict[str, str], "bytes | BinaryIO"]:
         """Handle an incoming HTTP request.
 
         Args:
@@ -327,8 +335,10 @@ class TusServerCore:
                     e.body.encode(),
                 )
 
-        # Check TUS version (required by TUS spec for all non-OPTIONS requests)
-        if method != "OPTIONS":
+        # Check TUS version (required by TUS spec for all non-OPTIONS requests).
+        # GET is exempt too: the download endpoint serves plain HTTP clients
+        # (browsers) that never send Tus-Resumable.
+        if method not in ("OPTIONS", "GET"):
             tus_version = headers.get("tus-resumable")
             if tus_version != self.TUS_VERSION:
                 logger.warning(
@@ -362,6 +372,12 @@ class TusServerCore:
                 result = self._with_lock(
                     upload_id, lambda: self._handle_patch(upload_id, headers, body)
                 )
+        elif method == "GET" and self.enable_downloads and path.startswith(self.base_path + "/"):
+            upload_id = path[len(self.base_path) + 1 :]
+            if not self._validate_upload_id(upload_id):
+                result = self._error_response(400, "Invalid upload ID format")
+            else:
+                result = self._handle_get_download(upload_id, headers)
         elif method == "DELETE" and path.startswith(self.base_path + "/"):
             upload_id = path[len(self.base_path) + 1 :]
             if not self._validate_upload_id(upload_id):
@@ -400,7 +416,7 @@ class TusServerCore:
 
     async def handle_request_async(
         self, method: str, path: str, headers: dict[str, str], body: bytes = b""
-    ) -> tuple[int, dict[str, str], bytes]:
+    ) -> tuple[int, dict[str, str], "bytes | BinaryIO"]:
         """Async sibling of :meth:`handle_request`.
 
         Mirrors the same protocol surface but awaits storage I/O so true-async
@@ -442,7 +458,7 @@ class TusServerCore:
                     e.body.encode(),
                 )
 
-        if method != "OPTIONS":
+        if method not in ("OPTIONS", "GET"):
             tus_version = headers.get("tus-resumable")
             if tus_version != self.TUS_VERSION:
                 logger.warning(
@@ -475,6 +491,12 @@ class TusServerCore:
                     upload_id,
                     lambda: self._handle_patch_async(upload_id, headers, body),
                 )
+        elif method == "GET" and self.enable_downloads and path.startswith(self.base_path + "/"):
+            upload_id = path[len(self.base_path) + 1 :]
+            if not self._validate_upload_id(upload_id):
+                result = self._error_response(400, "Invalid upload ID format")
+            else:
+                result = await self._handle_get_download_async(upload_id, headers)
         elif method == "DELETE" and path.startswith(self.base_path + "/"):
             upload_id = path[len(self.base_path) + 1 :]
             if not self._validate_upload_id(upload_id):
@@ -545,6 +567,11 @@ class TusServerCore:
     ) -> tuple[int, dict[str, str], bytes]:
         return handle_delete(self, upload_id, headers)
 
+    def _handle_get_download(
+        self, upload_id: str, headers: dict[str, str]
+    ) -> tuple[int, dict[str, str], "bytes | BinaryIO"]:
+        return handle_get_download(self, upload_id, headers)
+
     # --- Async per-method delegates ---------------------------------------
 
     async def _handle_options_async(
@@ -576,3 +603,8 @@ class TusServerCore:
         self, upload_id: str, headers: dict[str, str]
     ) -> tuple[int, dict[str, str], bytes]:
         return await handle_delete_async(self, upload_id, headers)
+
+    async def _handle_get_download_async(
+        self, upload_id: str, headers: dict[str, str]
+    ) -> tuple[int, dict[str, str], "bytes | BinaryIO"]:
+        return await handle_get_download_async(self, upload_id, headers)

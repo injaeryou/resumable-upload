@@ -1,9 +1,10 @@
 """Storage abstract base class."""
 
 import asyncio
+import io
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, BinaryIO, Optional
 
 
 class Storage(ABC):
@@ -101,6 +102,16 @@ class Storage(ABC):
     def read_file(self, upload_id: str) -> bytes:
         """Read the complete uploaded file."""
         pass
+
+    def open_file(self, upload_id: str) -> BinaryIO:
+        """Open the completed upload as a binary stream for downloads.
+
+        The default buffers :meth:`read_file` in memory; backends with local
+        files override this with a real file handle so the GET download
+        endpoint streams instead of materializing the whole upload in RAM.
+        The caller owns the returned stream and must close it.
+        """
+        return io.BytesIO(self.read_file(upload_id))
 
     def get_file_path(self, upload_id: str) -> str:
         """Get the file path for an upload.
@@ -244,6 +255,9 @@ class Storage(ABC):
 
     async def read_file_async(self, upload_id: str) -> bytes:
         return await asyncio.to_thread(self.read_file, upload_id)
+
+    async def open_file_async(self, upload_id: str) -> BinaryIO:
+        return await asyncio.to_thread(self.open_file, upload_id)
 
     async def get_expired_uploads_async(self) -> list[str]:
         return await asyncio.to_thread(self.get_expired_uploads)

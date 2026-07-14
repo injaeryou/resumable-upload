@@ -17,6 +17,7 @@ resumable-upload serve --host 0.0.0.0 --port 8080 --upload-dir ./uploads
 | `--base-path` | `/files` | URL base path for uploads |
 | `--upload-dir` | `./uploads` | Directory for uploaded files |
 | `--db-path` | `./uploads.db` | SQLite database path |
+| `--enable-downloads` | off | Serve completed uploads via GET (tusd-style download endpoint) |
 | `--max-size` | `0` | Max upload size in bytes (0 = unlimited) |
 | `--max-chunk-size` | `0` | Max single PATCH size in bytes (0 = unlimited) |
 | `--upload-expiry` | unset | Upload expiry in seconds (unset = no expiry) |

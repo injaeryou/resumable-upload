@@ -7,7 +7,7 @@ import os
 import sqlite3
 import threading
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, BinaryIO, Optional
 
 from resumable_upload.storage.base import Storage
 
@@ -267,6 +267,10 @@ class SQLiteStorage(Storage):
         file_path = self.get_file_path(upload_id)
         with open(file_path, "rb") as f:
             return f.read()
+
+    def open_file(self, upload_id: str) -> BinaryIO:
+        """Open the uploaded file for streaming; the caller closes it."""
+        return open(self.get_file_path(upload_id), "rb")
 
     def get_file_path(self, upload_id: str) -> str:
         """Get the file path for an upload."""

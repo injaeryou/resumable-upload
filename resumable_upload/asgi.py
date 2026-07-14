@@ -18,6 +18,7 @@ Usage::
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable
 from typing import Any, Callable
 
@@ -80,9 +81,11 @@ class TusASGIApp:
                 return
         body = b"".join(body_chunks)
 
-        if method == "GET":
+        if method == "GET" and path == self._server.metrics_path:
             status, resp_headers, resp_body = self._handle_get(path)
         else:
+            # Non-metrics GETs reach the core too: it serves downloads when
+            # enable_downloads is set and 404s otherwise.
             status, resp_headers, resp_body = await self._server.handle_request_async(
                 method, path, headers, body
             )
@@ -97,6 +100,18 @@ class TusASGIApp:
                 ],
             }
         )
+        if not isinstance(resp_body, (bytes, bytearray)):
+            # GET download: stream in chunks instead of buffering in RAM.
+            try:
+                while True:
+                    chunk = await asyncio.to_thread(resp_body.read, 64 * 1024)
+                    if not chunk:
+                        break
+                    await send({"type": "http.response.body", "body": chunk, "more_body": True})
+            finally:
+                resp_body.close()
+            await send({"type": "http.response.body", "body": b"", "more_body": False})
+            return
         await send(
             {
                 "type": "http.response.body",

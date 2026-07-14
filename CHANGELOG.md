@@ -19,6 +19,12 @@ All notable changes to this project are documented here. The format follows
   `serve` CLI) parses chunked bodies + trailers; other transports opt in via
   `TusServer(supports_checksum_trailer=True)` after doing the same.
 
+- **Opt-in GET download endpoint** (tusd-style): `TusServer(enable_downloads=True)`
+  or `serve --enable-downloads` serves completed uploads over GET. Safe by
+  default: always `Content-Disposition: attachment`, sanitized filename,
+  validated `Content-Type` from metadata `filetype`; incomplete uploads `404`,
+  expired `410`.
+
 ### Fixed
 
 - **HEAD on a final upload now echoes `Upload-Concat: final;<urls>`** as the
