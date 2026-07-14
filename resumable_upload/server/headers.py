@@ -102,12 +102,20 @@ def parse_metadata(
             continue
         if " " in pair:
             key, value = pair.split(" ", 1)
-            try:
-                # validate=True: non-alphabet characters are an error, not
-                # silently discarded (b64decode('####') == b'' otherwise).
-                metadata[key] = base64.b64decode(value, validate=True).decode("utf-8")
-            except (ValueError, UnicodeDecodeError, binascii.Error) as e:
-                return None, f"Invalid base64 encoding for metadata key '{key}': {e}"
         else:
-            metadata[pair] = ""
+            key, value = pair, ""
+        # Spec: keys MUST be ASCII and MUST be unique within the header.
+        if not key.isascii():
+            return None, f"Upload-Metadata key must be ASCII: '{key}'"
+        if key in metadata:
+            return None, f"Duplicate Upload-Metadata key: '{key}'"
+        if not value:
+            metadata[key] = ""
+            continue
+        try:
+            # validate=True: non-alphabet characters are an error, not
+            # silently discarded (b64decode('####') == b'' otherwise).
+            metadata[key] = base64.b64decode(value, validate=True).decode("utf-8")
+        except (ValueError, UnicodeDecodeError, binascii.Error) as e:
+            return None, f"Invalid base64 encoding for metadata key '{key}': {e}"
     return metadata, ""

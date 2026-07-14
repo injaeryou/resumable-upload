@@ -61,6 +61,8 @@ Compliance status against the [TUS resumable upload protocol v1.0.0](https://tus
 | Negative `Content-Length` → `400` | ✅ | |
 | `Upload-Metadata` larger than 4 KB → `400` | ✅ | DoS protection |
 | Invalid base64 in `Upload-Metadata` → `400` | ✅ | |
+| Duplicate `Upload-Metadata` key → `400` | ✅ | Spec: keys MUST be unique within the header |
+| Non-ASCII `Upload-Metadata` key → `400` | ✅ | Spec: keys MUST be ASCII. Bare keys (empty value, `SP` optional) accepted |
 | Socket read timeout (Slowloris protection) | ✅ | `TusHTTPRequestHandler.setup()` applies `request_timeout` (default 30s) |
 
 ## Core Protocol — Client

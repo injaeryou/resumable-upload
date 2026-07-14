@@ -42,6 +42,9 @@ All notable changes to this project are documented here. The format follows
 
 ### Fixed
 
+- **`Upload-Metadata` key rules enforced**: duplicate keys and non-ASCII keys
+  now return `400` as the spec requires (previously last-write-wins /
+  silently accepted). Bare keys keep working.
 - **HEAD on a final upload now echoes `Upload-Concat: final;<urls>`** as the
   spec requires. Source partial ids are persisted on the final upload record
   (`concat_partial_ids`) across all four storage backends; existing SQLite
