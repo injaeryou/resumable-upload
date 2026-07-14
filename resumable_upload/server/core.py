@@ -95,6 +95,7 @@ class TusServerCore:
         lock_ttl_seconds: float = 60.0,
         lock_wait_seconds: float = 5.0,
         checksum_algorithms: tuple[str, ...] = ("sha1",),
+        supports_checksum_trailer: bool = False,
     ):
         """Initialize TUS server.
 
@@ -123,13 +124,19 @@ class TusServerCore:
         """
         self.storage = storage or SQLiteStorage()
         self.base_path = base_path.rstrip("/")
-        # concatenation-unfinished is only advertised when the storage backend
-        # can actually create pending finals and assemble them later.
+        # Conditionally advertised extensions:
+        # - concatenation-unfinished needs a storage backend that can create
+        #   pending finals and assemble them later.
+        # - checksum-trailer needs a transport that parses HTTP trailers
+        #   (the bundled TusHTTPRequestHandler does; set the flag when yours
+        #   does too and merges the trailing Upload-Checksum into headers).
+        self.supports_checksum_trailer = supports_checksum_trailer
+        extensions = list(type(self).SUPPORTED_EXTENSIONS)
         if getattr(self.storage, "supports_unfinished_concat", False):
-            self.SUPPORTED_EXTENSIONS = [
-                *type(self).SUPPORTED_EXTENSIONS,
-                "concatenation-unfinished",
-            ]
+            extensions.append("concatenation-unfinished")
+        if supports_checksum_trailer:
+            extensions.append("checksum-trailer")
+        self.SUPPORTED_EXTENSIONS = extensions
         self.max_size = max_size
         self.max_chunk_size = max_chunk_size
         self.upload_expiry = upload_expiry

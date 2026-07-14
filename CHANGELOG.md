@@ -14,6 +14,11 @@ All notable changes to this project are documented here. The format follows
   atomically and fires `on_upload_complete`. Advertised only when the storage
   backend sets `supports_unfinished_concat`.
 
+- **`checksum-trailer` extension**: `Upload-Checksum` is accepted as an HTTP
+  trailer on chunked requests. The bundled `TusHTTPRequestHandler` (and the
+  `serve` CLI) parses chunked bodies + trailers; other transports opt in via
+  `TusServer(supports_checksum_trailer=True)` after doing the same.
+
 ### Fixed
 
 - **HEAD on a final upload now echoes `Upload-Concat: final;<urls>`** as the

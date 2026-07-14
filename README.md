@@ -14,7 +14,7 @@ A Python implementation of the [TUS resumable upload protocol](https://tus.io/) 
 - 🚀 **Zero Dependencies**: Built using Python standard library only (no external dependencies for core functionality)
 - 📦 **Server & Client**: Complete implementation of both sides
 - 🔄 **Resume Capability**: Automatically resume interrupted uploads
-- ✅ **Data Integrity**: Optional SHA1 checksum verification
+- ✅ **Data Integrity**: Per-chunk checksums (`sha1`/`sha256`/`sha512`/`md5`), sent as header or HTTP trailer
 - 🔁 **Retry Logic**: Built-in automatic retry with exponential backoff
 - 📊 **Progress Tracking**: Detailed upload progress callbacks with stats
 - 🌐 **Web Framework Support**: Integration examples for Flask, FastAPI, and Django

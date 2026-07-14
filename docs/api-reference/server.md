@@ -30,12 +30,18 @@ from resumable_upload import TusServer
 | `lock_ttl_seconds` | float | `60.0` | TTL applied when acquiring a lock (released sooner if the request finishes; expired automatically if the holder crashes) |
 | `lock_wait_seconds` | float | `5.0` | How long to wait for a contended lock before returning `423 Locked` |
 | `checksum_algorithms` | tuple[str, …] | `("sha1",)` | Algorithms to advertise via `Tus-Checksum-Algorithm` and accept on `Upload-Checksum`. Allowed: `sha1`, `sha256`, `sha512`, `md5`. |
+| `supports_checksum_trailer` | bool | `False` | Advertise `checksum-trailer`. Set only when the transport parses chunked bodies + trailers and merges a trailing `Upload-Checksum` into the headers — the bundled `TusHTTPRequestHandler` / `serve` CLI does. |
 
 ### Supported Extensions
 
-`TusServer.SUPPORTED_EXTENSIONS` advertises:
+`TusServer.SUPPORTED_EXTENSIONS` always advertises:
 
 `creation`, `creation-with-upload`, `creation-defer-length`, `termination`, `checksum`, `expiration`, `concatenation`
+
+Two more are advertised conditionally:
+
+- `concatenation-unfinished` — when the storage backend sets `supports_unfinished_concat` (SQLite does)
+- `checksum-trailer` — when constructed with `supports_checksum_trailer=True`
 
 ### Security Defaults
 

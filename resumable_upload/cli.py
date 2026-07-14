@@ -126,6 +126,8 @@ def _serve(args: argparse.Namespace) -> int:
         metrics_registry=metrics,
         metrics_path=args.metrics_path or "/metrics",
         lock_backend=lock_backend,
+        # The bundled stdlib transport parses chunked bodies + trailers.
+        supports_checksum_trailer=True,
     )
 
     class Handler(TusHTTPRequestHandler):
