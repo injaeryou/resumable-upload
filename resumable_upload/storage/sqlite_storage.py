@@ -2,6 +2,7 @@
 
 import contextlib
 import json
+import logging
 import os
 import sqlite3
 import threading
@@ -9,6 +10,8 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from resumable_upload.storage.base import Storage
+
+logger = logging.getLogger(__name__)
 
 try:
     import fcntl as _fcntl
@@ -276,50 +279,58 @@ class SQLiteStorage(Storage):
             "file_path": self.get_file_path(upload_id),
         }
 
-    def concatenate_uploads(
+    # -- Concatenation extension (incl. concatenation-unfinished) -----------
+
+    supports_unfinished_concat = True
+
+    def _create_final_row(
         self,
         final_id: str,
-        partial_ids: list[str],
+        upload_length: Optional[int],
         metadata: dict[str, str],
-        *,
-        expires_at: Optional[datetime] = None,
-    ) -> int:
-        """Concatenate partial uploads into a single final upload.
+        expires_at: Optional[datetime],
+        partial_ids: list[str],
+    ) -> None:
+        """Create a final upload's row atomically, source partials included.
 
-        Validates every partial up front (exists, is_partial, fully received)
-        before creating the final row or writing any bytes, so an error leaves
-        the storage unchanged.
+        A single INSERT so a crash can never leave a final row without its
+        concat_partial_ids (which HEAD echo and later assembly both need).
         """
-        partials = []
-        for pid in partial_ids:
-            p = self.get_upload(pid)
-            if p is None:
-                raise ValueError(f"partial upload not found: {pid}")
-            if not p.get("is_partial"):
-                raise ValueError(f"upload {pid} is not a partial upload")
-            if p["offset"] != p["upload_length"]:
-                raise ValueError(f"partial upload {pid} is not complete")
-            partials.append(p)
-
-        total_length = sum(p["upload_length"] for p in partials)
-
-        # Create the final upload row so get_file_path(final_id) is valid.
-        self.create_upload(final_id, total_length, metadata, expires_at, is_partial=False)
-
-        # Remember the source partials so HEAD can echo Upload-Concat: final;<urls>.
+        stored_length = self._DEFERRED_LENGTH_SENTINEL if upload_length is None else upload_length
+        expires_at_str = expires_at.astimezone(timezone.utc).isoformat() if expires_at else None
         conn = sqlite3.connect(self.db_path, timeout=self.timeout)
         try:
             conn.execute(
-                "UPDATE uploads SET concat_partial_ids = ? WHERE upload_id = ?",
-                (" ".join(partial_ids), final_id),
+                """
+                INSERT INTO uploads (
+                    upload_id, upload_length, metadata, expires_at, is_partial,
+                    concat_partial_ids
+                )
+                VALUES (?, ?, ?, ?, 0, ?)
+                """,
+                (
+                    final_id,
+                    stored_length,
+                    json.dumps(metadata),
+                    expires_at_str,
+                    " ".join(partial_ids),
+                ),
             )
             conn.commit()
         finally:
             conn.close()
+        try:
+            with open(self.get_file_path(final_id), "wb"):
+                pass
+        except OSError:
+            self.delete_upload(final_id)
+            raise
 
-        # Stream each partial's file into the final file, in order.
+    def _copy_partials(self, final_id: str, partials: list[dict]) -> int:
+        """Stream each partial's file into the final file, in order."""
         final_path = self.get_file_path(final_id)
         buffer_size = 1024 * 1024
+        total_length = 0
         with open(final_path, "wb") as dst:
             for p in partials:
                 src_path = self.get_file_path(p["upload_id"])
@@ -329,9 +340,138 @@ class SQLiteStorage(Storage):
                         if not chunk:
                             break
                         dst.write(chunk)
-
+                        total_length += len(chunk)
         self.update_offset(final_id, total_length)
         self.complete_upload(final_id)
+        return total_length
+
+    def concatenate_uploads(
+        self,
+        final_id: str,
+        partial_ids: list[str],
+        metadata: dict[str, str],
+        *,
+        expires_at: Optional[datetime] = None,
+        allow_unfinished: bool = False,
+    ) -> Optional[int]:
+        """Concatenate partial uploads into a single final upload.
+
+        Validates every partial up front (exists, is_partial) before creating
+        the final row or writing any bytes, so an error leaves the storage
+        unchanged. With ``allow_unfinished=True`` (concatenation-unfinished
+        extension), incomplete partials produce a *pending* final instead of
+        an error; the return value is then ``None`` and assembly happens later
+        via :meth:`try_assemble_final`.
+        """
+        partials = []
+        incomplete = False
+        for pid in partial_ids:
+            p = self.get_upload(pid)
+            if p is None:
+                raise ValueError(f"partial upload not found: {pid}")
+            if not p.get("is_partial"):
+                raise ValueError(f"upload {pid} is not a partial upload")
+            if p["offset"] != p["upload_length"]:
+                if not allow_unfinished:
+                    raise ValueError(f"partial upload {pid} is not complete")
+                incomplete = True
+            partials.append(p)
+
+        if incomplete:
+            # Pending final: length unknown until every partial completes
+            # (stored as the deferred sentinel, surfaced as None).
+            self._create_final_row(final_id, None, metadata, expires_at, partial_ids)
+            return None
+
+        total_length = sum(p["upload_length"] for p in partials)
+
+        # Create the final upload row so get_file_path(final_id) is valid.
+        self._create_final_row(final_id, total_length, metadata, expires_at, partial_ids)
+        self._copy_partials(final_id, partials)
+        return total_length
+
+    def find_pending_finals_for_partial(self, partial_id: str) -> list[str]:
+        conn = sqlite3.connect(self.db_path, timeout=self.timeout)
+        try:
+            cursor = conn.execute(
+                "SELECT upload_id FROM uploads"
+                " WHERE completed = 0 AND concat_partial_ids IS NOT NULL"
+                " AND (' ' || concat_partial_ids || ' ') LIKE ?",
+                (f"% {partial_id} %",),
+            )
+            rows = cursor.fetchall()
+        finally:
+            conn.close()
+        return [row[0] for row in rows]
+
+    def try_assemble_final(
+        self, final_id: str, *, max_total: Optional[int] = None
+    ) -> Optional[int]:
+        final = self.get_upload(final_id)
+        if not final or final["completed"] or not final.get("concat_partial_ids"):
+            return None
+
+        partials = []
+        for pid in final["concat_partial_ids"]:
+            p = self.get_upload(pid)
+            if p is None or p["upload_length"] is None or p["offset"] != p["upload_length"]:
+                return None  # still pending (or a partial vanished)
+            partials.append(p)
+
+        total_length = sum(p["upload_length"] for p in partials)
+
+        if max_total is not None and total_length > max_total:
+            # Assembled size would exceed Tus-Max-Size — mirror the sync
+            # concat behavior (delete + refuse) since there is no client
+            # request left to answer with a 413.
+            logger.warning(
+                "Pending final %s would be %s bytes (> max %s); deleting",
+                final_id,
+                total_length,
+                max_total,
+            )
+            self.delete_upload(final_id)
+            return None
+
+        # Atomic claim: flip the deferred-length sentinel to the real total.
+        # Also reclaimable when upload_length already equals total_length with
+        # completed = 0 — a process crash between a previous claim and
+        # complete_upload leaves exactly that state, and _copy_partials is
+        # idempotent (rewrites the final file from scratch), so retrying is
+        # safe. The per-upload lock serializes in-process callers; concurrent
+        # PATCHes completing different partials still assemble at most once.
+        with self._get_file_lock(final_id):
+            conn = sqlite3.connect(self.db_path, timeout=self.timeout)
+            try:
+                cursor = conn.execute(
+                    "UPDATE uploads SET upload_length = ?"
+                    " WHERE upload_id = ? AND completed = 0 AND upload_length IN (?, ?)",
+                    (total_length, final_id, self._DEFERRED_LENGTH_SENTINEL, total_length),
+                )
+                conn.commit()
+                claimed = cursor.rowcount == 1
+            finally:
+                conn.close()
+            if not claimed:
+                return None
+
+            try:
+                self._copy_partials(final_id, partials)
+            except Exception:
+                # Roll the claim back so the final stays *pending* instead of
+                # stranded half-assembled; a later HEAD retriggers assembly.
+                logger.exception("Assembly of final %s failed; reverting to pending", final_id)
+                conn = sqlite3.connect(self.db_path, timeout=self.timeout)
+                try:
+                    conn.execute(
+                        "UPDATE uploads SET upload_length = ?"
+                        " WHERE upload_id = ? AND completed = 0",
+                        (self._DEFERRED_LENGTH_SENTINEL, final_id),
+                    )
+                    conn.commit()
+                finally:
+                    conn.close()
+                return None
         return total_length
 
     def get_expired_uploads(self) -> list[str]:

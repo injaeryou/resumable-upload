@@ -327,6 +327,37 @@ class TestOnUploadComplete:
         assert status == 201
         assert len(calls) == 1
 
+    def test_hook_not_called_when_tus_partial_completes(self, storage):
+        """A concatenation partial finishing its bytes must NOT fire the hook.
+
+        Per the compliance matrix, partials never fire on_upload_complete
+        individually — only the final (concatenated) upload does.
+        """
+        calls = []
+
+        def hook(upload_id, metadata, file_info):
+            calls.append(upload_id)
+
+        server = TusServer(storage=storage, on_upload_complete=hook)
+        status, headers, _ = server.handle_request(
+            "POST",
+            "/files",
+            _tus_headers(**{"upload-length": "2", "upload-concat": "partial"}),
+        )
+        assert status == 201
+        server.handle_request(
+            "PATCH",
+            headers["Location"],
+            _tus_headers(
+                **{
+                    "upload-offset": "0",
+                    "content-type": "application/offset+octet-stream",
+                }
+            ),
+            body=b"hi",
+        )
+        assert calls == []
+
     def test_hook_exception_does_not_affect_response(self, storage):
         def hook(upload_id, metadata, file_info):
             raise RuntimeError("post-processing failed")

@@ -103,20 +103,21 @@ class TestPartialFinalHelpers:
             client.create_final_upload(partial_urls=[])
 
     def test_create_final_upload_propagates_server_errors(self, live_server, tmp_path):
-        """Server rejects final on incomplete partial → client raises."""
+        """Server rejects final on a missing partial → client raises.
+
+        (An *incomplete* partial no longer errors on SQLite servers — the
+        concatenation-unfinished extension turns it into a pending final —
+        so a nonexistent partial is used as the guaranteed 400 case.)
+        """
         base_url, storage = live_server
         client = TusClient(base_url, chunk_size=1024)
 
-        # Manually create an incomplete partial via the storage
-        incomplete_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-        storage.create_upload(incomplete_id, 10, {}, is_partial=True)
-        storage.write_chunk(incomplete_id, 0, b"abc")
-        storage.update_offset(incomplete_id, 3)
+        missing_id = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 
         from resumable_upload.exceptions import TusCommunicationError
 
         with pytest.raises(TusCommunicationError):
-            client.create_final_upload(partial_urls=[f"{base_url}/{incomplete_id}"], metadata={})
+            client.create_final_upload(partial_urls=[f"{base_url}/{missing_id}"], metadata={})
 
 
 class TestParallelUploads:

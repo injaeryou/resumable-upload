@@ -195,17 +195,35 @@ def _create_response(
 
 
 def _create_final_response(
-    plan: _CreateFinalPlan, total_length: int, server: TusServerCore
+    plan: _CreateFinalPlan, total_length: int | None, server: TusServerCore
 ) -> tuple[int, dict[str, str], bytes]:
     response_headers = {
         "Tus-Resumable": server.TUS_VERSION,
         "Location": f"{server.base_path}/{plan.final_id}",
-        "Upload-Offset": str(total_length),
-        "Upload-Length": str(total_length),
     }
+    if total_length is not None:
+        # Assembled synchronously; a pending (unfinished) final has no known
+        # offset/length yet, so those headers are omitted.
+        response_headers["Upload-Offset"] = str(total_length)
+        response_headers["Upload-Length"] = str(total_length)
     if plan.expires_at:
         response_headers["Upload-Expires"] = format_expiry(plan.expires_at)
     return (201, response_headers, b"")
+
+
+def _final_concat_kwargs(server: TusServerCore, plan: _CreateFinalPlan) -> dict:
+    """kwargs for Storage.concatenate_uploads, passed only when needed.
+
+    Optional kwargs are omitted when inactive so third-party Storage
+    subclasses predating them keep working (mirrors the is_partial pattern
+    in handle_create).
+    """
+    kwargs: dict = {}
+    if plan.expires_at is not None:
+        kwargs["expires_at"] = plan.expires_at
+    if getattr(server.storage, "supports_unfinished_concat", False):
+        kwargs["allow_unfinished"] = True
+    return kwargs
 
 
 def handle_create(
@@ -275,20 +293,44 @@ def handle_create_final(
     if not isinstance(plan, _CreateFinalPlan):
         return plan
 
-    # Only pass expires_at when set so third-party Storage subclasses predating
-    # this fix don't need to adapt their concatenate_uploads signature
-    # (mirrors the is_partial pattern in handle_create).
-    concat_kwargs: dict = {}
-    if plan.expires_at is not None:
-        concat_kwargs["expires_at"] = plan.expires_at
+    # Enforce Tus-Max-Size on the declared partial lengths up front, so a
+    # pending (unfinished) final that could never fit is rejected before any
+    # row is created. Deferred-length partials have no knowable size here;
+    # reject them outright rather than accept a final that assembly might have
+    # to destroy later with no client request left to answer 413 to.
+    if server.max_size > 0:
+        declared = 0
+        for pid in plan.partial_ids:
+            p = server.storage.get_upload(pid)
+            if p and p.get("upload_length") is None:
+                return server._error_response(
+                    400,
+                    "Cannot enforce Tus-Max-Size on a final over deferred-length partials",
+                )
+            if p and p.get("upload_length") is not None:
+                declared += p["upload_length"]
+        if declared > server.max_size:
+            return server._error_response(413, "Concatenated upload exceeds maximum size")
+
     try:
         total_length = server.storage.concatenate_uploads(
-            plan.final_id, plan.partial_ids, plan.metadata, **concat_kwargs
+            plan.final_id, plan.partial_ids, plan.metadata, **_final_concat_kwargs(server, plan)
         )
     except ValueError as e:
         return server._error_response(400, str(e))
     except NotImplementedError as e:
         return server._error_response(501, str(e))
+
+    if total_length is None:
+        # concatenation-unfinished: final stays pending until its partials
+        # complete; assembly (and on_upload_complete) happens in the PATCH
+        # handler that finishes the last partial.
+        logger.info(
+            "Created pending final upload %s over %s unfinished partials",
+            plan.final_id,
+            len(plan.partial_ids),
+        )
+        return _create_final_response(plan, None, server)
 
     if server.max_size > 0 and total_length > server.max_size:
         # Concatenated payload exceeds limit — delete and reject.
@@ -379,17 +421,31 @@ async def handle_create_final_async(
     if not isinstance(plan, _CreateFinalPlan):
         return plan
 
-    concat_kwargs: dict = {}
-    if plan.expires_at is not None:
-        concat_kwargs["expires_at"] = plan.expires_at
+    if server.max_size > 0:
+        declared = 0
+        for pid in plan.partial_ids:
+            p = await server.storage.get_upload_async(pid)
+            if p and p.get("upload_length") is not None:
+                declared += p["upload_length"]
+        if declared > server.max_size:
+            return server._error_response(413, "Concatenated upload exceeds maximum size")
+
     try:
         total_length = await server.storage.concatenate_uploads_async(
-            plan.final_id, plan.partial_ids, plan.metadata, **concat_kwargs
+            plan.final_id, plan.partial_ids, plan.metadata, **_final_concat_kwargs(server, plan)
         )
     except ValueError as e:
         return server._error_response(400, str(e))
     except NotImplementedError as e:
         return server._error_response(501, str(e))
+
+    if total_length is None:
+        logger.info(
+            "Created pending final upload %s over %s unfinished partials",
+            plan.final_id,
+            len(plan.partial_ids),
+        )
+        return _create_final_response(plan, None, server)
 
     if server.max_size > 0 and total_length > server.max_size:
         await server.storage.delete_upload_async(plan.final_id)

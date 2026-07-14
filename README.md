@@ -22,7 +22,7 @@ A Python implementation of the [TUS resumable upload protocol](https://tus.io/) 
 - 🏪 **Storage Backend**: SQLite-based storage (extensible to other backends)
 - 🔐 **TLS Support**: Certificate verification control and mTLS authentication
 - 📝 **URL Storage**: Persist upload URLs across sessions
-- 🎯 **TUS Protocol Compliant**: Implements TUS v1.0.0 core protocol with creation, termination, and checksum extensions
+- 🎯 **TUS Protocol Compliant**: TUS v1.0.0 core plus every extension — creation, creation-with-upload, creation-defer-length, termination, checksum, expiration, concatenation, and concatenation-unfinished
 
 ## 📦 Installation
 

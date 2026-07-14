@@ -47,6 +47,29 @@ final_url = client.create_final_upload(
     - GCS: `compose()`
     - Azure: block-list reuse
 
+## Unfinished concatenation (`concatenation-unfinished`)
+
+On backends that support it (SQLite does), a final upload may be POSTed **while
+its partials are still uploading**:
+
+- `POST` with `Upload-Concat: final;<urls>` over incomplete partials returns
+  `201` with a `Location` but **no** `Upload-Offset` / `Upload-Length` — the
+  final is *pending*.
+- `HEAD` on a pending final echoes `Upload-Concat: final;…` and omits both
+  length headers until assembly completes (per spec).
+- The `PATCH` that completes the **last** partial assembles the final
+  atomically (concurrent completions assemble exactly once) and fires
+  `on_upload_complete` for the final at that moment.
+- `PATCH` directly on a pending final returns `403`; `DELETE` works and leaves
+  the partials untouched.
+- `Tus-Max-Size` is enforced both at final creation (declared lengths) and at
+  assembly time (covers deferred-length partials).
+
+The extension token `concatenation-unfinished` is advertised in
+`Tus-Extension` only when the storage backend sets
+`supports_unfinished_concat = True`. Cloud backends keep the strict behavior
+(`400` on incomplete partials) for now.
+
 ## Examples
 
 - `examples/client/parallel_upload.py` — `parallel_uploads=N` end-to-end.

@@ -53,8 +53,12 @@ def _build_head_response(
         "Cache-Control": "no-store",
     }
     if upload["upload_length"] is None:
-        # Upload-Defer-Length extension: length not yet committed.
-        response_headers["Upload-Defer-Length"] = "1"
+        if not upload.get("concat_partial_ids"):
+            # Upload-Defer-Length extension: length not yet committed.
+            # (A *pending* final upload — concatenation-unfinished — also has
+            # no length yet, but it is not a defer-length upload; both length
+            # headers are simply omitted until assembly.)
+            response_headers["Upload-Defer-Length"] = "1"
     else:
         response_headers["Upload-Length"] = str(upload["upload_length"])
 

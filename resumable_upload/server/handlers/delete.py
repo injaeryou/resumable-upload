@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Callable
 
 if TYPE_CHECKING:
     from resumable_upload.server.core import TusServerCore
@@ -19,6 +19,13 @@ def handle_delete(
         logger.warning("Upload not found for deletion: %s", upload_id)
         return server._error_response(404, "Upload not found")
 
+    if upload.get("is_partial"):
+        blocked = _check_pending_final_refs(
+            server, upload_id, server.storage.find_pending_finals_for_partial
+        )
+        if blocked is not None:
+            return blocked
+
     server.storage.delete_upload(upload_id)
     return _finalize_delete(server, upload_id)
 
@@ -31,8 +38,47 @@ async def handle_delete_async(
         logger.warning("Upload not found for deletion: %s", upload_id)
         return server._error_response(404, "Upload not found")
 
+    if upload.get("is_partial"):
+        try:
+            pending = await server.storage.find_pending_finals_for_partial_async(upload_id)
+        except NotImplementedError:
+            pending = None
+        blocked = _pending_final_refs_response(server, upload_id, pending)
+        if blocked is not None:
+            return blocked
+
     await server.storage.delete_upload_async(upload_id)
     return _finalize_delete(server, upload_id)
+
+
+def _check_pending_final_refs(
+    server: TusServerCore, upload_id: str, finder: Callable[[str], list[str]]
+) -> tuple[int, dict[str, str], bytes] | None:
+    try:
+        pending = finder(upload_id)
+    except NotImplementedError:
+        pending = None
+    return _pending_final_refs_response(server, upload_id, pending)
+
+
+def _pending_final_refs_response(
+    server: TusServerCore, upload_id: str, pending: list[str] | None
+) -> tuple[int, dict[str, str], bytes] | None:
+    """409 when a pending (unassembled) final still needs this partial.
+
+    Deleting it would strand the final forever: try_assemble_final can never
+    complete once a source partial is gone.
+    """
+    if not pending:
+        return None
+    logger.warning(
+        "Refusing to delete partial %s: referenced by pending final(s) %s",
+        upload_id,
+        ", ".join(pending),
+    )
+    return server._error_response(
+        409, "Partial upload is referenced by an unfinished concatenation"
+    )
 
 
 def _finalize_delete(server: TusServerCore, upload_id: str) -> tuple[int, dict[str, str], bytes]:

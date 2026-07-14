@@ -54,6 +54,13 @@ def _plan_patch(
         logger.warning("Upload already completed: %s", upload_id)
         return server._error_response(403, "Upload already completed")
 
+    if upload.get("concat_partial_ids"):
+        # A final (concatenated) upload never accepts data directly — this
+        # catches *pending* finals (concatenation-unfinished); completed
+        # finals are already rejected above.
+        logger.warning("PATCH on final upload rejected: %s", upload_id)
+        return server._error_response(403, "Cannot PATCH a final (concatenated) upload")
+
     content_type = headers.get("content-type", "")
     if content_type != "application/offset+octet-stream":
         logger.error("Invalid Content-Type: %s", content_type)
@@ -156,6 +163,45 @@ def _plan_patch(
     )
 
 
+def _fire_final_complete(server: TusServerCore, final_id: str) -> None:
+    """Metrics + on_upload_complete for a just-assembled pending final."""
+    if server._metrics is not None:
+        server._metrics.inc("tusd_uploads_finished_total")
+    if server._on_upload_complete:
+        final = server.storage.get_upload(final_id)
+        file_info = server.storage.get_file_info(final_id)
+        server._invoke_post_hook(
+            server._on_upload_complete,
+            final_id,
+            (final or {}).get("metadata", {}),
+            file_info,
+        )
+
+
+def _assemble_pending_finals(server: TusServerCore, partial_id: str) -> None:
+    """concatenation-unfinished: assemble any pending finals waiting on this partial."""
+    try:
+        pending = server.storage.find_pending_finals_for_partial(partial_id)
+    except NotImplementedError:
+        return
+    for final_id in pending:
+        if server.storage.try_assemble_final(final_id) is not None:
+            logger.info("Assembled pending final upload %s", final_id)
+            _fire_final_complete(server, final_id)
+
+
+async def _assemble_pending_finals_async(server: TusServerCore, partial_id: str) -> None:
+    """Async sibling of :func:`_assemble_pending_finals`."""
+    try:
+        pending = await server.storage.find_pending_finals_for_partial_async(partial_id)
+    except NotImplementedError:
+        return
+    for final_id in pending:
+        if await server.storage.try_assemble_final_async(final_id) is not None:
+            logger.info("Assembled pending final upload %s", final_id)
+            _fire_final_complete(server, final_id)
+
+
 def _patch_response(plan: _PatchPlan, server: TusServerCore) -> tuple[int, dict[str, str], bytes]:
     response_headers = {
         "Tus-Resumable": server.TUS_VERSION,
@@ -204,7 +250,9 @@ def handle_patch(
     if plan.new_offset >= plan.effective_length and server.storage.complete_upload(upload_id):
         if server._metrics is not None:
             server._metrics.inc("tusd_uploads_finished_total")
-        if server._on_upload_complete:
+        # Concatenation partials never fire on_upload_complete individually;
+        # only the final (concatenated) upload does.
+        if server._on_upload_complete and not upload.get("is_partial"):
             file_info = server.storage.get_file_info(upload_id)
             server._invoke_post_hook(
                 server._on_upload_complete,
@@ -212,6 +260,8 @@ def handle_patch(
                 upload.get("metadata", {}),
                 file_info,
             )
+        if upload.get("is_partial"):
+            _assemble_pending_finals(server, upload_id)
 
     return _patch_response(plan, server)
 
@@ -261,7 +311,7 @@ async def handle_patch_async(
     ):
         if server._metrics is not None:
             server._metrics.inc("tusd_uploads_finished_total")
-        if server._on_upload_complete:
+        if server._on_upload_complete and not upload.get("is_partial"):
             file_info = server.storage.get_file_info(upload_id)
             server._invoke_post_hook(
                 server._on_upload_complete,
@@ -269,5 +319,7 @@ async def handle_patch_async(
                 upload.get("metadata", {}),
                 file_info,
             )
+        if upload.get("is_partial"):
+            await _assemble_pending_finals_async(server, upload_id)
 
     return _patch_response(plan, server)

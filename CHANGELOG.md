@@ -6,6 +6,14 @@ All notable changes to this project are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- **`concatenation-unfinished` extension** (SQLite backend): POST a final
+  upload while its partials are still in progress. The final stays *pending*
+  (no offset/length) until the last partial completes, then assembles
+  atomically and fires `on_upload_complete`. Advertised only when the storage
+  backend sets `supports_unfinished_concat`.
+
 ### Fixed
 
 - **HEAD on a final upload now echoes `Upload-Concat: final;<urls>`** as the

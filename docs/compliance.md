@@ -14,6 +14,7 @@ Compliance status against the [TUS resumable upload protocol v1.0.0](https://tus
 | **checksum** | ✅ Implemented | Configurable algorithms (`sha1`, `sha256`, `sha512`, `md5`); server advertises every enabled algorithm in `Tus-Checksum-Algorithm` |
 | **expiration** | ✅ Implemented | `Upload-Expires` in POST / HEAD / PATCH responses (also propagated to final concatenated uploads); periodic server-side cleanup |
 | **concatenation** | ✅ Implemented | `Upload-Concat: partial` and `Upload-Concat: final;url1 url2 …`; supported by SQLite, S3, GCS, and Azure backends |
+| **concatenation-unfinished** | ✅ Implemented (SQLite) | POST `Upload-Concat: final;…` while partials are still in progress creates a *pending* final (201, no `Upload-Offset`/`Upload-Length`); assembly + `on_upload_complete` fire when the last partial completes. Advertised in `Tus-Extension` only when the storage backend sets `supports_unfinished_concat` (SQLite does; cloud backends not yet). PATCH on a pending final → `403`. |
 
 ## Version Negotiation
 

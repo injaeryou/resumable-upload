@@ -349,37 +349,10 @@ class TestConcatenationServer:
         )
         assert status == 403
 
-    def test_create_final_rejects_incomplete_partial(self, server):
-        # Create a partial and only upload 3 of 10 bytes
-        status, headers, _ = server.handle_request(
-            "POST",
-            "/files",
-            self._h(**{"Upload-Length": "10", "Upload-Concat": "partial"}),
-            b"",
-        )
-        assert status == 201
-        location = headers["Location"]
-        p = location.rsplit("/", 1)[1]
-        server.handle_request(
-            "PATCH",
-            location,
-            self._h(
-                **{
-                    "Upload-Offset": "0",
-                    "Content-Type": "application/offset+octet-stream",
-                }
-            ),
-            b"abc",
-        )
-
-        status, _, body = server.handle_request(
-            "POST",
-            "/files",
-            self._h(**{"Upload-Concat": f"final;/files/{p}"}),
-            b"",
-        )
-        assert status == 400
-        assert b"not complete" in body or b"incomplete" in body.lower()
+    # NOTE: "final over an incomplete partial" used to be a hard 400. Since the
+    # concatenation-unfinished extension it creates a *pending* final on
+    # backends that support it (SQLite does); both behaviors are covered in
+    # tests/test_concatenation_unfinished.py.
 
     def test_create_final_rejects_unknown_partial_url(self, server):
         # URL not under /files/ base path

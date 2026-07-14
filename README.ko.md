@@ -22,7 +22,7 @@
 - 🏪 **스토리지 백엔드**: SQLite 기반 스토리지 (커스텀 백엔드로 확장 가능)
 - 🔐 **TLS 지원**: 인증서 검증 제어 및 mTLS 인증
 - 📝 **URL 스토리지**: 세션 간 업로드 URL 유지
-- 🎯 **TUS 프로토콜 준수**: TUS v1.0.0 코어 + creation, termination, checksum, expiration 확장 구현
+- 🎯 **TUS 프로토콜 준수**: TUS v1.0.0 코어 + 모든 확장 — creation, creation-with-upload, creation-defer-length, termination, checksum, expiration, concatenation, concatenation-unfinished
 
 ## 📦 설치
 
