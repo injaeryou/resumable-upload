@@ -16,7 +16,8 @@ TUS_EXPOSE_HEADERS = (
 )
 TUS_ALLOW_HEADERS = (
     "Origin,X-Requested-With,Content-Type,Upload-Length,Upload-Offset,"
-    "Tus-Resumable,Upload-Metadata,Upload-Checksum,Upload-Expires,Upload-Concat"
+    "Tus-Resumable,Upload-Metadata,Upload-Checksum,Upload-Expires,Upload-Concat,"
+    "Upload-Defer-Length,X-HTTP-Method-Override,X-Request-ID"
 )
 
 MAX_METADATA_SIZE = 4096
@@ -27,13 +28,53 @@ def validate_upload_id(upload_id: str) -> bool:
     return bool(_UUID_RE.match(upload_id))
 
 
-def add_cors_headers(headers: dict, cors_allow_origins: str | None) -> dict:
-    """Mutate ``headers`` in place with CORS values when origins are configured."""
-    if cors_allow_origins:
-        headers["Access-Control-Allow-Origin"] = cors_allow_origins
-        headers["Access-Control-Expose-Headers"] = TUS_EXPOSE_HEADERS
-        headers["Access-Control-Allow-Methods"] = "GET,POST,HEAD,PATCH,DELETE,OPTIONS"
-        headers["Access-Control-Allow-Headers"] = TUS_ALLOW_HEADERS
+def add_cors_headers(
+    headers: dict,
+    cors_allow_origins: str | list[str] | None,
+    *,
+    origin: str | None = None,
+    allow_credentials: bool = False,
+    max_age: int | None = None,
+    preflight: bool = False,
+) -> dict:
+    """Mutate ``headers`` in place with CORS values when origins are configured.
+
+    ``cors_allow_origins`` accepts a static string (legacy behavior, e.g.
+    ``"*"``) or a list of origins matched against the request ``origin``.
+    With ``allow_credentials`` a wildcard is replaced by the echoed request
+    origin, since ``*`` is invalid alongside credentials.
+    """
+    if not cors_allow_origins:
+        return headers
+
+    origin_dependent = not isinstance(cors_allow_origins, str)
+    if isinstance(cors_allow_origins, str):
+        allowed: str | None = cors_allow_origins
+        if cors_allow_origins == "*" and allow_credentials:
+            allowed = origin
+            origin_dependent = True
+    else:
+        allowed = origin if origin in cors_allow_origins else None
+
+    if origin_dependent:
+        # Response varies by request Origin — keep caches honest either way,
+        # merging with any Vary value another layer already set.
+        existing_vary = headers.get("Vary")
+        if not existing_vary:
+            headers["Vary"] = "Origin"
+        elif "origin" not in existing_vary.lower():
+            headers["Vary"] = f"{existing_vary}, Origin"
+    if not allowed:
+        return headers
+
+    headers["Access-Control-Allow-Origin"] = allowed
+    headers["Access-Control-Expose-Headers"] = TUS_EXPOSE_HEADERS
+    headers["Access-Control-Allow-Methods"] = "GET,POST,HEAD,PATCH,DELETE,OPTIONS"
+    headers["Access-Control-Allow-Headers"] = TUS_ALLOW_HEADERS
+    if allow_credentials:
+        headers["Access-Control-Allow-Credentials"] = "true"
+    if preflight and max_age is not None:
+        headers["Access-Control-Max-Age"] = str(max_age)
     return headers
 
 

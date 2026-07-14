@@ -5,7 +5,7 @@ import logging
 import threading
 from collections.abc import Awaitable
 from datetime import datetime, timezone
-from typing import Any, BinaryIO, Callable, Optional
+from typing import Any, BinaryIO, Callable, Optional, Union
 
 from resumable_upload.checksum import ChecksumAlgorithms
 from resumable_upload.exceptions import TusHookError
@@ -86,7 +86,9 @@ class TusServerCore:
         max_size: int = 0,
         max_chunk_size: int = 0,
         upload_expiry: Optional[int] = None,
-        cors_allow_origins: Optional[str] = None,
+        cors_allow_origins: Optional[Union[str, list[str]]] = None,
+        cors_allow_credentials: bool = False,
+        cors_max_age: Optional[int] = None,
         cleanup_interval: int = 60,
         request_timeout: int = 30,
         on_incoming_request: Optional[Callable[..., None]] = None,
@@ -112,7 +114,12 @@ class TusServerCore:
             max_size: Maximum upload size in bytes (0 = unlimited)
             max_chunk_size: Maximum individual chunk size in bytes (0 = unlimited)
             upload_expiry: Upload expiry in seconds (None = no expiry)
-            cors_allow_origins: CORS allowed origins (None = no CORS headers)
+            cors_allow_origins: CORS allowed origins — a static string
+                (legacy, e.g. "*") or a list of origins matched against the
+                request Origin header (None = no CORS headers)
+            cors_allow_credentials: Emit Access-Control-Allow-Credentials;
+                a "*" origin is then replaced by the echoed request origin
+            cors_max_age: Access-Control-Max-Age seconds on OPTIONS responses
             cleanup_interval: Minimum seconds between expired-upload cleanup runs (default: 60)
             request_timeout: Socket read timeout in seconds for HTTP handler (default: 30)
             on_incoming_request: Called before processing any request.
@@ -163,6 +170,8 @@ class TusServerCore:
         self.max_chunk_size = max_chunk_size
         self.upload_expiry = upload_expiry
         self.cors_allow_origins = cors_allow_origins
+        self.cors_allow_credentials = cors_allow_credentials
+        self.cors_max_age = cors_max_age
         self.cleanup_interval = cleanup_interval
         self.request_timeout = request_timeout
         self._last_cleanup: Optional[datetime] = None
@@ -330,9 +339,18 @@ class TusServerCore:
         finally:
             await asyncio.to_thread(self._locks.release, upload_id, token)
 
-    def _add_cors_headers(self, headers: dict) -> dict:
+    def _add_cors_headers(
+        self, headers: dict, origin: Optional[str] = None, preflight: bool = False
+    ) -> dict:
         """Add CORS headers if cors_allow_origins is configured."""
-        return add_cors_headers(headers, self.cors_allow_origins)
+        return add_cors_headers(
+            headers,
+            self.cors_allow_origins,
+            origin=origin,
+            allow_credentials=self.cors_allow_credentials,
+            max_age=self.cors_max_age,
+            preflight=preflight,
+        )
 
     def _format_expiry(self, expires_at: datetime) -> str:
         """Format expiry datetime as RFC 7231 date string."""
@@ -377,14 +395,32 @@ class TusServerCore:
                     status, resp_headers, resp_body = self._error_response(
                         400, f"Unsupported X-HTTP-Method-Override value: {override}"
                     )
-                    return (status, self._add_cors_headers(resp_headers), resp_body)
+                    return (
+                        status,
+                        self._add_cors_headers(
+                            resp_headers, headers.get("origin"), method == "OPTIONS"
+                        ),
+                        resp_body,
+                    )
                 method = override
 
         # Early body-size gate for direct API callers (frameworks that pre-read the body)
         if method == "PATCH" and self.max_chunk_size > 0 and len(body) > self.max_chunk_size:
-            return self._error_response(413, "Chunk exceeds maximum chunk size")
+            status, resp_headers, resp_body = self._error_response(
+                413, "Chunk exceeds maximum chunk size"
+            )
+            return (
+                status,
+                self._add_cors_headers(resp_headers, headers.get("origin"), False),
+                resp_body,
+            )
         if self.max_size > 0 and len(body) > self.max_size:
-            return self._error_response(413, "Request entity too large")
+            status, resp_headers, resp_body = self._error_response(413, "Request entity too large")
+            return (
+                status,
+                self._add_cors_headers(resp_headers, headers.get("origin"), False),
+                resp_body,
+            )
 
         # Invoke on_incoming_request hook before any processing
         if self._on_incoming_request:
@@ -393,7 +429,11 @@ class TusServerCore:
             except TusHookError as e:
                 return (
                     e.status_code,
-                    self._add_cors_headers({"Tus-Resumable": self.TUS_VERSION}),
+                    self._add_cors_headers(
+                        {"Tus-Resumable": self.TUS_VERSION},
+                        headers.get("origin"),
+                        method == "OPTIONS",
+                    ),
                     e.body.encode(),
                 )
 
@@ -411,7 +451,13 @@ class TusServerCore:
                     {"Tus-Resumable": self.TUS_VERSION},
                     b"Precondition Failed: Invalid TUS version",
                 )
-                return (status, self._add_cors_headers(resp_headers), resp_body)
+                return (
+                    status,
+                    self._add_cors_headers(
+                        resp_headers, headers.get("origin"), method == "OPTIONS"
+                    ),
+                    resp_body,
+                )
 
         # Route request
         if method == "OPTIONS":
@@ -474,7 +520,11 @@ class TusServerCore:
         if self._metrics is not None and status >= 400:
             self._metrics.inc("tusd_errors_total", labels={"status": str(status)})
 
-        return (status, self._add_cors_headers(resp_headers), resp_body)
+        return (
+            status,
+            self._add_cors_headers(resp_headers, headers.get("origin"), method == "OPTIONS"),
+            resp_body,
+        )
 
     async def handle_request_async(
         self, method: str, path: str, headers: dict[str, str], body: bytes = b""
@@ -502,13 +552,31 @@ class TusServerCore:
                     status, resp_headers, resp_body = self._error_response(
                         400, f"Unsupported X-HTTP-Method-Override value: {override}"
                     )
-                    return (status, self._add_cors_headers(resp_headers), resp_body)
+                    return (
+                        status,
+                        self._add_cors_headers(
+                            resp_headers, headers.get("origin"), method == "OPTIONS"
+                        ),
+                        resp_body,
+                    )
                 method = override
 
         if method == "PATCH" and self.max_chunk_size > 0 and len(body) > self.max_chunk_size:
-            return self._error_response(413, "Chunk exceeds maximum chunk size")
+            status, resp_headers, resp_body = self._error_response(
+                413, "Chunk exceeds maximum chunk size"
+            )
+            return (
+                status,
+                self._add_cors_headers(resp_headers, headers.get("origin"), False),
+                resp_body,
+            )
         if self.max_size > 0 and len(body) > self.max_size:
-            return self._error_response(413, "Request entity too large")
+            status, resp_headers, resp_body = self._error_response(413, "Request entity too large")
+            return (
+                status,
+                self._add_cors_headers(resp_headers, headers.get("origin"), False),
+                resp_body,
+            )
 
         if self._on_incoming_request:
             try:
@@ -516,7 +584,11 @@ class TusServerCore:
             except TusHookError as e:
                 return (
                     e.status_code,
-                    self._add_cors_headers({"Tus-Resumable": self.TUS_VERSION}),
+                    self._add_cors_headers(
+                        {"Tus-Resumable": self.TUS_VERSION},
+                        headers.get("origin"),
+                        method == "OPTIONS",
+                    ),
                     e.body.encode(),
                 )
 
@@ -531,7 +603,13 @@ class TusServerCore:
                     {"Tus-Resumable": self.TUS_VERSION},
                     b"Precondition Failed: Invalid TUS version",
                 )
-                return (status, self._add_cors_headers(resp_headers), resp_body)
+                return (
+                    status,
+                    self._add_cors_headers(
+                        resp_headers, headers.get("origin"), method == "OPTIONS"
+                    ),
+                    resp_body,
+                )
 
         if method == "OPTIONS":
             result = await self._handle_options_async(path, headers)
@@ -592,7 +670,11 @@ class TusServerCore:
         if self._metrics is not None and status >= 400:
             self._metrics.inc("tusd_errors_total", labels={"status": str(status)})
 
-        return (status, self._add_cors_headers(resp_headers), resp_body)
+        return (
+            status,
+            self._add_cors_headers(resp_headers, headers.get("origin"), method == "OPTIONS"),
+            resp_body,
+        )
 
     # --- Per-method delegates ---------------------------------------------
     # These exist so subclasses can override a single method without rewiring

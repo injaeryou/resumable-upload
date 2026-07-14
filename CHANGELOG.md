@@ -36,6 +36,10 @@ All notable changes to this project are documented here. The format follows
   the finishing response, `on_before_terminate` can veto client DELETEs, and
   `TusServer.terminate_upload()` terminates out-of-band.
 
+- **CORS depth**: `cors_allow_origins` accepts an origin list (matched and
+  echoed with `Vary: Origin`), plus `cors_allow_credentials` and
+  `cors_max_age`. Wildcard + credentials safely echoes the request origin.
+
 ### Fixed
 
 - **HEAD on a final upload now echoes `Upload-Concat: final;<urls>`** as the

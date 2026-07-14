@@ -17,7 +17,9 @@ from resumable_upload import TusServer
 | `max_size` | int | `0` | Max upload size in bytes (0 = unlimited) |
 | `max_chunk_size` | int | `0` | Max individual PATCH body size in bytes (0 = unlimited). Bigger chunks return `413` |
 | `upload_expiry` | int | `None` | Upload TTL in seconds (None = no expiry) |
-| `cors_allow_origins` | str | `None` | CORS `Access-Control-Allow-Origin` value |
+| `cors_allow_origins` | str \| list[str] | `None` | CORS origins. A static string (e.g. `"*"`) is emitted as-is; a list is matched against the request `Origin` and echoed back with `Vary: Origin` (no match → no CORS headers) |
+| `cors_allow_credentials` | bool | `False` | Emit `Access-Control-Allow-Credentials: true`. A `"*"` origin is then replaced by the echoed request origin (`*` is invalid with credentials) |
+| `cors_max_age` | int | `None` | `Access-Control-Max-Age` seconds on preflight (OPTIONS) responses |
 | `cleanup_interval` | int | `60` | Min seconds between expired-upload cleanup runs |
 | `request_timeout` | int | `30` | Socket read timeout in seconds for `TusHTTPRequestHandler`. Guards against Slowloris attacks. Set to `0` to disable. |
 | `on_incoming_request` | Callable | `None` | Hook called before processing any request |
