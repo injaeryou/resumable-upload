@@ -52,6 +52,7 @@ class ProtocolMixin(_ClientAttrs):
             "Tus-Resumable": self.TUS_VERSION,
             **self.headers,
         }
+        _protocol.maybe_add_request_id(headers, self.add_request_id)
 
         try:
             req = Request(upload_url, headers=headers, method="HEAD")
@@ -90,6 +91,7 @@ class ProtocolMixin(_ClientAttrs):
             "Tus-Resumable": self.TUS_VERSION,
             **self.headers,
         }
+        _protocol.maybe_add_request_id(headers, self.add_request_id)
 
         try:
             req = Request(upload_url, headers=headers, method="HEAD")

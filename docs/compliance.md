@@ -141,20 +141,20 @@ Summary: ahead of tusd on **protocol surface** (checksum, expiration, unfinished
 | **Retry** | `retryDelays` array `[0,1s,3s,5s]`, `onShouldRetry` override | `max_retries` + exponential backoff (cap 60s), `on_should_retry` override, `stop_event` interrupts waits |
 | **Resume across sessions** | fingerprint → urlStorage (localStorage default **on**), `findPreviousUploads()` / `resumeFromPreviousUpload()` | fingerprint → URL storage (File/SQLite/Memory backends, default **off** via `store_url`), `find_previous_uploads()` / `resume_upload()` |
 | **Fingerprint strength** | environment default (name/size-based), pluggable | full-file SHA-256 default (collision-proof, costlier), partial-MD5 and callable alternatives |
-| **Parallel upload (concatenation)** | `parallelUploads=N`, custom `parallelUploadBoundaries`, `metadataForPartialUploads` | `parallel_uploads=N`, even split only (no custom boundaries), metadata attached to final only |
+| **Parallel upload (concatenation)** | `parallelUploads=N`, custom `parallelUploadBoundaries`, `metadataForPartialUploads` | `parallel_uploads=N` + `metadata_for_partial_uploads`; even split only (custom boundaries deliberately skipped) |
 | **creation-with-upload** | ✅ `uploadDataDuringCreation` | ✅ `initial_data` on create |
 | **defer-length** | ✅ `uploadLengthDeferred` | ✅ `create_deferred_upload()` |
 | **Termination** | ✅ `abort(true)` / static `terminate()` | ✅ `delete_upload()` |
 | **Pause / partial stop** | `abort()` (resume later) | `stop_event` (interrupt-safe), `stop_at` byte offset |
-| **Request lifecycle hooks** | `onBeforeRequest`, `onAfterResponse`, `onUploadUrlAvailable` | `before_request`, `after_response`; no URL-available callback (URL returned directly) |
+| **Request lifecycle hooks** | `onBeforeRequest`, `onAfterResponse`, `onUploadUrlAvailable` | `before_request`, `after_response`, `on_upload_url_available` |
 | **Progress reporting** | `onProgress(bytesSent,total)`, `onChunkComplete` | `progress_callback(UploadStats)` incl. speed, ETA, chunks completed |
-| **`X-HTTP-Method-Override`** | ✅ `overridePatchMethod` | ❌ client-side (server accepts it) |
-| **Request IDs** | ✅ `addRequestId` (X-Request-ID) | ❌ (achievable via `headers`/`before_request`) |
+| **`X-HTTP-Method-Override`** | ✅ `overridePatchMethod` | ✅ `override_patch_method` (sync + async) |
+| **Request IDs** | ✅ `addRequestId` (X-Request-ID) | ✅ `add_request_id` (UUID per request; user header wins) |
 | **TLS control** | n/a in browser | `verify_tls_cert`, mTLS client certificates |
 | **Async** | Promise-based | separate `AsyncTusClient` (httpx, `[async]` extra) |
 | **tus2 / IETF RUFH** | ✅ experimental `protocol: 'ietf-draft-03'/'ietf-draft-05'` | ❌ (tracked) |
 
-Summary: ahead on **integrity** (checksum), **fingerprint strength**, TLS/mTLS, and stats-rich progress; behind on **RUFH experimentation** and small ergonomics (`overridePatchMethod`, request IDs, custom parallel boundaries).
+Summary: ahead on **integrity** (checksum), **fingerprint strength**, TLS/mTLS, and stats-rich progress; behind only on **RUFH experimentation** and custom parallel boundaries.
 
 ## Error Response Reference
 

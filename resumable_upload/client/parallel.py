@@ -23,6 +23,7 @@ class ParallelUploadMixin(_ClientAttrs):
         metadata: dict[str, str],
         parallel_uploads: int,
         progress_callback: Optional[Callable[[UploadStats], None]],
+        metadata_for_partial_uploads: Optional[dict[str, str]] = None,
     ) -> str:
         """Split a file into N ranges, upload concurrently, and merge server-side."""
         from concurrent.futures import ThreadPoolExecutor
@@ -48,9 +49,13 @@ class ParallelUploadMixin(_ClientAttrs):
 
         def upload_slice(lo: int, hi: int) -> str:
             length = hi - lo
-            # Send partials without metadata; metadata is attached to the final.
+            # Partials carry metadata only when explicitly requested
+            # (tus-js-client's metadataForPartialUploads); the real metadata
+            # is attached to the final upload.
             upload_url = self._create_upload(
-                length, metadata={}, extra_headers={"Upload-Concat": "partial"}
+                length,
+                metadata=metadata_for_partial_uploads or {},
+                extra_headers={"Upload-Concat": "partial"},
             )
             # Stream the slice from disk on demand instead of reading it all
             # into memory; the uploader does not own the stream, so close it here.
@@ -69,6 +74,8 @@ class ParallelUploadMixin(_ClientAttrs):
                 before_request=self.before_request,
                 after_response=self.after_response,
                 on_should_retry=self.on_should_retry,
+                override_patch_method=self.override_patch_method,
+                add_request_id=self.add_request_id,
             )
             try:
                 uploader.upload()

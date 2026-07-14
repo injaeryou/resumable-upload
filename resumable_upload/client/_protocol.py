@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import re
+import uuid
 from typing import Any
 
 _KEY_RE = re.compile(r"^$|[\s,]+")
@@ -77,6 +78,17 @@ def checksum_header(algo: str, data: bytes) -> str:
     hasher = hashlib.new(algo)
     hasher.update(data)
     return f"{algo} {base64.b64encode(hasher.digest()).decode('ascii')}"
+
+
+def maybe_add_request_id(headers: dict[str, str], enabled: bool) -> dict[str, str]:
+    """Add a per-request ``X-Request-ID`` UUID when enabled.
+
+    A user-supplied X-Request-ID (via custom headers) always wins.
+    Mutates and returns ``headers``.
+    """
+    if enabled and not any(k.lower() == "x-request-id" for k in headers):
+        headers["X-Request-ID"] = str(uuid.uuid4())
+    return headers
 
 
 def retry_delay(base: float, attempt: int) -> float:

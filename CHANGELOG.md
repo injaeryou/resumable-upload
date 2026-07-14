@@ -25,6 +25,11 @@ All notable changes to this project are documented here. The format follows
   validated `Content-Type` from metadata `filetype`; incomplete uploads `404`,
   expired `410`.
 
+- **Client ergonomics** (sync + async): `override_patch_method` (tunnel PATCH
+  through POST + `X-HTTP-Method-Override`), `add_request_id` (unique
+  `X-Request-ID` per request), `on_upload_url_available` callback, and
+  `metadata_for_partial_uploads` for parallel uploads.
+
 ### Fixed
 
 - **HEAD on a final upload now echoes `Upload-Concat: final;<urls>`** as the

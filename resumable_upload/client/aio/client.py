@@ -73,6 +73,9 @@ class AsyncTusClient:
         before_request: Callable[[str, str, dict[str, str]], None] | None = None,
         after_response: Callable[[str, str, int], None] | None = None,
         on_should_retry: Callable[[Exception, int], bool] | None = None,
+        override_patch_method: bool = False,
+        add_request_id: bool = False,
+        on_upload_url_available: Callable[[str], None] | None = None,
         # Private test-only injection seam; do not use in production.
         _transport: Any | None = None,
     ) -> None:
@@ -95,6 +98,9 @@ class AsyncTusClient:
         self.before_request = before_request
         self.after_response = after_response
         self.on_should_retry = on_should_retry
+        self.override_patch_method = override_patch_method
+        self.add_request_id = add_request_id
+        self.on_upload_url_available = on_upload_url_available
         self._transport = _transport
         self._client: Any | None = None  # httpx.AsyncClient, built lazily
 
@@ -168,6 +174,7 @@ class AsyncTusClient:
             headers["Content-Type"] = "application/offset+octet-stream"
             headers["Content-Length"] = str(len(initial_data))
 
+        _protocol.maybe_add_request_id(headers, self.add_request_id)
         if self.before_request is not None:
             self.before_request("POST", self.url, headers)
 
@@ -205,6 +212,7 @@ class AsyncTusClient:
         progress_callback: Callable[[UploadStats], None] | None = None,
         stop_at: int | None = None,
         parallel_uploads: int = 1,
+        metadata_for_partial_uploads: dict[str, str] | None = None,
     ) -> str:
         """Upload a file to the TUS server.
 
@@ -245,9 +253,18 @@ class AsyncTusClient:
                 raise ValueError("parallel_uploads requires file_path (streams are not split)")
             if stop_at is not None:
                 raise ValueError("parallel_uploads is incompatible with stop_at")
-            return await self._upload_parallel(
-                file_path, metadata or {}, parallel_uploads, progress_callback
+            final_url = await self._upload_parallel(
+                file_path,
+                metadata or {},
+                parallel_uploads,
+                progress_callback,
+                metadata_for_partial_uploads=metadata_for_partial_uploads,
             )
+            # The final (merged) upload URL is only known once concatenation
+            # happens — fire the callback here, not before the early return.
+            if self.on_upload_url_available is not None:
+                self.on_upload_url_available(final_url)
+            return final_url
 
         # Determine file size
         if file_stream:
@@ -285,6 +302,9 @@ class AsyncTusClient:
                 assert fingerprint is not None
                 self.url_storage.set_url(fingerprint, upload_url)
 
+        if self.on_upload_url_available is not None:
+            self.on_upload_url_available(upload_url)
+
         client = await self._ensure_client()
         up = await AsyncUploader.open(
             client,
@@ -301,6 +321,8 @@ class AsyncTusClient:
             before_request=self.before_request,
             after_response=self.after_response,
             on_should_retry=self.on_should_retry,
+            override_patch_method=self.override_patch_method,
+            add_request_id=self.add_request_id,
         )
         try:
             await up.upload(progress_callback=progress_callback, stop_at=stop_at)
@@ -315,6 +337,7 @@ class AsyncTusClient:
         metadata: dict[str, str],
         parallel_uploads: int,
         progress_callback: Callable[[UploadStats], None] | None,
+        metadata_for_partial_uploads: dict[str, str] | None = None,
     ) -> str:
         """Upload a file in parallel slices using asyncio.gather + a Semaphore.
 
@@ -343,7 +366,9 @@ class AsyncTusClient:
             async with sem:
                 length = hi - lo
                 url = await self._create_upload(
-                    length, {}, extra_headers={"Upload-Concat": "partial"}
+                    length,
+                    metadata_for_partial_uploads or {},
+                    extra_headers={"Upload-Concat": "partial"},
                 )
                 # Stream the slice from disk on demand instead of reading it all
                 # into memory; opening the fd is blocking, so do it off-loop.
@@ -363,6 +388,8 @@ class AsyncTusClient:
                     before_request=self.before_request,
                     after_response=self.after_response,
                     on_should_retry=self.on_should_retry,
+                    override_patch_method=self.override_patch_method,
+                    add_request_id=self.add_request_id,
                 )
                 try:
                     await up.upload()
@@ -425,6 +452,8 @@ class AsyncTusClient:
             before_request=self.before_request,
             after_response=self.after_response,
             on_should_retry=self.on_should_retry,
+            override_patch_method=self.override_patch_method,
+            add_request_id=self.add_request_id,
         )
         try:
             await up.upload(progress_callback=progress_callback)
@@ -447,6 +476,7 @@ class AsyncTusClient:
             "Content-Length": "0",
             **self.headers,
         }
+        _protocol.maybe_add_request_id(headers, self.add_request_id)
 
         client = await self._ensure_client()
         resp = await _http.request(
@@ -523,6 +553,8 @@ class AsyncTusClient:
             before_request=self.before_request,
             after_response=self.after_response,
             on_should_retry=self.on_should_retry,
+            override_patch_method=self.override_patch_method,
+            add_request_id=self.add_request_id,
         )
         try:
             await up.upload(progress_callback=progress_callback)
@@ -563,6 +595,7 @@ class AsyncTusClient:
             "Upload-Concat": concat_header,
             **self.headers,
         }
+        _protocol.maybe_add_request_id(headers, self.add_request_id)
         if encoded:
             headers["Upload-Metadata"] = ",".join(encoded)
 
@@ -641,6 +674,8 @@ class AsyncTusClient:
             before_request=self.before_request,
             after_response=self.after_response,
             on_should_retry=self.on_should_retry,
+            override_patch_method=self.override_patch_method,
+            add_request_id=self.add_request_id,
         )
 
     async def get_metadata(self, upload_url: str) -> dict[str, str]:
