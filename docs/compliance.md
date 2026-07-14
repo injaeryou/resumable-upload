@@ -91,12 +91,58 @@ Compliance status against the [TUS resumable upload protocol v1.0.0](https://tus
 |---------|-------|
 | `X-HTTP-Method-Override` | POST rewrites to PATCH/DELETE/HEAD for environments that block those methods |
 | `423 Locked` on lock contention | Returned when `lock_backend` is configured and the wait timeout elapses |
+| GET download endpoint | tusd-style download of completed uploads. Opt-in: `TusServer(enable_downloads=True)` / `resumable-upload serve --enable-downloads`. Always `Content-Disposition: attachment` (anti-XSS); `Content-Type` from validated metadata `filetype`, else `application/octet-stream`. Incomplete → 404, expired → 410. GET is exempt from the `Tus-Resumable` check (browsers don't send it). |
 
 ## Not Implemented
 
 | Feature | Notes |
 |---------|-------|
 | Multiple TUS version support | Only `1.0.0` supported |
+| tus2 / IETF RUFH (`draft-ietf-httpbis-resumable-upload`) | The standards-track successor protocol (not wire-compatible with 1.0.0). Still a moving draft (draft-11, breaking changes between revisions). Planned as an opt-in experimental protocol flag once the draft stabilizes, mirroring tus-js-client's `ietf-draft-NN` approach. |
+
+## Ecosystem Parity
+
+Feature comparison against the reference implementations: [tusd](https://github.com/tus/tusd) (official Go server), [@tus/server](https://github.com/tus/tus-node-server) (official Node server), [tus-py-client](https://github.com/tus/tus-py-client) (official Python client).
+
+### Server — at parity or ahead
+
+| Feature | tusd / @tus/server | Here |
+|---------|--------------------|------|
+| All TUS 1.0.0 extensions incl. `checksum-trailer`, `concatenation-unfinished` | ✅ | ✅ (`concatenation-unfinished` SQLite-only; `checksum-trailer` bundled transport) |
+| Storage backends (local/S3/GCS/Azure) | ✅ | ✅ (SQLite default, cloud via extras) |
+| Distributed locking | ✅ (file/memory/etcd…) | ✅ (memory/redis) |
+| Prometheus metrics | ✅ | ✅ |
+| Pre/post request lifecycle hooks (in-process) | ✅ | ✅ (`on_incoming_request`, `on_upload_create`, `on_upload_complete`, `on_upload_terminate`) |
+| GET download endpoint | ✅ (default on) | ✅ (opt-in) |
+| Multi-algorithm checksum | sha1 only (tusd) | ✅ sha1/sha256/sha512/md5 |
+
+### Server — known gaps (tracked for future work)
+
+| Feature | Who has it | Notes |
+|---------|-----------|-------|
+| CORS depth (origin-list matching, `Allow-Credentials`, `Max-Age`) | tusd, @tus/server | Here: single static origin string only |
+| Per-request `max_size` callable (user quotas) | @tus/server | Here: static int |
+| Mid-upload progress events + server-initiated cancel | tusd (`post-receive`, `StopUpload`), @tus/server (`POST_RECEIVE`) | Hooks fire only at create/complete/terminate here |
+| Error-response hook / custom completion response | @tus/server (`onResponseError`, `onUploadFinish` response), tusd (`pre-finish`) | |
+| Custom upload naming / URL generation | @tus/server (`namingFunction`, `generateUrl`) | Here: UUID enforced |
+| Absolute `Location` + `X-Forwarded-*` handling | tusd (`-behind-proxy`), @tus/server (`respectForwardedHeaders`) | Here: relative `Location` only (proxy-safe, but no absolute option) |
+| Out-of-process hooks (HTTP/gRPC webhooks) | tusd | In-process Python hooks only; embedded-library trade-off |
+| Graceful shutdown / UNIX socket | tusd | CLI `serve` niceties |
+
+### Client — vs tus-py-client (official Python client)
+
+Strict superset. Everything tus-py-client offers exists here, plus features it lacks:
+
+| Feature | tus-py-client | Here |
+|---------|---------------|------|
+| Checksum algorithms | sha1 hardcoded | sha1/sha256/sha512/md5 |
+| Fingerprint | first-64KB MD5 | full-file SHA-256 (pluggable) |
+| Retry | fixed delay | exponential backoff + `on_should_retry` |
+| Parallel concatenation upload | ❌ (open issue #15) | ✅ `parallel_uploads=N` |
+| Progress callbacks / stats | ❌ | ✅ `UploadStats` |
+| Request hooks | ❌ (open issue #77) | ✅ before/after/should-retry |
+| Async client | aiohttp | httpx (`[async]` extra) |
+| Termination, `stop_at`, `metadata_encoding`, mTLS, URL storage | partial | ✅ all |
 
 ## Error Response Reference
 
