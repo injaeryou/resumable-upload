@@ -223,9 +223,9 @@ final_url = client.create_final_upload(
 
 ### 주요 파라미터
 
-**`TusClient`**: `url`, `chunk_size` (기본값 1 MB), `checksum` (SHA1, 기본값 `True`), `max_retries` (기본값 3), `retry_delay` (기본값 1.0s, 지수 백오프 최대 60s), `timeout` (기본값 30s), `store_url` / `url_storage` (세션 간 재개), `verify_tls_cert`, `headers`
+**`TusClient`**: `url`, `chunk_size` (기본값 1 MB), `checksum` (SHA1, 기본값 `True`), `max_retries` (기본값 3), `retry_delay` (기본값 1.0s, 지수 백오프 최대 60s), `timeout` (기본값 30s), `store_url` / `url_storage` (세션 간 재개), `verify_tls_cert`, `headers` — 요청 훅, PATCH-over-POST 터널링, 요청 ID 주입 등 전체 목록: **[클라이언트 API 레퍼런스](https://injaeryou.github.io/resumable-upload/api-reference/client/)**
 
-**`TusServer`**: `storage`, `base_path` (기본값 `/files`), `max_size`, `upload_expiry`, `cors_allow_origins`, `request_timeout` (기본값 30s — Slowloris 공격 방어)
+**`TusServer`**: `storage`, `base_path` (기본값 `/files`), `max_size`, `upload_expiry`, `cors_allow_origins`, `request_timeout` (기본값 30s — Slowloris 공격 방어) — 프록시/`Location` 설정, CORS 자격 증명, 다운로드, 체크섬 트레일러, 기능 토글 등 전체 목록: **[서버 API 레퍼런스](https://injaeryou.github.io/resumable-upload/api-reference/server/)**
 
 **`SQLiteStorage`**: `db_path` (기본값 `uploads.db`), `upload_dir` (기본값 `uploads`) — 업로드별 락으로 스레드 안전; `fcntl.flock`으로 프로세스 안전
 
@@ -243,11 +243,13 @@ final_url = client.create_final_upload(
 | **creation** | ✅ 구현됨 |
 | **creation-with-upload** | ✅ 구현됨 |
 | **termination** | ✅ 구현됨 |
-| **checksum** | ✅ 구현됨 (SHA1) |
+| **creation-defer-length** | ✅ 구현됨 |
+| **checksum** | ✅ 구현됨 (`sha1`/`sha256`/`sha512`/`md5`, 헤더 또는 트레일러) |
 | **expiration** | ✅ 구현됨 |
 | **concatenation** | ✅ 구현됨 (SQLite / S3 / GCS / Azure) |
+| **concatenation-unfinished** | ✅ 구현됨 (SQLite) |
 
-> **참고:** TUS `Upload-Checksum`은 스펙에 따라 **SHA1**을 사용합니다. 세션 간 재개를 위한 내부 파일 지문(fingerprint)은 **SHA-256**을 사용하며, TUS 프로토콜과는 무관합니다.
+> **참고:** 세션 간 재개를 위한 내부 파일 지문(fingerprint)은 **SHA-256**을 사용하며, TUS 프로토콜과는 무관합니다. 헤더별 상세 내역: **[준수 매트릭스](https://injaeryou.github.io/resumable-upload/compliance/)**.
 
 ### 표준 외 지원
 

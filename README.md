@@ -238,9 +238,9 @@ Full API documentation is available on the docs site: [Client](https://injaeryou
 
 ### Key Parameters
 
-**`TusClient`**: `url`, `chunk_size` (default 1 MB), `checksum` (SHA1, default `True`), `max_retries` (default 3), `retry_delay` (default 1.0s, exponential backoff capped at 60s), `timeout` (default 30s), `store_url` / `url_storage` (cross-session resume), `verify_tls_cert`, `headers`
+**`TusClient`**: `url`, `chunk_size` (default 1 MB), `checksum` (SHA1, default `True`), `max_retries` (default 3), `retry_delay` (default 1.0s, exponential backoff capped at 60s), `timeout` (default 30s), `store_url` / `url_storage` (cross-session resume), `verify_tls_cert`, `headers` — plus request hooks, PATCH-over-POST tunneling, request-ID injection, and more: **[client API reference](https://injaeryou.github.io/resumable-upload/api-reference/client/)**
 
-**`TusServer`**: `storage`, `base_path` (default `/files`), `max_size`, `upload_expiry`, `cors_allow_origins`, `request_timeout` (default 30s — Slowloris protection)
+**`TusServer`**: `storage`, `base_path` (default `/files`), `max_size`, `upload_expiry`, `cors_allow_origins`, `request_timeout` (default 30s — Slowloris protection) — plus proxy/`Location` config, CORS credentials, downloads, checksum trailers, feature toggles, and more: **[server API reference](https://injaeryou.github.io/resumable-upload/api-reference/server/)**
 
 **`SQLiteStorage`**: `db_path` (default `uploads.db`), `upload_dir` (default `uploads`) — thread-safe via per-upload lock; process-safe via `fcntl.flock`
 
@@ -257,12 +257,14 @@ This library implements [TUS protocol v1.0.0](https://tus.io/protocols/resumable
 | **core** | ✅ Implemented |
 | **creation** | ✅ Implemented |
 | **creation-with-upload** | ✅ Implemented |
+| **creation-defer-length** | ✅ Implemented |
 | **termination** | ✅ Implemented |
-| **checksum** | ✅ Implemented (SHA1) |
+| **checksum** | ✅ Implemented (`sha1`/`sha256`/`sha512`/`md5`, header or trailer) |
 | **expiration** | ✅ Implemented |
 | **concatenation** | ✅ Implemented (SQLite / S3 / GCS / Azure) |
+| **concatenation-unfinished** | ✅ Implemented (SQLite) |
 
-> **Note:** TUS `Upload-Checksum` uses **SHA1** as required by the spec. The internal client-side fingerprint for cross-session resume uses **SHA-256** and is not part of the TUS protocol.
+> **Note:** the internal client-side fingerprint for cross-session resume uses **SHA-256** and is not part of the TUS protocol. Full header-by-header details: **[compliance matrix](https://injaeryou.github.io/resumable-upload/compliance/)**.
 
 ### Non-standard but supported
 
