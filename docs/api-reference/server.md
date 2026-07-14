@@ -35,6 +35,8 @@ from resumable_upload import TusServer
 | `lock_wait_seconds` | float | `5.0` | How long to wait for a contended lock before returning `423 Locked` |
 | `checksum_algorithms` | tuple[str, …] | `("sha1",)` | Algorithms to advertise via `Tus-Checksum-Algorithm` and accept on `Upload-Checksum`. Allowed: `sha1`, `sha256`, `sha512`, `md5`. |
 | `supports_checksum_trailer` | bool | `False` | Advertise `checksum-trailer`. Set only when the transport parses chunked bodies + trailers and merges a trailing `Upload-Checksum` into the headers — the bundled `TusHTTPRequestHandler` / `serve` CLI does. |
+| `behind_proxy` | bool | `False` | Build absolute `Location` URLs from `X-Forwarded-Proto`/`X-Forwarded-Host` (falling back to `Host`, then to a relative path). Relative stays the default — it is proxy-safe by construction. |
+| `location_base_url` | str | `None` | Fixed absolute prefix for `Location` URLs (e.g. a CDN origin). Takes precedence over `behind_proxy`. |
 | `enable_downloads` | bool | `False` | Serve completed uploads over `GET {base_path}/{id}`. Always `Content-Disposition: attachment` (sanitized filename, RFC 5987 for non-ASCII); `Content-Type` from validated metadata `filetype`, else `application/octet-stream`. Incomplete → `404`, expired → `410`. GET is exempt from the `Tus-Resumable` check. |
 
 ### Supported Extensions

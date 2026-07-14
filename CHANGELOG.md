@@ -40,6 +40,11 @@ All notable changes to this project are documented here. The format follows
   echoed with `Vary: Origin`), plus `cors_allow_credentials` and
   `cors_max_age`. Wildcard + credentials safely echoes the request origin.
 
+- **Absolute `Location` options**: `behind_proxy=True` honors
+  `X-Forwarded-Proto`/`X-Forwarded-Host` (tusd's `-behind-proxy`);
+  `location_base_url` sets a fixed prefix. Relative Location remains the
+  default.
+
 ### Fixed
 
 - **`Upload-Metadata` key rules enforced**: duplicate keys and non-ASCII keys

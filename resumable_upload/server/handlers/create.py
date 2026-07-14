@@ -182,11 +182,11 @@ def _plan_create_final(
 
 
 def _create_response(
-    plan: _CreatePlan, initial_offset: int, server: TusServerCore
+    plan: _CreatePlan, initial_offset: int, server: TusServerCore, headers: dict[str, str]
 ) -> tuple[int, dict[str, str], bytes]:
     response_headers = {
         "Tus-Resumable": server.TUS_VERSION,
-        "Location": f"{server.base_path}/{plan.upload_id}",
+        "Location": server._build_location(plan.upload_id, headers),
         "Upload-Offset": str(initial_offset),
     }
     if plan.expires_at:
@@ -195,11 +195,14 @@ def _create_response(
 
 
 def _create_final_response(
-    plan: _CreateFinalPlan, total_length: int | None, server: TusServerCore
+    plan: _CreateFinalPlan,
+    total_length: int | None,
+    server: TusServerCore,
+    headers: dict[str, str],
 ) -> tuple[int, dict[str, str], bytes]:
     response_headers = {
         "Tus-Resumable": server.TUS_VERSION,
-        "Location": f"{server.base_path}/{plan.final_id}",
+        "Location": server._build_location(plan.final_id, headers),
     }
     if total_length is not None:
         # Assembled synchronously; a pending (unfinished) final has no known
@@ -286,7 +289,7 @@ def handle_create(
             )
 
     return server._apply_completion_response(
-        completion_result, _create_response(plan, initial_offset, server)
+        completion_result, _create_response(plan, initial_offset, server, headers)
     )
 
 
@@ -335,7 +338,7 @@ def handle_create_final(
             plan.final_id,
             len(plan.partial_ids),
         )
-        return _create_final_response(plan, None, server)
+        return _create_final_response(plan, None, server, headers)
 
     if server.max_size > 0 and total_length > server.max_size:
         # Concatenated payload exceeds limit — delete and reject.
@@ -357,7 +360,7 @@ def handle_create_final(
             server._on_upload_complete, plan.final_id, plan.metadata, file_info
         )
 
-    return _create_final_response(plan, total_length, server)
+    return _create_final_response(plan, total_length, server, headers)
 
 
 # ---------------------------------------------------------------------------
@@ -419,7 +422,7 @@ async def handle_create_async(
             )
 
     return server._apply_completion_response(
-        completion_result, _create_response(plan, initial_offset, server)
+        completion_result, _create_response(plan, initial_offset, server, headers)
     )
 
 
@@ -455,7 +458,7 @@ async def handle_create_final_async(
             plan.final_id,
             len(plan.partial_ids),
         )
-        return _create_final_response(plan, None, server)
+        return _create_final_response(plan, None, server, headers)
 
     if server.max_size > 0 and total_length > server.max_size:
         await server.storage.delete_upload_async(plan.final_id)
@@ -476,4 +479,4 @@ async def handle_create_final_async(
             server._on_upload_complete, plan.final_id, plan.metadata, file_info
         )
 
-    return _create_final_response(plan, total_length, server)
+    return _create_final_response(plan, total_length, server, headers)

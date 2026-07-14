@@ -45,6 +45,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Serve completed uploads via GET (tusd-style download endpoint)",
     )
     serve.add_argument(
+        "--behind-proxy",
+        action="store_true",
+        help="Build absolute Location URLs from X-Forwarded-Proto/Host",
+    )
+    serve.add_argument(
+        "--location-base-url",
+        default=None,
+        help="Fixed absolute prefix for Location URLs (e.g. https://cdn.example)",
+    )
+    serve.add_argument(
         "--max-size",
         type=int,
         default=0,
@@ -134,6 +144,8 @@ def _serve(args: argparse.Namespace) -> int:
         # The bundled stdlib transport parses chunked bodies + trailers.
         supports_checksum_trailer=True,
         enable_downloads=args.enable_downloads,
+        behind_proxy=args.behind_proxy,
+        location_base_url=args.location_base_url,
     )
 
     class Handler(TusHTTPRequestHandler):

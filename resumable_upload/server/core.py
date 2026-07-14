@@ -105,6 +105,8 @@ class TusServerCore:
         checksum_algorithms: tuple[str, ...] = ("sha1",),
         supports_checksum_trailer: bool = False,
         enable_downloads: bool = False,
+        behind_proxy: bool = False,
+        location_base_url: Optional[str] = None,
     ):
         """Initialize TUS server.
 
@@ -160,6 +162,12 @@ class TusServerCore:
         # Non-standard download endpoint (tusd-style GET). Opt-in because the
         # library is usually embedded next to framework GET routes.
         self.enable_downloads = enable_downloads
+        # Location construction: relative by default (proxy-safe). Set
+        # location_base_url for a fixed absolute prefix, or behind_proxy=True
+        # to build absolute URLs from X-Forwarded-Proto/Host (falling back to
+        # Host, then to relative) — tusd's -behind-proxy.
+        self.behind_proxy = behind_proxy
+        self.location_base_url = location_base_url.rstrip("/") if location_base_url else None
         extensions = list(type(self).SUPPORTED_EXTENSIONS)
         if getattr(self.storage, "supports_unfinished_concat", False):
             extensions.append("concatenation-unfinished")
@@ -286,6 +294,19 @@ class TusServerCore:
             self._invoke_post_hook(self._on_upload_terminate, upload_id)
         logger.info("Server-initiated termination of upload %s", upload_id)
         return True
+
+    def _build_location(self, upload_id: str, request_headers: dict[str, str]) -> str:
+        """Build the Location header value for a newly created upload."""
+        path = f"{self.base_path}/{upload_id}"
+        if self.location_base_url:
+            return self.location_base_url + path
+        if self.behind_proxy:
+            host = request_headers.get("x-forwarded-host") or request_headers.get("host")
+            if host:
+                proto = request_headers.get("x-forwarded-proto", "http")
+                proto = proto.split(",")[0].strip() or "http"
+                return f"{proto}://{host.split(',')[0].strip()}{path}"
+        return path
 
     def _validate_upload_id(self, upload_id: str) -> bool:
         """Validate that upload_id is a valid UUID to prevent path traversal."""
