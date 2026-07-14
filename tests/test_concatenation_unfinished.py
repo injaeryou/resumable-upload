@@ -101,8 +101,9 @@ class TestUnfinishedCreate:
         status, head_headers, _ = server.handle_request("HEAD", final_loc, _h(), b"")
         assert status == 200
         assert head_headers["Upload-Concat"] == f"final;{p1} {p2}"
+        # Spec forbids offset/length on a final's HEAD until assembly is done.
         assert "Upload-Length" not in head_headers
-        assert head_headers["Upload-Offset"] == "0"
+        assert "Upload-Offset" not in head_headers
 
     def test_patch_rejected_on_pending_final(self, server):
         p = _create_partial(server, 5)

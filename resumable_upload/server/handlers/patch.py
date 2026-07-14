@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING
 
+from resumable_upload.exceptions import TusHookError
 from resumable_upload.server.headers import format_expiry
 
 if TYPE_CHECKING:
@@ -163,6 +164,48 @@ def _plan_patch(
     )
 
 
+def _run_chunk_hook(
+    server: TusServerCore, upload_id: str, new_offset: int, chunk_size: int
+) -> TusHookError | None:
+    """Invoke on_chunk_received; return the TusHookError when it wants a stop."""
+    if not server._on_chunk_received:
+        return None
+    try:
+        server._on_chunk_received(upload_id, new_offset, chunk_size)
+    except TusHookError as e:
+        logger.warning("on_chunk_received stopped upload %s: %s", upload_id, e.body)
+        return e
+    except Exception:
+        logger.exception("Error in on_chunk_received hook")
+    return None
+
+
+def _fire_chunk_hook(
+    server: TusServerCore, upload_id: str, new_offset: int, chunk_size: int
+) -> tuple[int, dict[str, str], bytes] | None:
+    """post-receive: fire on_chunk_received; TusHookError stops the upload.
+
+    Returns an error response when the hook stopped the upload (the upload is
+    deleted first, mirroring tusd's StopUpload), else None.
+    """
+    e = _run_chunk_hook(server, upload_id, new_offset, chunk_size)
+    if e is None:
+        return None
+    server.storage.delete_upload(upload_id)
+    return (e.status_code, {"Tus-Resumable": server.TUS_VERSION}, e.body.encode())
+
+
+async def _fire_chunk_hook_async(
+    server: TusServerCore, upload_id: str, new_offset: int, chunk_size: int
+) -> tuple[int, dict[str, str], bytes] | None:
+    """Async sibling of :func:`_fire_chunk_hook` (async storage delete)."""
+    e = _run_chunk_hook(server, upload_id, new_offset, chunk_size)
+    if e is None:
+        return None
+    await server.storage.delete_upload_async(upload_id)
+    return (e.status_code, {"Tus-Resumable": server.TUS_VERSION}, e.body.encode())
+
+
 def _fire_final_complete(server: TusServerCore, final_id: str) -> None:
     """Metrics + on_upload_complete for a just-assembled pending final."""
     if server._metrics is not None:
@@ -178,6 +221,54 @@ def _fire_final_complete(server: TusServerCore, final_id: str) -> None:
         )
 
 
+async def _fire_final_complete_async(server: TusServerCore, final_id: str) -> None:
+    """Async sibling of :func:`_fire_final_complete` (no event-loop blocking)."""
+    if server._metrics is not None:
+        server._metrics.inc("tusd_uploads_finished_total")
+    if server._on_upload_complete:
+        final = await server.storage.get_upload_async(final_id)
+        file_info = await server.storage.get_file_info_async(final_id)
+        server._invoke_post_hook(
+            server._on_upload_complete,
+            final_id,
+            (final or {}).get("metadata", {}),
+            file_info,
+        )
+
+
+def _assembly_max_total(server: TusServerCore) -> int | None:
+    return server.max_size if server.max_size > 0 else None
+
+
+def try_assemble_one(server: TusServerCore, final_id: str) -> int | None:
+    """Assemble one pending final (honoring Tus-Max-Size) and fire completion.
+
+    Shared by the PATCH trigger and by HEAD's retry of a stranded assembly.
+    """
+    try:
+        total = server.storage.try_assemble_final(final_id, max_total=_assembly_max_total(server))
+    except NotImplementedError:
+        return None
+    if total is not None:
+        logger.info("Assembled pending final upload %s", final_id)
+        _fire_final_complete(server, final_id)
+    return total
+
+
+async def try_assemble_one_async(server: TusServerCore, final_id: str) -> int | None:
+    """Async sibling of :func:`try_assemble_one`."""
+    try:
+        total = await server.storage.try_assemble_final_async(
+            final_id, max_total=_assembly_max_total(server)
+        )
+    except NotImplementedError:
+        return None
+    if total is not None:
+        logger.info("Assembled pending final upload %s", final_id)
+        await _fire_final_complete_async(server, final_id)
+    return total
+
+
 def _assemble_pending_finals(server: TusServerCore, partial_id: str) -> None:
     """concatenation-unfinished: assemble any pending finals waiting on this partial."""
     try:
@@ -185,9 +276,7 @@ def _assemble_pending_finals(server: TusServerCore, partial_id: str) -> None:
     except NotImplementedError:
         return
     for final_id in pending:
-        if server.storage.try_assemble_final(final_id) is not None:
-            logger.info("Assembled pending final upload %s", final_id)
-            _fire_final_complete(server, final_id)
+        try_assemble_one(server, final_id)
 
 
 async def _assemble_pending_finals_async(server: TusServerCore, partial_id: str) -> None:
@@ -197,9 +286,7 @@ async def _assemble_pending_finals_async(server: TusServerCore, partial_id: str)
     except NotImplementedError:
         return
     for final_id in pending:
-        if await server.storage.try_assemble_final_async(final_id) is not None:
-            logger.info("Assembled pending final upload %s", final_id)
-            _fire_final_complete(server, final_id)
+        await try_assemble_one_async(server, final_id)
 
 
 def _patch_response(plan: _PatchPlan, server: TusServerCore) -> tuple[int, dict[str, str], bytes]:
@@ -239,6 +326,10 @@ def handle_patch(
     if server._metrics is not None:
         server._metrics.inc("tusd_bytes_received_total", value=len(body))
 
+    stopped = _fire_chunk_hook(server, upload_id, plan.new_offset, len(body))
+    if stopped is not None:
+        return stopped
+
     logger.info(
         "PATCH upload %s: wrote %s bytes, new offset: %s/%s",
         upload_id,
@@ -247,6 +338,7 @@ def handle_patch(
         plan.effective_length,
     )
 
+    completion_result = None
     if plan.new_offset >= plan.effective_length and server.storage.complete_upload(upload_id):
         if server._metrics is not None:
             server._metrics.inc("tusd_uploads_finished_total")
@@ -254,7 +346,7 @@ def handle_patch(
         # only the final (concatenated) upload does.
         if server._on_upload_complete and not upload.get("is_partial"):
             file_info = server.storage.get_file_info(upload_id)
-            server._invoke_post_hook(
+            completion_result = server._invoke_post_hook(
                 server._on_upload_complete,
                 upload_id,
                 upload.get("metadata", {}),
@@ -263,7 +355,7 @@ def handle_patch(
         if upload.get("is_partial"):
             _assemble_pending_finals(server, upload_id)
 
-    return _patch_response(plan, server)
+    return server._apply_completion_response(completion_result, _patch_response(plan, server))
 
 
 async def handle_patch_async(
@@ -298,6 +390,10 @@ async def handle_patch_async(
     if server._metrics is not None:
         server._metrics.inc("tusd_bytes_received_total", value=len(body))
 
+    stopped = await _fire_chunk_hook_async(server, upload_id, plan.new_offset, len(body))
+    if stopped is not None:
+        return stopped
+
     logger.info(
         "PATCH upload %s: wrote %s bytes, new offset: %s/%s",
         upload_id,
@@ -306,6 +402,7 @@ async def handle_patch_async(
         plan.effective_length,
     )
 
+    completion_result = None
     if plan.new_offset >= plan.effective_length and await server.storage.complete_upload_async(
         upload_id
     ):
@@ -313,7 +410,7 @@ async def handle_patch_async(
             server._metrics.inc("tusd_uploads_finished_total")
         if server._on_upload_complete and not upload.get("is_partial"):
             file_info = server.storage.get_file_info(upload_id)
-            server._invoke_post_hook(
+            completion_result = server._invoke_post_hook(
                 server._on_upload_complete,
                 upload_id,
                 upload.get("metadata", {}),
@@ -322,4 +419,4 @@ async def handle_patch_async(
         if upload.get("is_partial"):
             await _assemble_pending_finals_async(server, upload_id)
 
-    return _patch_response(plan, server)
+    return server._apply_completion_response(completion_result, _patch_response(plan, server))

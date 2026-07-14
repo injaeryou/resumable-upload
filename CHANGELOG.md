@@ -30,6 +30,12 @@ All notable changes to this project are documented here. The format follows
   `X-Request-ID` per request), `on_upload_url_available` callback, and
   `metadata_for_partial_uploads` for parallel uploads.
 
+- **Expanded server hooks to tusd parity**: `on_chunk_received` (per-chunk
+  progress; raise `TusHookError` to stop and delete the upload mid-flight),
+  `on_upload_complete` may return `{status_code, headers, body}` to customize
+  the finishing response, `on_before_terminate` can veto client DELETEs, and
+  `TusServer.terminate_upload()` terminates out-of-band.
+
 ### Fixed
 
 - **HEAD on a final upload now echoes `Upload-Concat: final;<urls>`** as the

@@ -266,6 +266,7 @@ def handle_create(
 
     # Handle upload completion (zero-length upload or creation-with-upload).
     # Deferred-length uploads cannot complete here; their length is unknown.
+    completion_result = None
     if (
         plan.upload_length is not None
         and initial_offset >= plan.upload_length
@@ -273,16 +274,20 @@ def handle_create(
     ):
         if server._metrics is not None:
             server._metrics.inc("tusd_uploads_finished_total")
-        if server._on_upload_complete:
+        # Partials never fire on_upload_complete individually (parity with
+        # the PATCH completion path); only the assembled final does.
+        if server._on_upload_complete and not plan.is_partial:
             file_info = server.storage.get_file_info(plan.upload_id)
-            server._invoke_post_hook(
+            completion_result = server._invoke_post_hook(
                 server._on_upload_complete,
                 plan.upload_id,
                 plan.metadata,
                 file_info,
             )
 
-    return _create_response(plan, initial_offset, server)
+    return server._apply_completion_response(
+        completion_result, _create_response(plan, initial_offset, server)
+    )
 
 
 def handle_create_final(
@@ -394,6 +399,7 @@ async def handle_create_async(
         await server.storage.update_offset_async(plan.upload_id, initial_offset)
         logger.info("creation-with-upload: wrote %s bytes for %s", initial_offset, plan.upload_id)
 
+    completion_result = None
     if (
         plan.upload_length is not None
         and initial_offset >= plan.upload_length
@@ -401,16 +407,20 @@ async def handle_create_async(
     ):
         if server._metrics is not None:
             server._metrics.inc("tusd_uploads_finished_total")
-        if server._on_upload_complete:
+        # Partials never fire on_upload_complete individually (parity with
+        # the PATCH completion path); only the assembled final does.
+        if server._on_upload_complete and not plan.is_partial:
             file_info = server.storage.get_file_info(plan.upload_id)
-            server._invoke_post_hook(
+            completion_result = server._invoke_post_hook(
                 server._on_upload_complete,
                 plan.upload_id,
                 plan.metadata,
                 file_info,
             )
 
-    return _create_response(plan, initial_offset, server)
+    return server._apply_completion_response(
+        completion_result, _create_response(plan, initial_offset, server)
+    )
 
 
 async def handle_create_final_async(

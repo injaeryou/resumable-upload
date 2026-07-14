@@ -15,10 +15,23 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _is_pending_final(upload: dict | None) -> bool:
+    return bool(upload and upload.get("concat_partial_ids") and not upload.get("completed"))
+
+
 def handle_head(
     server: TusServerCore, upload_id: str, headers: dict[str, str]
 ) -> tuple[int, dict[str, str], bytes]:
     upload = server.storage.get_upload(upload_id)
+    if _is_pending_final(upload):
+        # Retry a possibly-stranded assembly (e.g. a transient I/O failure
+        # rolled the claim back); HEAD polling is the natural retry path.
+        from resumable_upload.server.handlers.patch import try_assemble_one
+
+        if try_assemble_one(server, upload_id) is not None:
+            upload = server.storage.get_upload(upload_id)
+        elif server.storage.get_upload(upload_id) is None:
+            upload = None  # assembly refused (e.g. exceeded Tus-Max-Size)
     return _build_head_response(server, upload_id, upload)
 
 
@@ -26,6 +39,13 @@ async def handle_head_async(
     server: TusServerCore, upload_id: str, headers: dict[str, str]
 ) -> tuple[int, dict[str, str], bytes]:
     upload = await server.storage.get_upload_async(upload_id)
+    if _is_pending_final(upload):
+        from resumable_upload.server.handlers.patch import try_assemble_one_async
+
+        if await try_assemble_one_async(server, upload_id) is not None:
+            upload = await server.storage.get_upload_async(upload_id)
+        elif await server.storage.get_upload_async(upload_id) is None:
+            upload = None
     return _build_head_response(server, upload_id, upload)
 
 
@@ -49,9 +69,12 @@ def _build_head_response(
     )
     response_headers = {
         "Tus-Resumable": server.TUS_VERSION,
-        "Upload-Offset": str(upload["offset"]),
         "Cache-Control": "no-store",
     }
+    # A pending (unassembled) final has no meaningful offset; the spec
+    # forbids Upload-Offset on a final's HEAD until concatenation finished.
+    if not _is_pending_final(upload):
+        response_headers["Upload-Offset"] = str(upload["offset"])
     if upload["upload_length"] is None:
         if not upload.get("concat_partial_ids"):
             # Upload-Defer-Length extension: length not yet committed.

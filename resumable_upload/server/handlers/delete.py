@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Callable
 
+from resumable_upload.exceptions import TusHookError
+
 if TYPE_CHECKING:
     from resumable_upload.server.core import TusServerCore
 
@@ -18,6 +20,10 @@ def handle_delete(
     if not upload:
         logger.warning("Upload not found for deletion: %s", upload_id)
         return server._error_response(404, "Upload not found")
+
+    veto = _check_terminate_veto(server, upload_id)
+    if veto is not None:
+        return veto
 
     if upload.get("is_partial"):
         blocked = _check_pending_final_refs(
@@ -38,6 +44,10 @@ async def handle_delete_async(
         logger.warning("Upload not found for deletion: %s", upload_id)
         return server._error_response(404, "Upload not found")
 
+    veto = _check_terminate_veto(server, upload_id)
+    if veto is not None:
+        return veto
+
     if upload.get("is_partial"):
         try:
             pending = await server.storage.find_pending_finals_for_partial_async(upload_id)
@@ -49,6 +59,20 @@ async def handle_delete_async(
 
     await server.storage.delete_upload_async(upload_id)
     return _finalize_delete(server, upload_id)
+
+
+def _check_terminate_veto(
+    server: TusServerCore, upload_id: str
+) -> tuple[int, dict[str, str], bytes] | None:
+    """pre-terminate: on_before_terminate may veto by raising TusHookError."""
+    if not server._on_before_terminate:
+        return None
+    try:
+        server._invoke_pre_hook(server._on_before_terminate, upload_id)
+    except TusHookError as e:
+        logger.warning("Termination of %s vetoed: %s", upload_id, e.body)
+        return (e.status_code, {"Tus-Resumable": server.TUS_VERSION}, e.body.encode())
+    return None
 
 
 def _check_pending_final_refs(

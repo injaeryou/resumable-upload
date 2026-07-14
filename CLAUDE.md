@@ -168,8 +168,12 @@ Pre-hooks can reject requests by raising `TusHookError(status_code=…)`. Post-h
 
 - `on_incoming_request(method, path, headers)` — pre, every request
 - `on_upload_create(upload_id, metadata, upload_length) -> Optional[dict]` — pre, POST; return dict to replace metadata
-- `on_upload_complete(upload_id, metadata, file_info)` — post, after final chunk
+- `on_chunk_received(upload_id, offset, chunk_size)` — post, every accepted PATCH chunk; raising `TusHookError` stops+deletes the upload (StopUpload)
+- `on_upload_complete(upload_id, metadata, file_info) -> Optional[dict]` — post, after final chunk; return `{status_code, headers, body}` to customize the finishing response
+- `on_before_terminate(upload_id)` — pre, client DELETE; raise `TusHookError` to veto
 - `on_upload_terminate(upload_id)` — post, after DELETE
+
+Out-of-band: `TusServer.terminate_upload(upload_id)` deletes + fires the post-hook, bypassing the veto.
 
 ## Don't Touch
 

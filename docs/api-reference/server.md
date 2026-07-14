@@ -22,8 +22,10 @@ from resumable_upload import TusServer
 | `request_timeout` | int | `30` | Socket read timeout in seconds for `TusHTTPRequestHandler`. Guards against Slowloris attacks. Set to `0` to disable. |
 | `on_incoming_request` | Callable | `None` | Hook called before processing any request |
 | `on_upload_create` | Callable | `None` | Hook called before creating an upload |
-| `on_upload_complete` | Callable | `None` | Hook called after an upload is fully completed (also fired for final concatenated uploads, never for individual partials) |
+| `on_upload_complete` | Callable | `None` | Hook called after an upload is fully completed (also fired for final concatenated uploads, never for individual partials). May return a dict to customize the finishing response — see Hooks. |
 | `on_upload_terminate` | Callable | `None` | Hook called after an upload is deleted |
+| `on_chunk_received` | Callable | `None` | Hook called after every accepted PATCH chunk (tusd's post-receive). Raise `TusHookError` to stop and delete the upload. |
+| `on_before_terminate` | Callable | `None` | Blocking hook before a client DELETE (tusd's pre-terminate). Raise `TusHookError` to veto. |
 | `metrics_registry` | MetricsRegistry | `None` | Enable Prometheus-text metrics (`/metrics` by default). See [Metrics](../operations/metrics.md). |
 | `metrics_path` | str | `"/metrics"` | Path to expose metrics on |
 | `lock_backend` | LockBackend | `None` | Distributed lock for PATCH / DELETE write paths. See [Locks](../operations/locks.md). |
@@ -57,14 +59,18 @@ Two more are advertised conditionally:
 
 Hooks let you intercept requests and react to upload lifecycle events.
 
-| Hook | Timing | Signature | Failure |
-|------|--------|-----------|---------|
+| Hook | Timing | Signature | Powers |
+|------|--------|-----------|--------|
 | `on_incoming_request` | Before any processing | `(method, path, headers) -> None` | Raise `TusHookError` to reject |
 | `on_upload_create` | Before upload creation | `(upload_id, metadata, upload_length) -> Optional[dict]` | Return dict to replace metadata. Raise `TusHookError` to reject |
-| `on_upload_complete` | After final PATCH completes (or final concatenation merges) | `(upload_id, metadata, file_info) -> None` | Exceptions logged, response unaffected |
+| `on_chunk_received` | After every accepted PATCH chunk | `(upload_id, offset, chunk_size) -> None` | Raise `TusHookError` to **stop the upload**: it is deleted and the error status returned (tusd's StopUpload — quota/abuse cutoff). Other exceptions logged and ignored. |
+| `on_upload_complete` | After the upload finishes (final PATCH, creation-with-upload, or concat assembly) | `(upload_id, metadata, file_info) -> Optional[dict]` | Return `{"status_code": …, "headers": {…}, "body": …}` to customize the finishing response (tusd's pre-finish), e.g. hand the client a final resource URL. Exceptions logged, response unaffected. |
+| `on_before_terminate` | Before a client DELETE is honored | `(upload_id,) -> None` | Raise `TusHookError` to veto the termination (tusd's pre-terminate) |
 | `on_upload_terminate` | After DELETE succeeds | `(upload_id,) -> None` | Exceptions logged, response unaffected |
 
-**Pre-hooks** (`on_incoming_request`, `on_upload_create`) can reject requests by raising `TusHookError(status_code, body)`. Any other exception returns `500`.
+**Pre-hooks** (`on_incoming_request`, `on_upload_create`, `on_before_terminate`) reject by raising `TusHookError(body, status_code=…)`. Any other exception returns `500`.
+
+For out-of-band cancellation there is also `TusServer.terminate_upload(upload_id) -> bool`: deletes the upload and fires `on_upload_terminate`, bypassing the veto hook (the operator calling it has already decided).
 
 **Post-hooks** (`on_upload_complete`, `on_upload_terminate`) never affect the client response — exceptions are caught and logged.
 

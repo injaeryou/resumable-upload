@@ -91,8 +91,10 @@ class TusServerCore:
         request_timeout: int = 30,
         on_incoming_request: Optional[Callable[..., None]] = None,
         on_upload_create: Optional[Callable[..., Optional[dict]]] = None,
-        on_upload_complete: Optional[Callable[..., None]] = None,
+        on_upload_complete: Optional[Callable[..., Optional[dict]]] = None,
         on_upload_terminate: Optional[Callable[..., None]] = None,
+        on_chunk_received: Optional[Callable[..., None]] = None,
+        on_before_terminate: Optional[Callable[..., None]] = None,
         metrics_registry: Optional[MetricsRegistry] = None,
         metrics_path: str = "/metrics",
         lock_backend: Optional[LockBackend] = None,
@@ -121,11 +123,23 @@ class TusServerCore:
                 Return a dict to replace metadata, None to keep original.
                 Raise TusHookError to reject creation.
             on_upload_complete: Called after an upload is fully completed.
-                Signature: (upload_id: str, metadata: dict, file_info: dict) -> None.
-                Exceptions are logged but do not affect the client response.
+                Signature: (upload_id: str, metadata: dict, file_info: dict)
+                -> Optional[dict]. Return a dict with any of ``status_code``,
+                ``headers``, ``body`` to customize the finishing request's
+                response (tusd's pre-finish). Exceptions are logged but do
+                not affect the client response.
             on_upload_terminate: Called after an upload is deleted.
                 Signature: (upload_id: str) -> None.
                 Exceptions are logged but do not affect the client response.
+            on_chunk_received: Called after every accepted PATCH chunk
+                (tusd's post-receive). Signature:
+                (upload_id: str, offset: int, chunk_size: int) -> None.
+                Raise TusHookError to stop the upload: the upload is deleted
+                and the error status returned (tusd's StopUpload). Other
+                exceptions are logged and ignored.
+            on_before_terminate: Called before a DELETE is honored
+                (tusd's pre-terminate). Signature: (upload_id: str) -> None.
+                Raise TusHookError to veto the termination.
         """
         self.storage = storage or SQLiteStorage()
         self.base_path = base_path.rstrip("/")
@@ -161,6 +175,8 @@ class TusServerCore:
         self._on_upload_create = on_upload_create
         self._on_upload_complete = on_upload_complete
         self._on_upload_terminate = on_upload_terminate
+        self._on_chunk_received = on_chunk_received
+        self._on_before_terminate = on_before_terminate
         self._metrics = metrics_registry
         self._metrics_path = metrics_path
         self._locks = lock_backend
@@ -209,12 +225,58 @@ class TusServerCore:
             logger.exception("Unexpected error in pre-hook %s", hook_name)
             raise TusHookError("Internal Server Error", status_code=500) from None
 
-    def _invoke_post_hook(self, hook: Callable, *args: Any) -> None:
-        """Invoke a post-hook, catching and logging all exceptions."""
+    def _invoke_post_hook(self, hook: Callable, *args: Any) -> Any:
+        """Invoke a post-hook, catching and logging all exceptions.
+
+        Returns the hook's return value (None when the hook raised) so
+        completion hooks can customize the finishing response.
+        """
         try:
-            hook(*args)
+            return hook(*args)
         except Exception:
             logger.exception("Error in post-hook %s", getattr(hook, "__name__", repr(hook)))
+            return None
+
+    @staticmethod
+    def _apply_completion_response(
+        hook_result: Any, response: tuple[int, dict[str, str], bytes]
+    ) -> tuple[int, dict[str, str], bytes]:
+        """Merge an on_upload_complete dict result into the finishing response."""
+        if not isinstance(hook_result, dict):
+            return response
+        status, headers, body = response
+        status = hook_result.get("status_code", status)
+        extra_headers = hook_result.get("headers")
+        if isinstance(extra_headers, dict):
+            headers = {**headers, **extra_headers}
+        raw_body = hook_result.get("body")
+        if raw_body is not None:
+            body = raw_body.encode("utf-8") if isinstance(raw_body, str) else bytes(raw_body)
+        if body and status == 204:
+            # RFC 9110 forbids content on 204; a hook attaching a body
+            # without an explicit status_code would otherwise corrupt
+            # keep-alive connections on strict HTTP stacks.
+            status = 200
+        if body:
+            headers = {**headers, "Content-Length": str(len(body))}
+        return (status, headers, body)
+
+    def terminate_upload(self, upload_id: str) -> bool:
+        """Server-initiated termination (out-of-band StopUpload).
+
+        Deletes the upload and fires on_upload_terminate. Returns True when
+        the upload existed. Bypasses on_before_terminate — that hook guards
+        *client* DELETEs; the server operator calling this has already decided.
+        """
+        if not self.storage.get_upload(upload_id):
+            return False
+        self.storage.delete_upload(upload_id)
+        if self._metrics is not None:
+            self._metrics.inc("tusd_uploads_terminated_total")
+        if self._on_upload_terminate:
+            self._invoke_post_hook(self._on_upload_terminate, upload_id)
+        logger.info("Server-initiated termination of upload %s", upload_id)
+        return True
 
     def _validate_upload_id(self, upload_id: str) -> bool:
         """Validate that upload_id is a valid UUID to prevent path traversal."""
