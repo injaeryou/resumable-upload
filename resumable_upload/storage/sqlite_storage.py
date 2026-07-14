@@ -69,6 +69,10 @@ class SQLiteStorage(Storage):
             # Migration: add is_partial column (TUS concatenation extension)
             with contextlib.suppress(sqlite3.OperationalError):
                 conn.execute("ALTER TABLE uploads ADD COLUMN is_partial BOOLEAN DEFAULT 0")
+            # Migration: add concat_partial_ids (space-separated source partial ids
+            # of a final upload, needed to echo Upload-Concat on HEAD)
+            with contextlib.suppress(sqlite3.OperationalError):
+                conn.execute("ALTER TABLE uploads ADD COLUMN concat_partial_ids TEXT")
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS idx_uploads_expires_at"
                 " ON uploads (expires_at) WHERE expires_at IS NOT NULL"
@@ -159,6 +163,9 @@ class SQLiteStorage(Storage):
             "completed": bool(row["completed"]),
             "expires_at": expires_at,
             "is_partial": bool(row["is_partial"]),
+            "concat_partial_ids": (
+                row["concat_partial_ids"].split(" ") if row["concat_partial_ids"] else None
+            ),
         }
 
     def update_offset(self, upload_id: str, offset: int) -> None:
@@ -298,6 +305,17 @@ class SQLiteStorage(Storage):
 
         # Create the final upload row so get_file_path(final_id) is valid.
         self.create_upload(final_id, total_length, metadata, expires_at, is_partial=False)
+
+        # Remember the source partials so HEAD can echo Upload-Concat: final;<urls>.
+        conn = sqlite3.connect(self.db_path, timeout=self.timeout)
+        try:
+            conn.execute(
+                "UPDATE uploads SET concat_partial_ids = ? WHERE upload_id = ?",
+                (" ".join(partial_ids), final_id),
+            )
+            conn.commit()
+        finally:
+            conn.close()
 
         # Stream each partial's file into the final file, in order.
         final_path = self.get_file_path(final_id)

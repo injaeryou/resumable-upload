@@ -252,6 +252,46 @@ def test_concatenation_final_merges_partials(server, dispatch):
     assert headers["Upload-Length"] == "11"
 
 
+def test_head_final_echoes_upload_concat(server, dispatch):
+    # HEAD on a final upload must reconstruct `Upload-Concat: final;<urls>`.
+    locations = []
+    for data in (b"hello", b"-world"):
+        _, headers, _ = dispatch(
+            server,
+            "POST",
+            "/files",
+            _h(**{"Upload-Length": str(len(data)), "Upload-Concat": "partial"}),
+            b"",
+        )
+        loc = headers["Location"]
+        dispatch(
+            server,
+            "PATCH",
+            loc,
+            _h(
+                **{
+                    "Upload-Offset": "0",
+                    "Content-Type": "application/offset+octet-stream",
+                }
+            ),
+            data,
+        )
+        locations.append(loc)
+
+    status, headers, _ = dispatch(
+        server,
+        "POST",
+        "/files",
+        _h(**{"Upload-Concat": f"final;{locations[0]} {locations[1]}"}),
+        b"",
+    )
+    assert status == 201
+
+    status, head_headers, _ = dispatch(server, "HEAD", headers["Location"], _h(), b"")
+    assert status == 200
+    assert head_headers["Upload-Concat"] == f"final;{locations[0]} {locations[1]}"
+
+
 def test_head_partial_advertises_upload_concat(server, dispatch):
     # Concatenation extension: HEAD on a partial upload must echo Upload-Concat.
     _, post_headers, _ = dispatch(

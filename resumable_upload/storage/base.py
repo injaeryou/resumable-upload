@@ -131,6 +131,12 @@ class Storage(ABC):
     ) -> int:
         """Create a final upload by concatenating completed partial uploads.
 
+        Implementations should persist ``partial_ids`` on the final upload
+        record and surface them from :meth:`get_upload` under the optional
+        ``concat_partial_ids`` key, so the server can echo
+        ``Upload-Concat: final;<urls>`` on HEAD. Backends that omit the key
+        simply skip that echo (back-compat).
+
         Args:
             final_id: UUID for the new final upload.
             partial_ids: Ordered list of partial upload IDs to merge.

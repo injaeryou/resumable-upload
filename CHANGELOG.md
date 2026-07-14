@@ -4,6 +4,15 @@ All notable changes to this project are documented here. The format follows
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Fixed
+
+- **HEAD on a final upload now echoes `Upload-Concat: final;<urls>`** as the
+  spec requires. Source partial ids are persisted on the final upload record
+  (`concat_partial_ids`) across all four storage backends; existing SQLite
+  databases migrate automatically.
+
 ## [0.1.0] - 2026-06-25
 
 Async support on **both** sides of the protocol, with the core install

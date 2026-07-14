@@ -151,6 +151,7 @@ class S3Storage(Storage):
             "completed": info.get("completed", False),
             "expires_at": expires_at,
             "is_partial": info.get("is_partial", False),
+            "concat_partial_ids": info.get("concat_partial_ids"),
         }
 
     def update_offset(self, upload_id: str, offset: int) -> None:
@@ -451,6 +452,7 @@ class S3Storage(Storage):
                 "expires_at": expires_at.isoformat() if expires_at else None,
                 "completed": True,
                 "is_partial": False,
+                "concat_partial_ids": partial_ids,
                 "multipart_upload_id": None,
                 "parts": [],
                 "buffer_size": 0,

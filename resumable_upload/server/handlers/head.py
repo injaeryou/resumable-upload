@@ -70,11 +70,13 @@ def _build_head_response(
             encoded_metadata.append(f"{key} {encoded_value}")
         response_headers["Upload-Metadata"] = ",".join(encoded_metadata)
 
-    # Concatenation extension: a partial upload's HEAD response must advertise
-    # Upload-Concat so a spec-conformant client can tell it apart from a normal
-    # upload. (Final uploads complete synchronously on POST and are never
-    # observable as an in-progress concat here, so only "partial" is echoed.)
+    # Concatenation extension: HEAD must advertise Upload-Concat so a
+    # spec-conformant client can tell partials and finals apart from normal
+    # uploads. Finals echo the (relative) URLs of their source partials.
     if upload.get("is_partial"):
         response_headers["Upload-Concat"] = "partial"
+    elif upload.get("concat_partial_ids"):
+        urls = " ".join(f"{server.base_path}/{pid}" for pid in upload["concat_partial_ids"])
+        response_headers["Upload-Concat"] = f"final;{urls}"
 
     return (200, response_headers, b"")

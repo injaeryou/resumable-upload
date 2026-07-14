@@ -60,6 +60,10 @@ class TestS3Concatenation:
         assert final["offset"] == 2 * self._PART_SIZE
         assert final["completed"] is True
         assert final["is_partial"] is False
+        assert final["concat_partial_ids"] == [
+            "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa",
+            "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb",
+        ]
         assert storage.read_file(final_id) == a_data + b_data
 
     def test_concatenate_preserves_order(self, s3_bucket):
