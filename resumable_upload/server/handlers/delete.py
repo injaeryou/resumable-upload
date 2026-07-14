@@ -16,6 +16,8 @@ logger = logging.getLogger(__name__)
 def handle_delete(
     server: TusServerCore, upload_id: str, headers: dict[str, str]
 ) -> tuple[int, dict[str, str], bytes]:
+    if server.disable_termination:
+        return server._error_response(405, "Termination extension is disabled")
     upload = server.storage.get_upload(upload_id)
     if not upload:
         logger.warning("Upload not found for deletion: %s", upload_id)
@@ -39,6 +41,8 @@ def handle_delete(
 async def handle_delete_async(
     server: TusServerCore, upload_id: str, headers: dict[str, str]
 ) -> tuple[int, dict[str, str], bytes]:
+    if server.disable_termination:
+        return server._error_response(405, "Termination extension is disabled")
     upload = await server.storage.get_upload_async(upload_id)
     if not upload:
         logger.warning("Upload not found for deletion: %s", upload_id)

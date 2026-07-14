@@ -107,6 +107,8 @@ class TusServerCore:
         enable_downloads: bool = False,
         behind_proxy: bool = False,
         location_base_url: Optional[str] = None,
+        disable_termination: bool = False,
+        disable_concatenation: bool = False,
     ):
         """Initialize TUS server.
 
@@ -168,11 +170,17 @@ class TusServerCore:
         # Host, then to relative) — tusd's -behind-proxy.
         self.behind_proxy = behind_proxy
         self.location_base_url = location_base_url.rstrip("/") if location_base_url else None
+        self.disable_termination = disable_termination
+        self.disable_concatenation = disable_concatenation
         extensions = list(type(self).SUPPORTED_EXTENSIONS)
         if getattr(self.storage, "supports_unfinished_concat", False):
             extensions.append("concatenation-unfinished")
         if supports_checksum_trailer:
             extensions.append("checksum-trailer")
+        if disable_termination:
+            extensions.remove("termination")
+        if disable_concatenation:
+            extensions = [e for e in extensions if not e.startswith("concatenation")]
         self.SUPPORTED_EXTENSIONS = extensions
         self.max_size = max_size
         self.max_chunk_size = max_chunk_size

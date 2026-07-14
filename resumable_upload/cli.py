@@ -55,6 +55,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Fixed absolute prefix for Location URLs (e.g. https://cdn.example)",
     )
     serve.add_argument(
+        "--disable-termination",
+        action="store_true",
+        help="Reject DELETE requests and drop 'termination' from Tus-Extension",
+    )
+    serve.add_argument(
+        "--disable-concatenation",
+        action="store_true",
+        help="Reject Upload-Concat requests and drop concatenation extensions",
+    )
+    serve.add_argument(
         "--max-size",
         type=int,
         default=0,
@@ -146,6 +156,8 @@ def _serve(args: argparse.Namespace) -> int:
         enable_downloads=args.enable_downloads,
         behind_proxy=args.behind_proxy,
         location_base_url=args.location_base_url,
+        disable_termination=args.disable_termination,
+        disable_concatenation=args.disable_concatenation,
     )
 
     class Handler(TusHTTPRequestHandler):

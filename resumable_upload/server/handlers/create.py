@@ -236,6 +236,8 @@ def handle_create(
     #   Upload-Concat: partial     -> create a partial upload
     #   Upload-Concat: final;<...> -> create a final upload that merges partials
     concat_header = headers.get("upload-concat", "").strip()
+    if concat_header and server.disable_concatenation:
+        return server._error_response(400, "Concatenation extension is disabled")
     if concat_header.startswith("final"):
         return handle_create_final(server, concat_header, headers)
 
@@ -373,6 +375,8 @@ async def handle_create_async(
 ) -> tuple[int, dict[str, str], bytes]:
     """Async sibling of :func:`handle_create`."""
     concat_header = headers.get("upload-concat", "").strip()
+    if concat_header and server.disable_concatenation:
+        return server._error_response(400, "Concatenation extension is disabled")
     if concat_header.startswith("final"):
         return await handle_create_final_async(server, concat_header, headers)
 

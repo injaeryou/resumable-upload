@@ -110,26 +110,26 @@ Feature-by-feature comparison against the most mature official implementations: 
 
 | Area | tusd (official Go server) | resumable-upload |
 |------|---------------------------|------------------|
-| **TUS extensions advertised** | 5: `creation`, `creation-with-upload`, `creation-defer-length`, `termination`, `concatenation` | 9: those 5 **+ `checksum`, `checksum-trailer`, `expiration`, `concatenation-unfinished`** |
+| **TUS extensions advertised** | ✅ 5: `creation`, `creation-with-upload`, `creation-defer-length`, `termination`, `concatenation` · ❌ `checksum` / `expiration` / `concatenation-unfinished` | ✅ 9: those 5 + `checksum`, `checksum-trailer`, `expiration`, `concatenation-unfinished` |
 | **Checksum verification** | ❌ none (no `Upload-Checksum` support at all) | ✅ sha1/sha256/sha512/md5, header or trailer, `460` on mismatch |
 | **Expiration** | ❌ no TTL/cleanup in the binary (external cleanup required) | ✅ `Upload-Expires` + periodic server-side cleanup, `410` on expired |
 | **Concatenation over unfinished partials** | ❌ | ✅ (SQLite backend) |
-| **Storage backends** | local disk, S3 (+ S3-compatible endpoint, transfer acceleration, part-size tuning, R2 quirks), GCS, Azure (access tiers) | SQLite (zero-dep default), S3, GCS, Azure via extras; less S3 knob depth (no acceleration/part tuning flags) |
-| **Locking** | file locker / in-memory; cooperative lock hand-off; **no distributed locker** (sticky sessions required to scale out) | in-memory / **Redis (distributed)**; `423` on contention; plus atomic offset CAS → `409` on concurrent PATCH |
-| **Hooks: mechanisms** | in-process (Go pkg) + **out-of-process: file / HTTP / gRPC / plugin** | in-process Python callables only (embedded-library trade-off) |
-| **Hooks: events** | 7: pre-create, post-create, **post-receive (progress, ~1s interval)**, pre-finish, post-finish, **pre-terminate (veto)**, post-terminate | 6: `on_incoming_request` (reject), `on_upload_create` (reject / replace metadata), `on_chunk_received` (per-chunk progress + stop), `on_upload_complete` (custom finishing response), `on_before_terminate` (veto), `on_upload_terminate` |
-| **Hooks: powers** | reject create/terminate, **StopUpload mid-flight**, override upload ID & storage path, custom HTTP response (pre-create/pre-finish/post-receive) | reject via `TusHookError(status)`, replace metadata on create, **stop mid-flight** (raise in `on_chunk_received` → upload deleted), custom finishing response (return dict from `on_upload_complete`), out-of-band `terminate_upload()`; custom upload IDs / storage paths still not supported |
-| **Download endpoint** | GET, **on by default** (`-disable-download` to off); `filetype` → Content-Type; no Content-Disposition control | GET, **opt-in** (`enable_downloads=True` / `--enable-downloads`); validated Content-Type + always-`attachment` disposition (anti-XSS), sanitized filename |
-| **CORS** | on by default: regex origin, credentials, extra allow/expose headers, max-age, `-disable-cors` | opt-in: static string (legacy) or origin list with echo + `Vary: Origin`, `cors_allow_credentials` (wildcard auto-replaced by echoed origin), `cors_max_age` on preflight; no regex origins or extra-header knobs |
-| **Metrics** | Prometheus `/metrics` + pprof profiling | Prometheus `/metrics` (zero-dep registry); no pprof |
-| **Proxy support** | `-behind-proxy` honors `X-Forwarded-*` / `Forwarded` for absolute Location | `behind_proxy=True` honors `X-Forwarded-Proto/Host` (Host fallback) for absolute Location; `location_base_url` for a fixed prefix; relative by default (no RFC 7239 `Forwarded` parsing) |
-| **Networking / TLS** | UNIX socket, HTTP/2 + h2c, TLS 1.2/1.3 modes, network + request-completion timeouts | stdlib `http.server` (CLI) / any ASGI server; TLS via your reverse proxy or ASGI server; Slowloris socket timeout |
-| **Size limits** | `-max-size` | `max_size` **+ per-PATCH `max_chunk_size`** (tusd has no per-chunk cap) |
-| **Feature toggles** | `-disable-termination`, `-disable-concatenation`, `-disable-download` | downloads opt-in; no termination/concatenation disable toggles yet |
-| **Graceful shutdown** | SIGINT/SIGTERM drain with `-shutdown-timeout` | ❌ (CLI exits immediately) |
-| **Structured logging / request IDs** | `-log-format json`, X-Request-ID surfaced in logs | Python `logging` only |
+| **Storage backends** | ✅ local disk · ✅ S3 (S3-compatible endpoint, transfer acceleration, part-size tuning, R2 quirks) · ✅ GCS · ✅ Azure (access tiers) | ✅ SQLite (zero-dep default) · ✅ S3 · ✅ GCS · ✅ Azure (via extras) · ❌ deep S3 tuning (no acceleration / part-size flags) |
+| **Locking** | ✅ file locker / in-memory · ✅ cooperative lock hand-off · ❌ distributed locker (sticky sessions required to scale out) | ✅ in-memory · ✅ Redis (distributed), `423` on contention · ✅ atomic offset CAS → `409` on concurrent PATCH |
+| **Hooks: mechanisms** | ✅ in-process (Go pkg) · ✅ out-of-process: file / HTTP / gRPC / plugin | ✅ in-process Python callables · ❌ out-of-process (embedded-library trade-off) |
+| **Hooks: events** | ✅ 7: pre-create, post-create, post-receive (progress, ~1s interval), pre-finish, post-finish, pre-terminate (veto), post-terminate | ✅ 6: `on_incoming_request` (reject), `on_upload_create` (reject / replace metadata), `on_chunk_received` (per-chunk progress + stop), `on_upload_complete` (custom finishing response), `on_before_terminate` (veto), `on_upload_terminate` · ❌ interval-based post-receive (per-chunk instead) |
+| **Hooks: powers** | ✅ reject create/terminate · ✅ StopUpload mid-flight · ✅ override upload ID & storage path · ✅ custom HTTP response (pre-create/pre-finish/post-receive) | ✅ reject via `TusHookError(status)` · ✅ replace metadata on create · ✅ stop mid-flight (raise in `on_chunk_received` → upload deleted) · ✅ custom finishing response (dict from `on_upload_complete`) · ✅ out-of-band `terminate_upload()` · ❌ custom upload IDs / storage paths |
+| **Download endpoint** | ✅ GET, on by default (`-disable-download` to off) · ✅ `filetype` → Content-Type · ❌ Content-Disposition control | ✅ GET, opt-in (`enable_downloads=True` / `--enable-downloads`) · ✅ validated Content-Type · ✅ always-`attachment` disposition (anti-XSS), sanitized filename |
+| **CORS** | ✅ on by default (`-disable-cors` to off) · ✅ regex origin · ✅ credentials · ✅ extra allow/expose headers · ✅ max-age | ✅ opt-in: static string (legacy) or origin list with echo + `Vary: Origin` · ✅ credentials (`cors_allow_credentials`, wildcard auto-replaced by echoed origin) · ✅ `cors_max_age` on preflight · ❌ regex origins · ❌ extra-header knobs |
+| **Metrics** | ✅ Prometheus `/metrics` · ✅ pprof profiling | ✅ Prometheus `/metrics` (zero-dep registry) · ❌ pprof |
+| **Proxy support** | ✅ `-behind-proxy` honors `X-Forwarded-*` for absolute Location · ✅ RFC 7239 `Forwarded` | ✅ `behind_proxy=True` honors `X-Forwarded-Proto/Host` (Host fallback) for absolute Location · ✅ `location_base_url` for a fixed prefix (relative by default) · ❌ RFC 7239 `Forwarded` parsing |
+| **Networking / TLS** | ✅ UNIX socket · ✅ HTTP/2 + h2c · ✅ TLS 1.2/1.3 modes · ✅ network + request-completion timeouts | ✅ stdlib `http.server` (CLI) / any ASGI server · ✅ Slowloris socket timeout · ❌ built-in TLS (terminate at your reverse proxy or ASGI server) |
+| **Size limits** | ✅ `-max-size` · ❌ per-chunk cap | ✅ `max_size` · ✅ per-PATCH `max_chunk_size` |
+| **Feature toggles** | ✅ `-disable-termination` · ✅ `-disable-concatenation` · ✅ `-disable-download` | ✅ `disable_termination` · ✅ `disable_concatenation` · ✅ downloads opt-in rather than opt-out |
+| **Graceful shutdown** | ✅ SIGINT/SIGTERM drain with `-shutdown-timeout` | ❌ (CLI exits immediately) |
+| **Structured logging / request IDs** | ✅ `-log-format json` · ✅ X-Request-ID surfaced in logs | ❌ Python `logging` only |
 | **tus2 / IETF RUFH** | ✅ experimental (`-enable-experimental-protocol`) | ❌ (tracked; waiting for draft to stabilize) |
-| **Deployment model** | standalone binary (also usable as Go package) | embeddable Python library (zero-dep core) + CLI + ASGI adapter + Flask/FastAPI/Django examples |
+| **Deployment model** | ✅ standalone binary · ✅ usable as Go package | ✅ embeddable Python library (zero-dep core) · ✅ CLI · ✅ ASGI adapter · ✅ Flask/FastAPI/Django examples |
 
 Summary: ahead of tusd on **protocol surface** (checksum, expiration, unfinished concat) and **distributed locking**; behind on **operational depth** (hook system, proxy/TLS/networking, CORS, graceful shutdown, S3 tuning).
 
@@ -137,23 +137,23 @@ Summary: ahead of tusd on **protocol surface** (checksum, expiration, unfinished
 
 | Area | tus-js-client (official JS client) | resumable-upload client |
 |------|-------------------------------------|-------------------------|
-| **Inputs** | File/Blob (browser), Buffer/Readable (node), Cordova file, React Native URI | `file_path` or any file-like `file_stream` (sync); same for httpx-based async client |
-| **Chunking** | `chunkSize` default `Infinity` (whole file in one PATCH) | `chunk_size` default 1 MiB |
+| **Inputs** | ✅ File/Blob (browser) · ✅ Buffer/Readable (node) · ✅ Cordova file · ✅ React Native URI | ✅ `file_path` · ✅ any file-like `file_stream` (sync); same for httpx-based async client |
+| **Chunking** | ✅ `chunkSize` (default `Infinity`: whole file in one PATCH) | ✅ `chunk_size` (default 1 MiB) |
 | **Checksum** | ❌ not implemented (explicitly out of scope per FAQ) | ✅ `Upload-Checksum` per chunk, sha1 default, sha256/sha512/md5 opt-in |
-| **Retry** | `retryDelays` array `[0,1s,3s,5s]`, `onShouldRetry` override | `max_retries` + exponential backoff (cap 60s), `on_should_retry` override, `stop_event` interrupts waits |
-| **Resume across sessions** | fingerprint → urlStorage (localStorage default **on**), `findPreviousUploads()` / `resumeFromPreviousUpload()` | fingerprint → URL storage (File/SQLite/Memory backends, default **off** via `store_url`), `find_previous_uploads()` / `resume_upload()` |
-| **Fingerprint strength** | environment default (name/size-based), pluggable | full-file SHA-256 default (collision-proof, costlier), partial-MD5 and callable alternatives |
-| **Parallel upload (concatenation)** | `parallelUploads=N`, custom `parallelUploadBoundaries`, `metadataForPartialUploads` | `parallel_uploads=N` + `metadata_for_partial_uploads`; even split only (custom boundaries deliberately skipped) |
+| **Retry** | ✅ `retryDelays` array `[0,1s,3s,5s]` · ✅ `onShouldRetry` override | ✅ `max_retries` + exponential backoff (cap 60s) · ✅ `on_should_retry` override · ✅ `stop_event` interrupts waits |
+| **Resume across sessions** | ✅ fingerprint → urlStorage (localStorage, default **on**) · ✅ `findPreviousUploads()` / `resumeFromPreviousUpload()` | ✅ fingerprint → URL storage (File/SQLite/Memory backends, default **off** via `store_url`) · ✅ `find_previous_uploads()` / `resume_upload()` |
+| **Fingerprint strength** | ✅ pluggable · ❌ weak default (name/size-based) | ✅ full-file SHA-256 default (collision-proof, costlier) · ✅ partial-MD5 and callable alternatives |
+| **Parallel upload (concatenation)** | ✅ `parallelUploads=N` · ✅ custom `parallelUploadBoundaries` · ✅ `metadataForPartialUploads` | ✅ `parallel_uploads=N` · ✅ `metadata_for_partial_uploads` · ❌ custom boundaries (even split only, deliberately skipped) |
 | **creation-with-upload** | ✅ `uploadDataDuringCreation` | ✅ `initial_data` on create |
 | **defer-length** | ✅ `uploadLengthDeferred` | ✅ `create_deferred_upload()` |
 | **Termination** | ✅ `abort(true)` / static `terminate()` | ✅ `delete_upload()` |
-| **Pause / partial stop** | `abort()` (resume later) | `stop_event` (interrupt-safe), `stop_at` byte offset |
-| **Request lifecycle hooks** | `onBeforeRequest`, `onAfterResponse`, `onUploadUrlAvailable` | `before_request`, `after_response`, `on_upload_url_available` |
-| **Progress reporting** | `onProgress(bytesSent,total)`, `onChunkComplete` | `progress_callback(UploadStats)` incl. speed, ETA, chunks completed |
+| **Pause / partial stop** | ✅ `abort()` (resume later) · ❌ stop-at-byte | ✅ `stop_event` (interrupt-safe) · ✅ `stop_at` byte offset |
+| **Request lifecycle hooks** | ✅ `onBeforeRequest` · ✅ `onAfterResponse` · ✅ `onUploadUrlAvailable` | ✅ `before_request` · ✅ `after_response` · ✅ `on_upload_url_available` |
+| **Progress reporting** | ✅ `onProgress(bytesSent,total)` · ✅ `onChunkComplete` · ❌ speed/ETA stats | ✅ `progress_callback(UploadStats)` incl. speed, ETA, chunks completed |
 | **`X-HTTP-Method-Override`** | ✅ `overridePatchMethod` | ✅ `override_patch_method` (sync + async) |
 | **Request IDs** | ✅ `addRequestId` (X-Request-ID) | ✅ `add_request_id` (UUID per request; user header wins) |
-| **TLS control** | n/a in browser | `verify_tls_cert`, mTLS client certificates |
-| **Async** | Promise-based | separate `AsyncTusClient` (httpx, `[async]` extra) |
+| **TLS control** | ❌ n/a in browser | ✅ `verify_tls_cert` · ✅ mTLS client certificates |
+| **Async** | ✅ Promise-based | ✅ separate `AsyncTusClient` (httpx, `[async]` extra) |
 | **tus2 / IETF RUFH** | ✅ experimental `protocol: 'ietf-draft-03'/'ietf-draft-05'` | ❌ (tracked) |
 
 Summary: ahead on **integrity** (checksum), **fingerprint strength**, TLS/mTLS, and stats-rich progress; behind only on **RUFH experimentation** and custom parallel boundaries.

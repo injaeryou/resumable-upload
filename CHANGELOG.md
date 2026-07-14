@@ -45,6 +45,10 @@ All notable changes to this project are documented here. The format follows
   `location_base_url` sets a fixed prefix. Relative Location remains the
   default.
 
+- **Feature toggles** (tusd-style): `disable_termination` (client DELETE →
+  `405`) and `disable_concatenation` (`Upload-Concat` → `400`), both dropped
+  from `Tus-Extension` advertisement and available as `serve` flags.
+
 ### Fixed
 
 - **`Upload-Metadata` key rules enforced**: duplicate keys and non-ASCII keys

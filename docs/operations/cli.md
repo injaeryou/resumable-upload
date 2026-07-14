@@ -20,6 +20,8 @@ resumable-upload serve --host 0.0.0.0 --port 8080 --upload-dir ./uploads
 | `--enable-downloads` | off | Serve completed uploads via GET (tusd-style download endpoint) |
 | `--behind-proxy` | off | Build absolute `Location` URLs from `X-Forwarded-Proto`/`X-Forwarded-Host` (falls back to `Host`, then relative) |
 | `--location-base-url` | unset | Fixed absolute prefix for `Location` URLs (e.g. `https://cdn.example`) |
+| `--disable-termination` | off | Reject client DELETEs with `405` and drop `termination` from `Tus-Extension` |
+| `--disable-concatenation` | off | Reject `Upload-Concat` requests with `400` and drop the concatenation extensions |
 | `--max-size` | `0` | Max upload size in bytes (0 = unlimited) |
 | `--max-chunk-size` | `0` | Max single PATCH size in bytes (0 = unlimited) |
 | `--upload-expiry` | unset | Upload expiry in seconds (unset = no expiry) |
