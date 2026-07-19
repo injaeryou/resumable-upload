@@ -2,6 +2,7 @@
 
 [![Python Version](https://img.shields.io/pypi/pyversions/resumable-upload.svg)](https://pypi.org/project/resumable-upload/)
 [![PyPI Version](https://img.shields.io/pypi/v/resumable-upload.svg)](https://pypi.org/project/resumable-upload/)
+[![PyPI Downloads](https://img.shields.io/pepy/dt/resumable-upload)](https://pepy.tech/projects/resumable-upload)
 [![License](https://img.shields.io/pypi/l/resumable-upload.svg)](https://github.com/injaeryou/resumable-upload/blob/main/LICENSE)
 
 [English](README.md) | **한국어**
