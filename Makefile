@@ -1,4 +1,4 @@
-.PHONY: help install install-pip lint format format-check type-check test test-all test-all-versions ci clean
+.PHONY: help install install-pip lint format format-check type-check test test-all test-all-versions ci clean interop
 
 # Use Python from activated virtual environment if available, otherwise detect
 # Priority: .venv/bin/python > venv/bin/python > VIRTUAL_ENV/bin/python > python3 from PATH
@@ -19,6 +19,7 @@ help:
 	@echo "  make test             - Run all tests (including web frameworks)"
 	@echo "  make test-all-versions - Run tests on all Python versions (requires tox)"
 	@echo "  make ci               - Run full CI checks (lint, format-check, type-check, test)"
+	@echo "  make interop          - Cross-impl tests (tusd, tus-js-client, tus-py-client)"
 	@echo "  make clean            - Clean build artifacts"
 	@echo ""
 	@echo "Note: Make sure to activate your virtual environment first:"
@@ -58,6 +59,15 @@ test-all-versions:
 
 ci: lint format-check type-check test
 	@echo "✅ All CI checks passed!"
+
+# Four interop lanes: ours<->ours always; tusd<->our-client needs `tusd` on
+# PATH (or TUSD_BIN); our-server<->tus-js-client needs node; our-server<->
+# tus-py-client needs tuspy. Provisions the JS + Python reference clients;
+# missing tusd just skips lane 2.
+interop:
+	@command -v npm >/dev/null 2>&1 && (cd tests/interop && npm install --silent) || echo "npm not found — tus-js-client lane will skip"
+	@command -v uv >/dev/null 2>&1 && uv pip install --quiet tuspy || $(RUN) pip install --quiet tuspy || echo "tuspy install failed — tus-py-client lane will skip"
+	$(RUN) pytest tests/test_interop.py -v
 
 clean:
 	rm -rf build/ dist/ *.egg-info .coverage htmlcov/ .pytest_cache/ .ruff_cache/
