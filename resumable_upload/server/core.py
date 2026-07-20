@@ -330,7 +330,9 @@ class TusServerCore:
         # Route request
         if method == "OPTIONS":
             result = self._handle_options(path, headers)
-        elif method == "POST" and path == self.base_path:
+        elif method == "POST" and path in (self.base_path, self.base_path + "/"):
+            # Tolerate a trailing slash on the creation endpoint — tusd does,
+            # and reference clients (tus-py-client) build the URL that way.
             result = self._handle_create(headers, body)
         elif method == "HEAD" and path.startswith(self.base_path + "/"):
             upload_id = path[len(self.base_path) + 1 :]
@@ -441,7 +443,8 @@ class TusServerCore:
 
         if method == "OPTIONS":
             result = await self._handle_options_async(path, headers)
-        elif method == "POST" and path == self.base_path:
+        elif method == "POST" and path in (self.base_path, self.base_path + "/"):
+            # Trailing slash tolerated — matches tusd and tus-py-client.
             result = await self._handle_create_async(headers, body)
         elif method == "HEAD" and path.startswith(self.base_path + "/"):
             upload_id = path[len(self.base_path) + 1 :]
