@@ -62,7 +62,9 @@ def parse_metadata(
         if " " in pair:
             key, value = pair.split(" ", 1)
             try:
-                metadata[key] = base64.b64decode(value).decode("utf-8")
+                # validate=True: non-alphabet characters are an error, not
+                # silently discarded (b64decode('####') == b'' otherwise).
+                metadata[key] = base64.b64decode(value, validate=True).decode("utf-8")
             except (ValueError, UnicodeDecodeError, binascii.Error) as e:
                 return None, f"Invalid base64 encoding for metadata key '{key}': {e}"
         else:
