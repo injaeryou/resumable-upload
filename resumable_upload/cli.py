@@ -127,6 +127,40 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Redis URL (e.g., redis://localhost:6379/0), required when --lock-backend=redis",
     )
+
+    # -- client subcommands ------------------------------------------------
+    upload = sub.add_parser("upload", help="Upload a file to a TUS server.")
+    upload.add_argument("file", help="Path to the file to upload")
+    upload.add_argument(
+        "--url", required=True, help="TUS creation endpoint, e.g. http://host/files"
+    )
+    upload.add_argument(
+        "--chunk-size", type=int, default=4 * 1024 * 1024, help="Chunk size in bytes (default: 4MB)"
+    )
+    upload.add_argument(
+        "--parallel", type=int, default=1, help="Concurrent partial uploads (default: 1)"
+    )
+    upload.add_argument(
+        "--metadata",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Upload metadata (repeatable); filename is added automatically",
+    )
+    upload.add_argument(
+        "--checksum",
+        default="sha1",
+        help="Checksum algorithm, or 'none' to disable (default: sha1)",
+    )
+    upload.add_argument("--no-progress", action="store_true", help="Suppress the progress line")
+
+    download = sub.add_parser("download", help="Download a completed upload (server GET endpoint).")
+    download.add_argument("url", help="Upload URL to download")
+    download.add_argument("-o", "--output", required=True, help="Output file path")
+
+    info = sub.add_parser("info", help="Print offset/length/metadata for an upload (HEAD).")
+    info.add_argument("url", help="Upload URL to inspect")
+
     return parser
 
 
@@ -211,11 +245,79 @@ def _serve(args: argparse.Namespace) -> int:
     return 0
 
 
+def _parse_metadata(pairs: list[str]) -> dict[str, str]:
+    metadata: dict[str, str] = {}
+    for item in pairs:
+        if "=" not in item:
+            raise SystemExit(f"--metadata must be KEY=VALUE, got: {item}")
+        key, value = item.split("=", 1)
+        metadata[key] = value
+    return metadata
+
+
+def _upload(args: argparse.Namespace) -> int:
+    import os
+
+    from resumable_upload.client import TusClient
+    from resumable_upload.client.stats import UploadStats
+
+    checksum: bool | str = False if args.checksum.lower() == "none" else args.checksum
+    metadata = _parse_metadata(args.metadata)
+    metadata.setdefault("filename", os.path.basename(args.file))
+
+    def _progress(stats: UploadStats) -> None:
+        pct = (stats.uploaded_bytes / stats.total_bytes * 100) if stats.total_bytes else 100.0
+        print(
+            f"\r  {pct:5.1f}%  {stats.uploaded_bytes}/{stats.total_bytes} bytes",
+            end="",
+            flush=True,
+        )
+
+    client = TusClient(args.url, chunk_size=args.chunk_size, checksum=checksum)
+    url = client.upload_file(
+        args.file,
+        metadata=metadata,
+        parallel_uploads=args.parallel,
+        progress_callback=None if args.no_progress else _progress,
+    )
+    if not args.no_progress:
+        print()  # end the progress line
+    print(url)
+    return 0
+
+
+def _download(args: argparse.Namespace) -> int:
+    import shutil
+    import urllib.request
+
+    with urllib.request.urlopen(args.url) as resp, open(args.output, "wb") as out:
+        shutil.copyfileobj(resp, out)
+    print(f"Saved {args.output}")
+    return 0
+
+
+def _info(args: argparse.Namespace) -> int:
+    from resumable_upload.client import TusClient
+
+    client = TusClient(args.url)
+    inf = client.get_upload_info(args.url)
+    print(f"offset:   {inf['offset']}")
+    print(f"length:   {inf['length']}")
+    print(f"complete: {inf['complete']}")
+    if inf.get("metadata"):
+        print("metadata:")
+        for k, v in inf["metadata"].items():
+            print(f"  {k}: {v}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
-    if args.command == "serve":
-        return _serve(args)
+    handlers = {"serve": _serve, "upload": _upload, "download": _download, "info": _info}
+    handler = handlers.get(args.command)
+    if handler is not None:
+        return handler(args)
     parser.print_help()
     return 1
 

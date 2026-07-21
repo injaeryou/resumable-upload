@@ -144,7 +144,7 @@ class TestCLI:
             except subprocess.TimeoutExpired:
                 proc.kill()
 
-    def test_cli_serve_cors_credentials_max_age_and_checksums(self, tmp_path):
+    def test_cli_serve_cors_credentials_max_age_and_checksums(self, tmp_path):  # noqa: PLR0915
         port = _find_free_port()
         proc = subprocess.Popen(
             [
@@ -198,3 +198,90 @@ class TestCLI:
                 proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 proc.kill()
+
+
+@pytest.fixture
+def cli_server(tmp_path):
+    """In-process TUS server (downloads on) for the client-side CLI tests."""
+    import threading
+    from http.server import HTTPServer
+
+    from resumable_upload.server import TusHTTPRequestHandler, TusServer
+    from resumable_upload.storage import SQLiteStorage
+
+    tus = TusServer(
+        storage=SQLiteStorage(db_path=str(tmp_path / "u.db"), upload_dir=str(tmp_path / "f")),
+        base_path="/files",
+        enable_downloads=True,
+    )
+
+    class Handler(TusHTTPRequestHandler):
+        pass
+
+    Handler.tus_server = tus
+    httpd = HTTPServer(("127.0.0.1", 0), Handler)
+    port = httpd.server_address[1]
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{port}/files"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+def _cli(*args: str):
+    return subprocess.run(
+        [sys.executable, "-m", "resumable_upload", *args],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+
+class TestCLIClient:
+    def test_upload_info_download_roundtrip(self, cli_server, tmp_path):
+        src = tmp_path / "src.bin"
+        src.write_bytes(b"Z" * 5000)
+
+        up = _cli(
+            "upload",
+            str(src),
+            "--url",
+            cli_server,
+            "--chunk-size",
+            "1024",
+            "--metadata",
+            "author=me",
+            "--no-progress",
+        )
+        assert up.returncode == 0, up.stderr
+        url = up.stdout.strip().splitlines()[-1]
+        assert url.startswith(cli_server + "/")
+
+        inf = _cli("info", url)
+        assert inf.returncode == 0, inf.stderr
+        assert "complete: True" in inf.stdout
+        assert "author: me" in inf.stdout
+        assert "filename: src.bin" in inf.stdout
+
+        out = tmp_path / "out.bin"
+        dl = _cli("download", url, "-o", str(out))
+        assert dl.returncode == 0, dl.stderr
+        assert out.read_bytes() == b"Z" * 5000
+
+    def test_upload_parallel(self, cli_server, tmp_path):
+        src = tmp_path / "big.bin"
+        src.write_bytes(b"Q" * 20000)
+        up = _cli("upload", str(src), "--url", cli_server, "--parallel", "3", "--no-progress")
+        assert up.returncode == 0, up.stderr
+        url = up.stdout.strip().splitlines()[-1]
+        out = tmp_path / "o.bin"
+        assert _cli("download", url, "-o", str(out)).returncode == 0
+        assert out.read_bytes() == b"Q" * 20000
+
+    def test_upload_bad_metadata(self, cli_server, tmp_path):
+        src = tmp_path / "s.bin"
+        src.write_bytes(b"x")
+        up = _cli("upload", str(src), "--url", cli_server, "--metadata", "novalue", "--no-progress")
+        assert up.returncode != 0
+        assert "KEY=VALUE" in up.stderr

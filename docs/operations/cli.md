@@ -55,4 +55,37 @@ resumable-upload serve \
 resumable-upload serve --max-chunk-size $((50 * 1024 * 1024))
 ```
 
+## Client commands
+
+The same console script also uploads, downloads, and inspects uploads against
+any TUS server — no Python needed.
+
+```bash
+# Upload (resumable, with a progress line); prints the upload URL
+resumable-upload upload big.bin --url http://host/files
+
+# Split into concurrent partials and merge server-side (concatenation)
+resumable-upload upload big.bin --url http://host/files --parallel 4
+
+# Attach metadata (repeatable); filename is added automatically
+resumable-upload upload report.pdf --url http://host/files --metadata title="Q3"
+
+# Inspect an upload (HEAD): offset, length, complete, metadata
+resumable-upload info http://host/files/<id>
+
+# Download a completed upload (needs the server's GET endpoint)
+resumable-upload download http://host/files/<id> -o out.bin
+```
+
+### `upload` flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--url` | required | TUS creation endpoint |
+| `--chunk-size` | `4194304` | Chunk size in bytes (4 MB) |
+| `--parallel` | `1` | Concurrent partial uploads (concatenation) |
+| `--metadata KEY=VALUE` | — | Upload metadata, repeatable |
+| `--checksum` | `sha1` | Checksum algorithm, or `none` to disable |
+| `--no-progress` | off | Suppress the progress line |
+
 The CLI handles `SIGINT` / `SIGTERM` cleanly and shuts the HTTP server down before exiting.
