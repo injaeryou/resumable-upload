@@ -70,6 +70,17 @@ def _download_sha(url: str) -> str:
         return hashlib.sha256(resp.read()).hexdigest()
 
 
+def _download(url: str) -> tuple[bytes, dict[str, str]]:
+    with urllib.request.urlopen(url) as resp:
+        return resp.read(), dict(resp.headers)
+
+
+def _write(tmp_path, name: str, data: bytes) -> str:
+    p = tmp_path / name
+    p.write_bytes(data)
+    return str(p)
+
+
 @pytest.fixture
 def ours_server():
     """resumable-upload TusServer over real HTTP; yields (base_url, storage)."""
@@ -132,6 +143,68 @@ class TestNativeRoundTrip:
         purl = client.upload_file(payload_file, parallel_uploads=3)
         assert seen[-1] == purl
         assert _download_sha(purl) == PAYLOAD_SHA
+
+    def test_metadata_roundtrip(self, ours_server, tmp_path):
+        base_url, _ = ours_server
+        path = _write(tmp_path, "doc.bin", b"hello")
+        client = TusClient(base_url, chunk_size=256 * 1024)
+        url = client.upload_file(path, metadata={"filename": "wîndé.txt", "filetype": "text/plain"})
+        meta = client.get_metadata(url)
+        assert meta["filename"] == "wîndé.txt"
+        assert meta["filetype"] == "text/plain"
+        _, headers = _download(url)
+        assert headers["Content-Type"] == "text/plain"
+        assert "attachment" in headers["Content-Disposition"]
+
+    def test_small_chunk_many_requests(self, ours_server, payload_file):
+        base_url, _ = ours_server
+        client = TusClient(base_url, chunk_size=64 * 1024)  # ~33 PATCHes for 2 MB
+        url = client.upload_file(payload_file)
+        assert _download_sha(url) == PAYLOAD_SHA
+
+    def test_resume_after_interruption(self, ours_server, payload_file):
+        base_url, _ = ours_server
+        client = TusClient(base_url, chunk_size=256 * 1024)
+        url = client.upload_file(payload_file, stop_at=512 * 1024)  # stop partway
+        assert 0 < client.get_upload_info(url)["offset"] < len(PAYLOAD)
+        client.resume_upload(payload_file, url)
+        assert _download_sha(url) == PAYLOAD_SHA
+
+    def test_empty_file(self, ours_server, tmp_path):
+        base_url, _ = ours_server
+        path = _write(tmp_path, "empty.bin", b"")
+        client = TusClient(base_url, chunk_size=256 * 1024)
+        url = client.upload_file(path)
+        assert client.get_upload_info(url)["complete"] is True
+        assert _download(url)[0] == b""
+
+    def test_deferred_length(self, ours_server, payload_file):
+        base_url, _ = ours_server
+        client = TusClient(base_url, chunk_size=256 * 1024)
+        url = client.create_deferred_upload(metadata={"filename": "later.bin"})
+        client.resume_upload(payload_file, url)
+        info = client.get_upload_info(url)
+        assert info["complete"] is True
+        assert info["length"] == len(PAYLOAD)
+        assert _download_sha(url) == PAYLOAD_SHA
+
+    def test_single_byte(self, ours_server, tmp_path):
+        # Smallest non-empty payload; exercises exact offset==length boundary.
+        base_url, _ = ours_server
+        path = _write(tmp_path, "one.bin", b"\x00")
+        client = TusClient(base_url, chunk_size=256 * 1024)
+        url = client.upload_file(path)
+        assert client.get_upload_info(url)["complete"] is True
+        assert _download(url)[0] == b"\x00"
+
+    def test_chunk_size_equals_file_size(self, ours_server, tmp_path):
+        # A single PATCH covering the whole file (boundary: one exact chunk).
+        base_url, _ = ours_server
+        data = os.urandom(4096)
+        path = _write(tmp_path, "exact.bin", data)
+        client = TusClient(base_url, chunk_size=4096)
+        url = client.upload_file(path)
+        assert _download(url)[0] == data
 
 
 @pytest.mark.skipif(not TUSD_BIN, reason="tusd binary not found (set TUSD_BIN or add to PATH)")
@@ -199,6 +272,46 @@ class TestClientAgainstTusd:
             urllib.request.urlopen(req)
         assert exc.value.code == 404
 
+    def test_metadata_roundtrip(self, tusd_server, tmp_path):
+        client = TusClient(tusd_server, chunk_size=256 * 1024, checksum=False)
+        path = _write(tmp_path, "m.bin", b"hello")
+        url = client.upload_file(path, metadata={"filename": "wîndé.bin", "filetype": "image/png"})
+        meta = client.get_metadata(url)
+        assert meta["filename"] == "wîndé.bin"
+        assert meta["filetype"] == "image/png"
+
+    def test_small_chunk_many_requests(self, tusd_server, payload_file):
+        client = TusClient(tusd_server, chunk_size=64 * 1024, checksum=False)
+        url = client.upload_file(payload_file, metadata={"filename": "ours.bin"})
+        assert _download_sha(url) == PAYLOAD_SHA
+
+    def test_resume_after_interruption(self, tusd_server, payload_file):
+        client = TusClient(tusd_server, chunk_size=256 * 1024, checksum=False)
+        url = client.upload_file(
+            payload_file, metadata={"filename": "ours.bin"}, stop_at=512 * 1024
+        )
+        assert 0 < client.get_upload_info(url)["offset"] < len(PAYLOAD)
+        client.resume_upload(payload_file, url)
+        assert _download_sha(url) == PAYLOAD_SHA
+
+    def test_empty_file(self, tusd_server, tmp_path):
+        client = TusClient(tusd_server, chunk_size=256 * 1024, checksum=False)
+        path = _write(tmp_path, "empty.bin", b"")
+        url = client.upload_file(path)
+        assert client.get_upload_info(url)["complete"] is True
+        assert _download(url)[0] == b""
+
+    def test_deferred_length(self, tusd_server, payload_file):
+        # tusd advertises creation-defer-length; our client must commit the
+        # length on the first PATCH.
+        client = TusClient(tusd_server, chunk_size=256 * 1024, checksum=False)
+        url = client.create_deferred_upload(metadata={"filename": "later.bin"})
+        client.resume_upload(payload_file, url)
+        info = client.get_upload_info(url)
+        assert info["complete"] is True
+        assert info["length"] == len(PAYLOAD)
+        assert _download_sha(url) == PAYLOAD_SHA
+
     # Skipped for tusd: it advertises neither the checksum nor the expiration
     # extension (get_server_info().extensions has no 'checksum'/'expiration'),
     # so there is nothing on the tusd side to interop against for those.
@@ -240,6 +353,30 @@ class TestServerAgainstTusJs:
         result = self._run_lane3(base_url, "terminate")
         assert result.returncode == 0, result.stderr
         assert result.stdout.startswith("OK terminated ")
+
+    def test_js_empty_file(self, ours_server):
+        base_url, _ = ours_server
+        result = self._run_lane3(base_url, "empty")
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.startswith("OK empty ")
+
+    def test_js_metadata_roundtrip(self, ours_server):
+        base_url, _ = ours_server
+        result = self._run_lane3(base_url, "metadata")
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.startswith("OK metadata ")
+
+    def test_js_small_chunk(self, ours_server):
+        base_url, _ = ours_server
+        result = self._run_lane3(base_url, "smallchunk")
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.startswith("OK smallchunk ")
+
+    def test_js_resume(self, ours_server):
+        base_url, _ = ours_server
+        result = self._run_lane3(base_url, "resume")
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.startswith("OK resume ")
 
 
 @pytest.mark.skipif(
@@ -291,6 +428,48 @@ class TestServerAgainstTusPy:
         )
         uploader.upload()
         assert _download_sha(uploader.url) == PAYLOAD_SHA
+
+    def test_py_client_empty_file(self, ours_server, tmp_path):
+        # A real client's 0-byte upload must complete and download empty.
+        base_url, _ = ours_server
+        path = _write(tmp_path, "empty.bin", b"")
+        tc = tuspy_client.TusClient(base_url + "/")
+        uploader = tc.uploader(path, chunk_size=256 * 1024)
+        uploader.upload()
+        assert _download(uploader.url)[0] == b""
+
+    def test_py_client_metadata_roundtrip(self, ours_server, tmp_path):
+        base_url, _ = ours_server
+        path = _write(tmp_path, "m.bin", b"hello")
+        tc = tuspy_client.TusClient(base_url + "/")
+        uploader = tc.uploader(
+            path,
+            chunk_size=256 * 1024,
+            metadata={"filename": "wîndé.txt", "filetype": "text/plain"},
+        )
+        uploader.upload()
+        _, headers = _download(uploader.url)
+        assert headers["Content-Type"] == "text/plain"
+        assert "attachment" in headers["Content-Disposition"]
+
+    def test_py_client_small_chunk(self, ours_server, payload_file):
+        base_url, _ = ours_server
+        tc = tuspy_client.TusClient(base_url + "/")
+        uploader = tc.uploader(payload_file, chunk_size=64 * 1024)  # many PATCHes
+        uploader.upload()
+        assert _download_sha(uploader.url) == PAYLOAD_SHA
+
+    def test_py_client_unicode_filename_download(self, ours_server, tmp_path):
+        # Non-Latin-1 filename must survive to the download's RFC 5987 header.
+        base_url, _ = ours_server
+        path = _write(tmp_path, "u.bin", b"data")
+        tc = tuspy_client.TusClient(base_url + "/")
+        uploader = tc.uploader(path, chunk_size=256 * 1024, metadata={"filename": "파일.bin"})
+        uploader.upload()
+        _, headers = _download(uploader.url)
+        disp = headers["Content-Disposition"]
+        assert "filename*=UTF-8''" in disp  # RFC 5987 encoded form
+        assert "%ED%8C%8C" in disp  # percent-encoded '파'
 
     # Termination is skipped for this lane: tus-py-client exposes no
     # delete/terminate call, so there is nothing client-side to drive it.
