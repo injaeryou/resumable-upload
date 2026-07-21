@@ -183,7 +183,7 @@ resumable-upload serve --host 0.0.0.0 --port 8080 --upload-dir ./uploads
 python -m resumable_upload serve --port 8080
 ```
 
-Flags: `--host`, `--port`, `--base-path`, `--upload-dir`, `--db-path`, `--max-size`, `--max-chunk-size`, `--upload-expiry`, `--cors-origin`, `--log-level`. Run `resumable-upload serve --help` for details.
+Flags: `--host`, `--port`, `--base-path`, `--upload-dir`, `--db-path`, `--max-size`, `--max-chunk-size`, `--upload-expiry`, `--cors-origin`, `--cors-credentials`, `--cors-max-age`, `--checksum-algorithms`, `--enable-downloads`, `--behind-proxy`, `--location-base-url`, `--disable-termination`, `--disable-concatenation`, `--metrics-path`, `--lock-backend`, `--redis-url`, `--log-level`. Run `resumable-upload serve --help` for details.
 
 ### Parallel chunk uploads
 

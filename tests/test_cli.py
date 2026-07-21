@@ -143,3 +143,58 @@ class TestCLI:
                 proc.wait(timeout=2)
             except subprocess.TimeoutExpired:
                 proc.kill()
+
+    def test_cli_serve_cors_credentials_max_age_and_checksums(self, tmp_path):
+        port = _find_free_port()
+        proc = subprocess.Popen(
+            [
+                sys.executable,
+                "-m",
+                "resumable_upload",
+                "serve",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(port),
+                "--upload-dir",
+                str(tmp_path / "uploads"),
+                "--db-path",
+                str(tmp_path / "u.db"),
+                "--cors-origin",
+                "*",
+                "--cors-credentials",
+                "--cors-max-age",
+                "600",
+                "--checksum-algorithms",
+                "sha1,sha256",
+                "--log-level",
+                "WARNING",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                try:
+                    req = urllib.request.Request(
+                        f"http://127.0.0.1:{port}/files",
+                        method="OPTIONS",
+                        headers={"Origin": "https://app.example"},
+                    )
+                    with urllib.request.urlopen(req, timeout=0.5) as resp:
+                        assert resp.headers.get("Access-Control-Allow-Credentials") == "true"
+                        assert resp.headers.get("Access-Control-Max-Age") == "600"
+                        assert "sha256" in resp.headers.get("Tus-Checksum-Algorithm", "")
+                        return
+                except AssertionError:
+                    raise
+                except Exception:  # noqa: BLE001
+                    time.sleep(0.1)
+            pytest.fail("CLI server did not come up in time")
+        finally:
+            proc.terminate()
+            try:
+                proc.wait(timeout=2)
+            except subprocess.TimeoutExpired:
+                proc.kill()

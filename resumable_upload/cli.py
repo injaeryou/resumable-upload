@@ -88,6 +88,23 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Access-Control-Allow-Origin value (unset = no CORS headers)",
     )
     serve.add_argument(
+        "--cors-credentials",
+        action="store_true",
+        help="Send Access-Control-Allow-Credentials; a '*' origin is echoed back per request",
+    )
+    serve.add_argument(
+        "--cors-max-age",
+        type=int,
+        default=None,
+        help="Access-Control-Max-Age (seconds) on preflight responses",
+    )
+    serve.add_argument(
+        "--checksum-algorithms",
+        default="sha1",
+        help="Comma-separated Upload-Checksum algorithms to accept "
+        "(default: sha1; e.g. sha1,sha256,sha512,md5)",
+    )
+    serve.add_argument(
         "--log-level",
         default="INFO",
         choices=("DEBUG", "INFO", "WARNING", "ERROR"),
@@ -148,6 +165,11 @@ def _serve(args: argparse.Namespace) -> int:
         max_chunk_size=args.max_chunk_size,
         upload_expiry=args.upload_expiry,
         cors_allow_origins=args.cors_origin,
+        cors_allow_credentials=args.cors_credentials,
+        cors_max_age=args.cors_max_age,
+        checksum_algorithms=tuple(
+            a.strip() for a in args.checksum_algorithms.split(",") if a.strip()
+        ),
         metrics_registry=metrics,
         metrics_path=args.metrics_path or "/metrics",
         lock_backend=lock_backend,

@@ -26,6 +26,9 @@ resumable-upload serve --host 0.0.0.0 --port 8080 --upload-dir ./uploads
 | `--max-chunk-size` | `0` | Max single PATCH size in bytes (0 = unlimited) |
 | `--upload-expiry` | unset | Upload expiry in seconds (unset = no expiry) |
 | `--cors-origin` | unset | `Access-Control-Allow-Origin` value (unset = no CORS) |
+| `--cors-credentials` | off | Send `Access-Control-Allow-Credentials`; a `*` origin is echoed per request |
+| `--cors-max-age` | unset | `Access-Control-Max-Age` (seconds) on preflight responses |
+| `--checksum-algorithms` | `sha1` | Comma-separated `Upload-Checksum` algorithms (e.g. `sha1,sha256,sha512,md5`) |
 | `--log-level` | `INFO` | One of `DEBUG`, `INFO`, `WARNING`, `ERROR` |
 | `--metrics-path` | unset | Path to expose Prometheus-text metrics on (unset = disabled) |
 | `--lock-backend` | `memory` | One of `none`, `memory`, `redis` |
