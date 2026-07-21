@@ -44,11 +44,15 @@ def parse_upload_info(
     offset: str | None, length: str | None, metadata: str | None, encoding: str
 ) -> dict[str, Any]:
     off = int(offset) if offset else 0
-    ln = int(length) if length else 0
+    # Distinguish an absent Upload-Length (deferred, length unknown → never
+    # complete) from a present "0" (a real zero-length upload, complete at
+    # offset 0). Guarding on ``ln > 0`` alone wrongly reports 0-byte uploads
+    # as incomplete.
+    ln = int(length) if length is not None else 0
     return {
         "offset": off,
         "length": ln,
-        "complete": ln > 0 and off >= ln,
+        "complete": length is not None and off >= ln,
         "metadata": parse_upload_metadata(metadata, encoding),
     }
 

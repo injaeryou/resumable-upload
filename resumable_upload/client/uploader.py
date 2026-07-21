@@ -128,6 +128,10 @@ class Uploader:
         self._stats = UploadStats(total_bytes=self.file_size)
         self.stats_lock = Lock()
 
+        # Set when the server upload was created with Upload-Defer-Length; the
+        # committing PATCH must then carry Upload-Length (set in _get_offset).
+        self._length_deferred = False
+
         # Get current offset from server; close file handle on failure
         try:
             self.offset = self._get_offset()
@@ -167,6 +171,9 @@ class Uploader:
                 offset = response.headers.get("Upload-Offset")
                 if offset is None:
                     raise TusCommunicationError("Server did not return Upload-Offset header")
+                # A deferred upload advertises Upload-Defer-Length until its
+                # length is committed; remember so the next PATCH carries it.
+                self._length_deferred = response.headers.get("Upload-Defer-Length") == "1"
                 return int(offset)
         except (HTTPError, URLError) as e:
             raise TusCommunicationError(
@@ -200,6 +207,11 @@ class Uploader:
             **self.headers,
         }
 
+        # Commit the length of a deferred upload on its first PATCH, as the
+        # spec requires. Cleared once the server accepts it.
+        if self._length_deferred:
+            headers["Upload-Length"] = str(self.file_size)
+
         # Add checksum if enabled. Accepts True (→ sha1) or a hashlib-supported
         # algorithm name (e.g. "sha256", "md5", "sha512").
         algo = self._resolve_checksum_algorithm()
@@ -228,6 +240,8 @@ class Uploader:
                     self.offset = int(new_offset)
                 else:
                     self.offset += len(data)
+                # Length is now committed server-side; don't resend it.
+                self._length_deferred = False
         except HTTPError as e:
             if e.code == 409:
                 raise _OffsetMismatch(

@@ -81,6 +81,9 @@ class AsyncUploader:
         self._owns_file: bool = False
         self.file_size: int = 0
         self.offset: int = 0
+        # Set when the upload was created with Upload-Defer-Length; the
+        # committing PATCH must then carry Upload-Length (see _get_offset).
+        self._length_deferred: bool = False
         self._stats: UploadStats | None = None
         self.stats_lock = Lock()
 
@@ -165,6 +168,9 @@ class AsyncUploader:
         offset = resp.headers.get("Upload-Offset")
         if offset is None:
             raise TusCommunicationError("Server did not return Upload-Offset header")
+        # A deferred upload advertises Upload-Defer-Length until its length is
+        # committed; remember so the next PATCH carries Upload-Length.
+        self._length_deferred = resp.headers.get("Upload-Defer-Length") == "1"
         return int(offset)
 
     def _update_stats_after_chunk(self) -> None:
@@ -186,6 +192,11 @@ class AsyncUploader:
             "Content-Length": str(len(data)),
             **self.headers,
         }
+
+        # Commit a deferred upload's length on its first PATCH (spec-required);
+        # cleared once the server accepts it.
+        if self._length_deferred:
+            headers["Upload-Length"] = str(self.file_size)
 
         algo = _protocol.resolve_checksum_algorithm(self.checksum)
         if algo is not None:
@@ -224,6 +235,8 @@ class AsyncUploader:
             self.offset = int(new_offset)
         else:
             self.offset += len(data)
+        # Length is now committed server-side; don't resend it.
+        self._length_deferred = False
 
     async def _upload_chunk(self, data: bytes) -> None:
         """Upload a chunk, optionally with retry. Updates stats on success."""
