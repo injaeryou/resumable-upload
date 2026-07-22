@@ -302,7 +302,27 @@ make test-minimal      # Run minimal tests
 make test              # Run all tests
 make test-all-versions # Test on all Python versions (3.9-3.14) - requires tox
 make ci                # Run full CI checks (lint + format + test)
+make interop           # Cross-implementation interop tests (see below)
 ```
+
+### Interoperability tests (local, opt-in)
+
+`make interop` verifies real wire compatibility against the TUS ecosystem
+(in `tests/test_interop.py`). These run **locally only** — they are not part
+of `make ci`, and each pairing skips cleanly when its prerequisite is missing:
+
+| Pairing | Covers | Prerequisite |
+|---------|--------|--------------|
+| our server ↔ our client | upload, resume, concatenation, download | none (always runs) |
+| our client ↔ **tusd** server | upload, concatenation, termination | `tusd` on `PATH` (or `TUSD_BIN=<path>`) |
+| our server ↔ **tus-js-client** (Node) | upload, HEAD, download, termination | `node` + `npm install` in `tests/interop/` |
+| our server ↔ **tus-py-client** (`tuspy`) | upload, resume, checksum | `uv pip install tuspy` |
+
+`tusd` ships no client binary (server only), so the second reference client
+against our server is the tus project's Python client. Each pairing exercises
+only the features the counterpart implements — e.g. tusd advertises neither
+checksum nor expiration, and tus-py-client exposes no termination call, so
+those combinations are intentionally skipped.
 
 ## 📖 Documentation
 

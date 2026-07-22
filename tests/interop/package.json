@@ -1,0 +1,8 @@
+{
+  "name": "resumable-upload-interop",
+  "private": true,
+  "description": "JS-side dependencies for the cross-implementation interop tests",
+  "dependencies": {
+    "tus-js-client": "^4.3.1"
+  }
+}

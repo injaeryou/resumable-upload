@@ -1,4 +1,4 @@
-.PHONY: help install install-pip lint format format-check type-check test test-all test-all-versions ci clean
+.PHONY: help install install-pip lint format format-check type-check test test-all test-all-versions ci clean interop
 
 # Use Python from activated virtual environment if available, otherwise detect
 # Priority: .venv/bin/python > venv/bin/python > VIRTUAL_ENV/bin/python > python3 from PATH
@@ -19,6 +19,7 @@ help:
 	@echo "  make test             - Run all tests (including web frameworks)"
 	@echo "  make test-all-versions - Run tests on all Python versions (requires tox)"
 	@echo "  make ci               - Run full CI checks (lint, format-check, type-check, test)"
+	@echo "  make interop          - Cross-impl tests (tusd, tus-js-client, tus-py-client)"
 	@echo "  make clean            - Clean build artifacts"
 	@echo ""
 	@echo "Note: Make sure to activate your virtual environment first:"
@@ -58,6 +59,17 @@ test-all-versions:
 
 ci: lint format-check type-check test
 	@echo "✅ All CI checks passed!"
+
+# Four interop pairings: ours<->ours always; our-client<->tusd, our-server<->
+# tus-js-client, our-server<->tus-py-client each need their reference impl.
+# Provisions all three reference clients (tusd for the host OS/arch is fetched
+# from GitHub releases); anything that fails to provision just skips.
+interop:
+	@command -v npm >/dev/null 2>&1 && (cd tests/interop && npm install --silent) || echo "npm not found — tus-js-client pairing will skip"
+	@command -v uv >/dev/null 2>&1 && uv pip install --quiet tuspy || $(RUN) pip install --quiet tuspy || echo "tuspy install failed — tus-py-client pairing will skip"
+	@TUSD_BIN=$$(command -v tusd || sh tests/interop/fetch_tusd.sh 2>/dev/null || true); \
+	 [ -n "$$TUSD_BIN" ] && echo "using tusd: $$TUSD_BIN" || echo "tusd unavailable — tusd pairing will skip"; \
+	 TUSD_BIN=$$TUSD_BIN $(RUN) pytest tests/test_interop.py -v
 
 clean:
 	rm -rf build/ dist/ *.egg-info .coverage htmlcov/ .pytest_cache/ .ruff_cache/

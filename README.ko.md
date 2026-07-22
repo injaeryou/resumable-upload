@@ -273,7 +273,26 @@ make lint              # 린팅
 make format            # 코드 포맷팅
 make test-all-versions # 모든 Python 버전 테스트 (3.9-3.14, tox 필요)
 make ci                # 전체 CI 검사 (린팅 + 포맷팅 + 테스트)
+make interop           # 구현체 간 호환성 테스트 (아래 참고)
 ```
+
+### 상호운용성 테스트 (로컬 전용, 선택)
+
+`make interop`은 실제 와이어 호환성을 TUS 생태계 대비 검증합니다
+(`tests/test_interop.py`). **로컬에서만** 실행되며 — `make ci`에 포함되지 않음 —
+전제 조건이 없는 조합은 자동으로 스킵됩니다:
+
+| 조합 | 커버 | 전제 조건 |
+|------|------|-----------|
+| 우리 서버 ↔ 우리 클라이언트 | 업로드, 재개, concatenation, 다운로드 | 없음 (항상 실행) |
+| 우리 클라이언트 ↔ **tusd** 서버 | 업로드, concatenation, termination | `tusd`가 `PATH`에 (또는 `TUSD_BIN=<경로>`) |
+| 우리 서버 ↔ **tus-js-client** (Node) | 업로드, HEAD, 다운로드, termination | `node` + `tests/interop/`에서 `npm install` |
+| 우리 서버 ↔ **tus-py-client** (`tuspy`) | 업로드, 재개, checksum | `uv pip install tuspy` |
+
+tusd는 클라이언트 바이너리를 제공하지 않으므로(서버 전용), 우리 서버를 때리는
+두 번째 레퍼런스 클라이언트는 tus 프로젝트의 공식 Python 클라이언트입니다. 각 조합은
+상대 구현이 지원하는 기능만 검증합니다 — 예를 들어 tusd는 checksum·expiration을
+광고하지 않고, tus-py-client는 termination 호출을 제공하지 않으므로 해당 조합은 의도적으로 스킵됩니다.
 
 ## 📖 문서
 
