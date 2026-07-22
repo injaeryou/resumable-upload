@@ -60,6 +60,8 @@ class Uploader:
         before_request: Optional[Callable[[str, str, dict[str, str]], None]] = None,
         after_response: Optional[Callable[[str, str, int], None]] = None,
         on_should_retry: Optional[Callable[[Exception, int], bool]] = None,
+        override_patch_method: bool = False,
+        add_request_id: bool = False,
     ):
         """Initialize TUS uploader.
 
@@ -76,6 +78,8 @@ class Uploader:
             ssl_context: Optional SSL context for TLS connections
             timeout: Request timeout in seconds (default: 30.0)
             stop_event: Optional threading.Event; when set, retry waits are interrupted
+            override_patch_method: Send PATCH as POST + ``X-HTTP-Method-Override``
+            add_request_id: Unique ``X-Request-ID`` per request (user header wins)
 
         Raises:
             ValueError: If neither file_path nor file_stream provided, or chunk_size < 1
@@ -104,6 +108,8 @@ class Uploader:
         self._before_request = before_request
         self._after_response = after_response
         self._on_should_retry = on_should_retry
+        self.override_patch_method = override_patch_method
+        self.add_request_id = add_request_id
 
         # Initialize file stream and get file size
         if file_stream:
@@ -121,6 +127,10 @@ class Uploader:
         # Statistics tracking (must be after file_size is set)
         self._stats = UploadStats(total_bytes=self.file_size)
         self.stats_lock = Lock()
+
+        # Set when the server upload was created with Upload-Defer-Length; the
+        # committing PATCH must then carry Upload-Length (set in _get_offset).
+        self._length_deferred = False
 
         # Get current offset from server; close file handle on failure
         try:
@@ -153,6 +163,7 @@ class Uploader:
             "Tus-Resumable": self.TUS_VERSION,
             **self.headers,
         }
+        _protocol.maybe_add_request_id(headers, self.add_request_id)
 
         try:
             req = Request(self.url, headers=headers, method="HEAD")
@@ -160,6 +171,9 @@ class Uploader:
                 offset = response.headers.get("Upload-Offset")
                 if offset is None:
                     raise TusCommunicationError("Server did not return Upload-Offset header")
+                # A deferred upload advertises Upload-Defer-Length until its
+                # length is committed; remember so the next PATCH carries it.
+                self._length_deferred = response.headers.get("Upload-Defer-Length") == "1"
                 return int(offset)
         except (HTTPError, URLError) as e:
             raise TusCommunicationError(
@@ -193,25 +207,41 @@ class Uploader:
             **self.headers,
         }
 
+        # Commit the length of a deferred upload on its first PATCH, as the
+        # spec requires. Cleared once the server accepts it.
+        if self._length_deferred:
+            headers["Upload-Length"] = str(self.file_size)
+
         # Add checksum if enabled. Accepts True (→ sha1) or a hashlib-supported
         # algorithm name (e.g. "sha256", "md5", "sha512").
         algo = self._resolve_checksum_algorithm()
         if algo is not None:
             headers["Upload-Checksum"] = _protocol.checksum_header(algo, data)
 
+        _protocol.maybe_add_request_id(headers, self.add_request_id)
+
+        # X-HTTP-Method-Override: tunnel PATCH through POST for environments
+        # whose proxies/firewalls reject PATCH. The server rewrites it back.
+        method = "PATCH"
+        if self.override_patch_method:
+            method = "POST"
+            headers["X-HTTP-Method-Override"] = "PATCH"
+
         if self._before_request is not None:
-            self._before_request("PATCH", self.url, headers)
+            self._before_request(method, self.url, headers)
         try:
-            req = Request(self.url, data=data, headers=headers, method="PATCH")
+            req = Request(self.url, data=data, headers=headers, method=method)
             with urlopen(req, context=self.ssl_context, timeout=self.timeout) as response:
                 if self._after_response is not None:
-                    self._after_response("PATCH", self.url, response.status)
+                    self._after_response(method, self.url, response.status)
                 # Update offset from server response
                 new_offset = response.headers.get("Upload-Offset")
                 if new_offset:
                     self.offset = int(new_offset)
                 else:
                     self.offset += len(data)
+                # Length is now committed server-side; don't resend it.
+                self._length_deferred = False
         except HTTPError as e:
             if e.code == 409:
                 raise _OffsetMismatch(

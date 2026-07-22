@@ -181,6 +181,7 @@ class AzureBlobStorage(Storage):
             "completed": info.get("completed", False),
             "expires_at": expires_at,
             "is_partial": info.get("is_partial", False),
+            "concat_partial_ids": info.get("concat_partial_ids"),
         }
 
     def set_upload_length(self, upload_id: str, upload_length: int) -> None:
@@ -412,6 +413,7 @@ class AzureBlobStorage(Storage):
                 "expires_at": expires_at.isoformat() if expires_at else None,
                 "completed": True,
                 "is_partial": False,
+                "concat_partial_ids": partial_ids,
                 "blocks": [],
                 "buffer_size": 0,
             },

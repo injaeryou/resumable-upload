@@ -1,9 +1,10 @@
 """Storage abstract base class."""
 
 import asyncio
+import io
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, BinaryIO, Optional
 
 
 class Storage(ABC):
@@ -17,6 +18,13 @@ class Storage(ABC):
     specific methods they have native non-blocking implementations for
     and inherit the rest. See ``.docs/plans/2026-04-29-async-native-storage.md``.
     """
+
+    #: True when the backend implements the TUS ``concatenation-unfinished``
+    #: extension: ``concatenate_uploads(..., allow_unfinished=True)`` creates a
+    #: pending final over incomplete partials, and :meth:`try_assemble_final` /
+    #: :meth:`find_pending_finals_for_partial` drive its later assembly. The
+    #: server only advertises the extension when this is True.
+    supports_unfinished_concat: bool = False
 
     @abstractmethod
     def create_upload(
@@ -95,6 +103,16 @@ class Storage(ABC):
         """Read the complete uploaded file."""
         pass
 
+    def open_file(self, upload_id: str) -> BinaryIO:
+        """Open the completed upload as a binary stream for downloads.
+
+        The default buffers :meth:`read_file` in memory; backends with local
+        files override this with a real file handle so the GET download
+        endpoint streams instead of materializing the whole upload in RAM.
+        The caller owns the returned stream and must close it.
+        """
+        return io.BytesIO(self.read_file(upload_id))
+
     def get_file_path(self, upload_id: str) -> str:
         """Get the file path for an upload.
 
@@ -128,8 +146,14 @@ class Storage(ABC):
         metadata: dict[str, str],
         *,
         expires_at: Optional[datetime] = None,
-    ) -> int:
+    ) -> Optional[int]:
         """Create a final upload by concatenating completed partial uploads.
+
+        Implementations should persist ``partial_ids`` on the final upload
+        record and surface them from :meth:`get_upload` under the optional
+        ``concat_partial_ids`` key, so the server can echo
+        ``Upload-Concat: final;<urls>`` on HEAD. Backends that omit the key
+        simply skip that echo (back-compat).
 
         Args:
             final_id: UUID for the new final upload.
@@ -140,15 +164,42 @@ class Storage(ABC):
                 just like it does to ordinary uploads.
 
         Returns:
-            Total byte length of the concatenated upload.
+            Total byte length of the concatenated upload, or ``None`` when the
+            backend supports ``concatenation-unfinished``, was called with
+            ``allow_unfinished=True``, and some partial is still incomplete
+            (the final stays *pending* until :meth:`try_assemble_final`).
 
         Raises:
             ValueError: If any partial is missing, not flagged is_partial,
-                or not fully uploaded.
+                or not fully uploaded (and unfinished concat not allowed).
             NotImplementedError: If the backend does not support concatenation.
         """
         raise NotImplementedError(
             f"{type(self).__name__} does not support the TUS concatenation extension"
+        )
+
+    def find_pending_finals_for_partial(self, partial_id: str) -> list[str]:
+        """Return ids of pending (unassembled) final uploads referencing ``partial_id``.
+
+        Only meaningful for backends with ``supports_unfinished_concat``.
+        The default returns an empty list so the PATCH handler's assembly
+        trigger is a no-op on backends without the extension.
+        """
+        return []
+
+    def try_assemble_final(
+        self, final_id: str, *, max_total: Optional[int] = None
+    ) -> Optional[int]:
+        """Assemble a pending final upload if all its partials are complete.
+
+        Returns the total byte length when assembly happened, or ``None``
+        when the final is still pending (some partial incomplete/missing) or
+        was already assembled by a concurrent request. Implementations must
+        make the assembly claim atomic so concurrent callers assemble at
+        most once.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not support the TUS concatenation-unfinished extension"
         )
 
     # ------------------------------------------------------------------
@@ -205,6 +256,9 @@ class Storage(ABC):
     async def read_file_async(self, upload_id: str) -> bytes:
         return await asyncio.to_thread(self.read_file, upload_id)
 
+    async def open_file_async(self, upload_id: str) -> BinaryIO:
+        return await asyncio.to_thread(self.open_file, upload_id)
+
     async def get_expired_uploads_async(self) -> list[str]:
         return await asyncio.to_thread(self.get_expired_uploads)
 
@@ -218,11 +272,27 @@ class Storage(ABC):
         metadata: dict[str, str],
         *,
         expires_at: Optional[datetime] = None,
-    ) -> int:
+        **kwargs: Any,
+    ) -> Optional[int]:
         return await asyncio.to_thread(
-            self.concatenate_uploads,
-            final_id,
-            partial_ids,
-            metadata,
-            expires_at=expires_at,
+            lambda: self.concatenate_uploads(
+                final_id,
+                partial_ids,
+                metadata,
+                expires_at=expires_at,
+                **kwargs,
+            )
         )
+
+    async def find_pending_finals_for_partial_async(self, partial_id: str) -> list[str]:
+        return await asyncio.to_thread(self.find_pending_finals_for_partial, partial_id)
+
+    async def try_assemble_final_async(
+        self, final_id: str, *, max_total: Optional[int] = None
+    ) -> Optional[int]:
+        return await asyncio.to_thread(
+            lambda: self.try_assemble_final(final_id, max_total=max_total)
+        )
+
+    async def get_file_info_async(self, upload_id: str) -> dict[str, Any]:
+        return await asyncio.to_thread(self.get_file_info, upload_id)

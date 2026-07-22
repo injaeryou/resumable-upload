@@ -9,6 +9,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
+from resumable_upload.client import _protocol
 from resumable_upload.client._mixin_base import _ClientAttrs
 from resumable_upload.client.stats import UploadStats
 from resumable_upload.client.uploader import Uploader
@@ -65,6 +66,8 @@ class ConcatenationMixin(_ClientAttrs):
             before_request=self.before_request,
             after_response=self.after_response,
             on_should_retry=self.on_should_retry,
+            override_patch_method=self.override_patch_method,
+            add_request_id=self.add_request_id,
         )
         try:
             uploader.upload(progress_callback=progress_callback)
@@ -105,6 +108,7 @@ class ConcatenationMixin(_ClientAttrs):
             "Upload-Concat": concat_header,
             **self.headers,
         }
+        _protocol.maybe_add_request_id(headers, self.add_request_id)
         if encoded_metadata:
             headers["Upload-Metadata"] = ",".join(encoded_metadata)
 

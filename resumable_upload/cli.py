@@ -40,6 +40,31 @@ def _build_parser() -> argparse.ArgumentParser:
         help="SQLite database path (default: ./uploads.db)",
     )
     serve.add_argument(
+        "--enable-downloads",
+        action="store_true",
+        help="Serve completed uploads via GET (tusd-style download endpoint)",
+    )
+    serve.add_argument(
+        "--behind-proxy",
+        action="store_true",
+        help="Build absolute Location URLs from X-Forwarded-Proto/Host",
+    )
+    serve.add_argument(
+        "--location-base-url",
+        default=None,
+        help="Fixed absolute prefix for Location URLs (e.g. https://cdn.example)",
+    )
+    serve.add_argument(
+        "--disable-termination",
+        action="store_true",
+        help="Reject DELETE requests and drop 'termination' from Tus-Extension",
+    )
+    serve.add_argument(
+        "--disable-concatenation",
+        action="store_true",
+        help="Reject Upload-Concat requests and drop concatenation extensions",
+    )
+    serve.add_argument(
         "--max-size",
         type=int,
         default=0,
@@ -61,6 +86,23 @@ def _build_parser() -> argparse.ArgumentParser:
         "--cors-origin",
         default=None,
         help="Access-Control-Allow-Origin value (unset = no CORS headers)",
+    )
+    serve.add_argument(
+        "--cors-credentials",
+        action="store_true",
+        help="Send Access-Control-Allow-Credentials; a '*' origin is echoed back per request",
+    )
+    serve.add_argument(
+        "--cors-max-age",
+        type=int,
+        default=None,
+        help="Access-Control-Max-Age (seconds) on preflight responses",
+    )
+    serve.add_argument(
+        "--checksum-algorithms",
+        default="sha1",
+        help="Comma-separated Upload-Checksum algorithms to accept "
+        "(default: sha1; e.g. sha1,sha256,sha512,md5)",
     )
     serve.add_argument(
         "--log-level",
@@ -123,9 +165,21 @@ def _serve(args: argparse.Namespace) -> int:
         max_chunk_size=args.max_chunk_size,
         upload_expiry=args.upload_expiry,
         cors_allow_origins=args.cors_origin,
+        cors_allow_credentials=args.cors_credentials,
+        cors_max_age=args.cors_max_age,
+        checksum_algorithms=tuple(
+            a.strip() for a in args.checksum_algorithms.split(",") if a.strip()
+        ),
         metrics_registry=metrics,
         metrics_path=args.metrics_path or "/metrics",
         lock_backend=lock_backend,
+        # The bundled stdlib transport parses chunked bodies + trailers.
+        supports_checksum_trailer=True,
+        enable_downloads=args.enable_downloads,
+        behind_proxy=args.behind_proxy,
+        location_base_url=args.location_base_url,
+        disable_termination=args.disable_termination,
+        disable_concatenation=args.disable_concatenation,
     )
 
     class Handler(TusHTTPRequestHandler):

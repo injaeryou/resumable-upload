@@ -231,3 +231,71 @@ class TestDeferLengthServer:
         )
         stored = server.storage.get_upload(upload_id)
         assert stored["completed"] is True
+
+
+class TestClientEndToEnd:
+    """The sync client over real HTTP: 0-byte and deferred-length completion.
+
+    Regressions: our client used to report a 0-byte upload as incomplete
+    (parse_upload_info guarded on length > 0) and could not commit a deferred
+    upload's length (no Upload-Length on the first PATCH).
+    """
+
+    @pytest.fixture
+    def live(self):
+        import threading
+        from http.server import HTTPServer
+
+        from resumable_upload.server import TusHTTPRequestHandler
+
+        temp_dir = tempfile.mkdtemp()
+        storage = SQLiteStorage(
+            db_path=os.path.join(temp_dir, "u.db"),
+            upload_dir=os.path.join(temp_dir, "files"),
+        )
+        tus = TusServer(storage=storage, base_path="/files", enable_downloads=True)
+
+        class Handler(TusHTTPRequestHandler):
+            pass
+
+        Handler.tus_server = tus
+        httpd = HTTPServer(("127.0.0.1", 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        try:
+            yield f"http://127.0.0.1:{port}/files", storage
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
+    def test_empty_file_completes(self, live, tmp_path):
+        import urllib.request
+
+        from resumable_upload.client import TusClient
+
+        base_url, _ = live
+        path = tmp_path / "empty.bin"
+        path.write_bytes(b"")
+        client = TusClient(base_url, chunk_size=1024 * 1024)
+        url = client.upload_file(str(path))
+        assert client.get_upload_info(url)["complete"] is True
+        assert urllib.request.urlopen(url).read() == b""
+
+    def test_deferred_length_completes(self, live, tmp_path):
+        import urllib.request
+
+        from resumable_upload.client import TusClient
+
+        base_url, _ = live
+        data = b"Z" * 3333
+        path = tmp_path / "d.bin"
+        path.write_bytes(data)
+        # Small chunk so the length is committed on the first of many PATCHes.
+        client = TusClient(base_url, chunk_size=512)
+        url = client.create_deferred_upload(metadata={"filename": "d.bin"})
+        client.resume_upload(str(path), url)
+        info = client.get_upload_info(url)
+        assert info["complete"] is True
+        assert info["length"] == len(data)
+        assert urllib.request.urlopen(url).read() == data

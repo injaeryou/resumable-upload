@@ -7,6 +7,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
 
+from resumable_upload.client import _protocol
 from resumable_upload.client.concatenation import ConcatenationMixin
 from resumable_upload.client.parallel import ParallelUploadMixin
 from resumable_upload.client.protocol import ProtocolMixin
@@ -66,6 +67,9 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
         before_request: Optional[Callable[[str, str, dict[str, str]], None]] = None,
         after_response: Optional[Callable[[str, str, int], None]] = None,
         on_should_retry: Optional[Callable[[Exception, int], bool]] = None,
+        override_patch_method: bool = False,
+        add_request_id: bool = False,
+        on_upload_url_available: Optional[Callable[[str], None]] = None,
     ):
         """Initialize TUS client.
 
@@ -82,6 +86,12 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
             max_retries: Maximum retry attempts for failed chunks (default: 3)
             retry_delay: Base delay between retry attempts in seconds (default: 1.0)
             timeout: Request timeout in seconds (default: 30.0)
+            override_patch_method: Send PATCH as POST + ``X-HTTP-Method-Override``
+                for environments whose proxies block PATCH (default: False)
+            add_request_id: Add a unique ``X-Request-ID`` UUID to every request
+                for log correlation; a user-supplied header wins (default: False)
+            on_upload_url_available: Called with the upload URL as soon as it is
+                known — right after creation, or when resolved from URL storage
 
         Raises:
             ValueError: If chunk_size is less than 1
@@ -106,6 +116,9 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
         self.before_request = before_request
         self.after_response = after_response
         self.on_should_retry = on_should_retry
+        self.override_patch_method = override_patch_method
+        self.add_request_id = add_request_id
+        self.on_upload_url_available = on_upload_url_available
         self.ssl_context = self._build_ssl_context()
 
     def _build_ssl_context(self) -> Optional[ssl.SSLContext]:
@@ -125,6 +138,7 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
         progress_callback: Optional[Callable[[UploadStats], None]] = None,
         stop_at: Optional[int] = None,
         parallel_uploads: int = 1,
+        metadata_for_partial_uploads: Optional[dict[str, str]] = None,
     ) -> str:
         """Upload a file to the server.
 
@@ -165,9 +179,18 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
                 raise ValueError("parallel_uploads requires file_path (streams are not split)")
             if stop_at is not None:
                 raise ValueError("parallel_uploads is incompatible with stop_at")
-            return self._upload_parallel(
-                file_path, metadata or {}, parallel_uploads, progress_callback
+            final_url = self._upload_parallel(
+                file_path,
+                metadata or {},
+                parallel_uploads,
+                progress_callback,
+                metadata_for_partial_uploads=metadata_for_partial_uploads,
             )
+            # The final (merged) upload URL is only known once concatenation
+            # happens — fire the callback here, not before the early return.
+            if self.on_upload_url_available is not None:
+                self.on_upload_url_available(final_url)
+            return final_url
 
         # Get file size
         if file_stream:
@@ -206,6 +229,9 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
                 assert fingerprint is not None
                 self.url_storage.set_url(fingerprint, upload_url)
 
+        if self.on_upload_url_available is not None:
+            self.on_upload_url_available(upload_url)
+
         uploader = Uploader(
             url=upload_url,
             file_path=file_path,
@@ -221,6 +247,8 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
             before_request=self.before_request,
             after_response=self.after_response,
             on_should_retry=self.on_should_retry,
+            override_patch_method=self.override_patch_method,
+            add_request_id=self.add_request_id,
         )
 
         try:
@@ -271,6 +299,8 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
             before_request=self.before_request,
             after_response=self.after_response,
             on_should_retry=self.on_should_retry,
+            override_patch_method=self.override_patch_method,
+            add_request_id=self.add_request_id,
         )
 
         try:
@@ -293,6 +323,7 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
             "Content-Length": "0",
             **self.headers,
         }
+        _protocol.maybe_add_request_id(headers, self.add_request_id)
 
         req = Request(upload_url, headers=headers, method="DELETE")
         try:
@@ -342,6 +373,7 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
             headers["Content-Type"] = "application/offset+octet-stream"
             headers["Content-Length"] = str(len(initial_data))
 
+        _protocol.maybe_add_request_id(headers, self.add_request_id)
         if self.before_request is not None:
             self.before_request("POST", self.url, headers)
 
@@ -482,6 +514,8 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
             if "filename" not in metadata and file_path:
                 metadata["filename"] = os.path.basename(file_path)
             upload_url = self._create_upload(file_size, metadata)
+            if self.on_upload_url_available is not None:
+                self.on_upload_url_available(upload_url)
 
         # Create uploader
         actual_chunk_size = chunk_size if chunk_size is not None else self.chunk_size
@@ -500,6 +534,8 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
             before_request=self.before_request,
             after_response=self.after_response,
             on_should_retry=self.on_should_retry,
+            override_patch_method=self.override_patch_method,
+            add_request_id=self.add_request_id,
         )
 
     def find_previous_uploads(

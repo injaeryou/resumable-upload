@@ -261,3 +261,42 @@ async def test_async_parallel_upload_merges(asgi_base, tmp_path):
         info = await client.get_upload_info(url)
         assert info["length"] == len(payload)
         assert info["complete"] is True
+
+
+@pytest.mark.anyio
+async def test_async_empty_file_completes(asgi_base, tmp_path):
+    """Regression: a 0-byte upload must report complete (not length > 0 gated)."""
+    from resumable_upload.client.aio.client import AsyncTusClient
+
+    transport, base = asgi_base
+    f = tmp_path / "empty.bin"
+    f.write_bytes(b"")
+    async with AsyncTusClient(base, _transport=transport, chunk_size=4096) as client:
+        url = await client.upload_file(str(f))
+        info = await client.get_upload_info(url)
+        assert info["length"] == 0
+        assert info["complete"] is True
+
+
+@pytest.mark.anyio
+async def test_async_deferred_length_commits(asgi_base):
+    """Regression: the async uploader must send Upload-Length on a deferred
+    upload's first PATCH, otherwise the server rejects the chunk with 400."""
+    import io
+
+    from resumable_upload.client.aio.uploader import AsyncUploader
+
+    transport, base = asgi_base
+    data = b"Q" * 2500
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as c:
+        r = await c.request(
+            "POST", base, headers={"Tus-Resumable": "1.0.0", "Upload-Defer-Length": "1"}
+        )
+        url = r.headers["Location"]
+        # Tiny chunk so the length is committed on the first of many PATCHes.
+        up = await AsyncUploader.open(c, url, file_stream=io.BytesIO(data), chunk_size=256)
+        await up.upload()
+        assert up.is_complete
+        head = await c.request("HEAD", url, headers={"Tus-Resumable": "1.0.0"})
+        assert head.headers["Upload-Offset"] == str(len(data))
+        assert head.headers["Upload-Length"] == str(len(data))

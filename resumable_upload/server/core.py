@@ -5,7 +5,7 @@ import logging
 import threading
 from collections.abc import Awaitable
 from datetime import datetime, timezone
-from typing import Any, Callable, Optional
+from typing import Any, BinaryIO, Callable, Optional, Union
 
 from resumable_upload.checksum import ChecksumAlgorithms
 from resumable_upload.exceptions import TusHookError
@@ -26,6 +26,10 @@ from resumable_upload.server.handlers import (
 from resumable_upload.server.handlers.create import (
     handle_create_final,
     handle_create_final_async,
+)
+from resumable_upload.server.handlers.get import (
+    handle_get_download,
+    handle_get_download_async,
 )
 from resumable_upload.server.headers import (
     add_cors_headers,
@@ -82,19 +86,29 @@ class TusServerCore:
         max_size: int = 0,
         max_chunk_size: int = 0,
         upload_expiry: Optional[int] = None,
-        cors_allow_origins: Optional[str] = None,
+        cors_allow_origins: Optional[Union[str, list[str]]] = None,
+        cors_allow_credentials: bool = False,
+        cors_max_age: Optional[int] = None,
         cleanup_interval: int = 60,
         request_timeout: int = 30,
         on_incoming_request: Optional[Callable[..., None]] = None,
         on_upload_create: Optional[Callable[..., Optional[dict]]] = None,
-        on_upload_complete: Optional[Callable[..., None]] = None,
+        on_upload_complete: Optional[Callable[..., Optional[dict]]] = None,
         on_upload_terminate: Optional[Callable[..., None]] = None,
+        on_chunk_received: Optional[Callable[..., None]] = None,
+        on_before_terminate: Optional[Callable[..., None]] = None,
         metrics_registry: Optional[MetricsRegistry] = None,
         metrics_path: str = "/metrics",
         lock_backend: Optional[LockBackend] = None,
         lock_ttl_seconds: float = 60.0,
         lock_wait_seconds: float = 5.0,
         checksum_algorithms: tuple[str, ...] = ("sha1",),
+        supports_checksum_trailer: bool = False,
+        enable_downloads: bool = False,
+        behind_proxy: bool = False,
+        location_base_url: Optional[str] = None,
+        disable_termination: bool = False,
+        disable_concatenation: bool = False,
     ):
         """Initialize TUS server.
 
@@ -104,7 +118,12 @@ class TusServerCore:
             max_size: Maximum upload size in bytes (0 = unlimited)
             max_chunk_size: Maximum individual chunk size in bytes (0 = unlimited)
             upload_expiry: Upload expiry in seconds (None = no expiry)
-            cors_allow_origins: CORS allowed origins (None = no CORS headers)
+            cors_allow_origins: CORS allowed origins — a static string
+                (legacy, e.g. "*") or a list of origins matched against the
+                request Origin header (None = no CORS headers)
+            cors_allow_credentials: Emit Access-Control-Allow-Credentials;
+                a "*" origin is then replaced by the echoed request origin
+            cors_max_age: Access-Control-Max-Age seconds on OPTIONS responses
             cleanup_interval: Minimum seconds between expired-upload cleanup runs (default: 60)
             request_timeout: Socket read timeout in seconds for HTTP handler (default: 30)
             on_incoming_request: Called before processing any request.
@@ -115,18 +134,60 @@ class TusServerCore:
                 Return a dict to replace metadata, None to keep original.
                 Raise TusHookError to reject creation.
             on_upload_complete: Called after an upload is fully completed.
-                Signature: (upload_id: str, metadata: dict, file_info: dict) -> None.
-                Exceptions are logged but do not affect the client response.
+                Signature: (upload_id: str, metadata: dict, file_info: dict)
+                -> Optional[dict]. Return a dict with any of ``status_code``,
+                ``headers``, ``body`` to customize the finishing request's
+                response (tusd's pre-finish). Exceptions are logged but do
+                not affect the client response.
             on_upload_terminate: Called after an upload is deleted.
                 Signature: (upload_id: str) -> None.
                 Exceptions are logged but do not affect the client response.
+            on_chunk_received: Called after every accepted PATCH chunk
+                (tusd's post-receive). Signature:
+                (upload_id: str, offset: int, chunk_size: int) -> None.
+                Raise TusHookError to stop the upload: the upload is deleted
+                and the error status returned (tusd's StopUpload). Other
+                exceptions are logged and ignored.
+            on_before_terminate: Called before a DELETE is honored
+                (tusd's pre-terminate). Signature: (upload_id: str) -> None.
+                Raise TusHookError to veto the termination.
         """
         self.storage = storage or SQLiteStorage()
         self.base_path = base_path.rstrip("/")
+        # Conditionally advertised extensions:
+        # - concatenation-unfinished needs a storage backend that can create
+        #   pending finals and assemble them later.
+        # - checksum-trailer needs a transport that parses HTTP trailers
+        #   (the bundled TusHTTPRequestHandler does; set the flag when yours
+        #   does too and merges the trailing Upload-Checksum into headers).
+        self.supports_checksum_trailer = supports_checksum_trailer
+        # Non-standard download endpoint (tusd-style GET). Opt-in because the
+        # library is usually embedded next to framework GET routes.
+        self.enable_downloads = enable_downloads
+        # Location construction: relative by default (proxy-safe). Set
+        # location_base_url for a fixed absolute prefix, or behind_proxy=True
+        # to build absolute URLs from X-Forwarded-Proto/Host (falling back to
+        # Host, then to relative) — tusd's -behind-proxy.
+        self.behind_proxy = behind_proxy
+        self.location_base_url = location_base_url.rstrip("/") if location_base_url else None
+        self.disable_termination = disable_termination
+        self.disable_concatenation = disable_concatenation
+        extensions = list(type(self).SUPPORTED_EXTENSIONS)
+        if getattr(self.storage, "supports_unfinished_concat", False):
+            extensions.append("concatenation-unfinished")
+        if supports_checksum_trailer:
+            extensions.append("checksum-trailer")
+        if disable_termination:
+            extensions.remove("termination")
+        if disable_concatenation:
+            extensions = [e for e in extensions if not e.startswith("concatenation")]
+        self.SUPPORTED_EXTENSIONS = extensions
         self.max_size = max_size
         self.max_chunk_size = max_chunk_size
         self.upload_expiry = upload_expiry
         self.cors_allow_origins = cors_allow_origins
+        self.cors_allow_credentials = cors_allow_credentials
+        self.cors_max_age = cors_max_age
         self.cleanup_interval = cleanup_interval
         self.request_timeout = request_timeout
         self._last_cleanup: Optional[datetime] = None
@@ -139,6 +200,8 @@ class TusServerCore:
         self._on_upload_create = on_upload_create
         self._on_upload_complete = on_upload_complete
         self._on_upload_terminate = on_upload_terminate
+        self._on_chunk_received = on_chunk_received
+        self._on_before_terminate = on_before_terminate
         self._metrics = metrics_registry
         self._metrics_path = metrics_path
         self._locks = lock_backend
@@ -187,12 +250,71 @@ class TusServerCore:
             logger.exception("Unexpected error in pre-hook %s", hook_name)
             raise TusHookError("Internal Server Error", status_code=500) from None
 
-    def _invoke_post_hook(self, hook: Callable, *args: Any) -> None:
-        """Invoke a post-hook, catching and logging all exceptions."""
+    def _invoke_post_hook(self, hook: Callable, *args: Any) -> Any:
+        """Invoke a post-hook, catching and logging all exceptions.
+
+        Returns the hook's return value (None when the hook raised) so
+        completion hooks can customize the finishing response.
+        """
         try:
-            hook(*args)
+            return hook(*args)
         except Exception:
             logger.exception("Error in post-hook %s", getattr(hook, "__name__", repr(hook)))
+            return None
+
+    @staticmethod
+    def _apply_completion_response(
+        hook_result: Any, response: tuple[int, dict[str, str], bytes]
+    ) -> tuple[int, dict[str, str], bytes]:
+        """Merge an on_upload_complete dict result into the finishing response."""
+        if not isinstance(hook_result, dict):
+            return response
+        status, headers, body = response
+        status = hook_result.get("status_code", status)
+        extra_headers = hook_result.get("headers")
+        if isinstance(extra_headers, dict):
+            headers = {**headers, **extra_headers}
+        raw_body = hook_result.get("body")
+        if raw_body is not None:
+            body = raw_body.encode("utf-8") if isinstance(raw_body, str) else bytes(raw_body)
+        if body and status == 204:
+            # RFC 9110 forbids content on 204; a hook attaching a body
+            # without an explicit status_code would otherwise corrupt
+            # keep-alive connections on strict HTTP stacks.
+            status = 200
+        if body:
+            headers = {**headers, "Content-Length": str(len(body))}
+        return (status, headers, body)
+
+    def terminate_upload(self, upload_id: str) -> bool:
+        """Server-initiated termination (out-of-band StopUpload).
+
+        Deletes the upload and fires on_upload_terminate. Returns True when
+        the upload existed. Bypasses on_before_terminate — that hook guards
+        *client* DELETEs; the server operator calling this has already decided.
+        """
+        if not self.storage.get_upload(upload_id):
+            return False
+        self.storage.delete_upload(upload_id)
+        if self._metrics is not None:
+            self._metrics.inc("tusd_uploads_terminated_total")
+        if self._on_upload_terminate:
+            self._invoke_post_hook(self._on_upload_terminate, upload_id)
+        logger.info("Server-initiated termination of upload %s", upload_id)
+        return True
+
+    def _build_location(self, upload_id: str, request_headers: dict[str, str]) -> str:
+        """Build the Location header value for a newly created upload."""
+        path = f"{self.base_path}/{upload_id}"
+        if self.location_base_url:
+            return self.location_base_url + path
+        if self.behind_proxy:
+            host = request_headers.get("x-forwarded-host") or request_headers.get("host")
+            if host:
+                proto = request_headers.get("x-forwarded-proto", "http")
+                proto = proto.split(",")[0].strip() or "http"
+                return f"{proto}://{host.split(',')[0].strip()}{path}"
+        return path
 
     def _validate_upload_id(self, upload_id: str) -> bool:
         """Validate that upload_id is a valid UUID to prevent path traversal."""
@@ -246,9 +368,18 @@ class TusServerCore:
         finally:
             await asyncio.to_thread(self._locks.release, upload_id, token)
 
-    def _add_cors_headers(self, headers: dict) -> dict:
+    def _add_cors_headers(
+        self, headers: dict, origin: Optional[str] = None, preflight: bool = False
+    ) -> dict:
         """Add CORS headers if cors_allow_origins is configured."""
-        return add_cors_headers(headers, self.cors_allow_origins)
+        return add_cors_headers(
+            headers,
+            self.cors_allow_origins,
+            origin=origin,
+            allow_credentials=self.cors_allow_credentials,
+            max_age=self.cors_max_age,
+            preflight=preflight,
+        )
 
     def _format_expiry(self, expires_at: datetime) -> str:
         """Format expiry datetime as RFC 7231 date string."""
@@ -260,7 +391,7 @@ class TusServerCore:
 
     def handle_request(
         self, method: str, path: str, headers: dict[str, str], body: bytes = b""
-    ) -> tuple[int, dict[str, str], bytes]:
+    ) -> tuple[int, dict[str, str], "bytes | BinaryIO"]:
         """Handle an incoming HTTP request.
 
         Args:
@@ -293,14 +424,32 @@ class TusServerCore:
                     status, resp_headers, resp_body = self._error_response(
                         400, f"Unsupported X-HTTP-Method-Override value: {override}"
                     )
-                    return (status, self._add_cors_headers(resp_headers), resp_body)
+                    return (
+                        status,
+                        self._add_cors_headers(
+                            resp_headers, headers.get("origin"), method == "OPTIONS"
+                        ),
+                        resp_body,
+                    )
                 method = override
 
         # Early body-size gate for direct API callers (frameworks that pre-read the body)
         if method == "PATCH" and self.max_chunk_size > 0 and len(body) > self.max_chunk_size:
-            return self._error_response(413, "Chunk exceeds maximum chunk size")
+            status, resp_headers, resp_body = self._error_response(
+                413, "Chunk exceeds maximum chunk size"
+            )
+            return (
+                status,
+                self._add_cors_headers(resp_headers, headers.get("origin"), False),
+                resp_body,
+            )
         if self.max_size > 0 and len(body) > self.max_size:
-            return self._error_response(413, "Request entity too large")
+            status, resp_headers, resp_body = self._error_response(413, "Request entity too large")
+            return (
+                status,
+                self._add_cors_headers(resp_headers, headers.get("origin"), False),
+                resp_body,
+            )
 
         # Invoke on_incoming_request hook before any processing
         if self._on_incoming_request:
@@ -309,12 +458,18 @@ class TusServerCore:
             except TusHookError as e:
                 return (
                     e.status_code,
-                    self._add_cors_headers({"Tus-Resumable": self.TUS_VERSION}),
+                    self._add_cors_headers(
+                        {"Tus-Resumable": self.TUS_VERSION},
+                        headers.get("origin"),
+                        method == "OPTIONS",
+                    ),
                     e.body.encode(),
                 )
 
-        # Check TUS version (required by TUS spec for all non-OPTIONS requests)
-        if method != "OPTIONS":
+        # Check TUS version (required by TUS spec for all non-OPTIONS requests).
+        # GET is exempt too: the download endpoint serves plain HTTP clients
+        # (browsers) that never send Tus-Resumable.
+        if method not in ("OPTIONS", "GET"):
             tus_version = headers.get("tus-resumable")
             if tus_version != self.TUS_VERSION:
                 logger.warning(
@@ -325,7 +480,13 @@ class TusServerCore:
                     {"Tus-Resumable": self.TUS_VERSION},
                     b"Precondition Failed: Invalid TUS version",
                 )
-                return (status, self._add_cors_headers(resp_headers), resp_body)
+                return (
+                    status,
+                    self._add_cors_headers(
+                        resp_headers, headers.get("origin"), method == "OPTIONS"
+                    ),
+                    resp_body,
+                )
 
         # Route request
         if method == "OPTIONS":
@@ -348,6 +509,12 @@ class TusServerCore:
                 result = self._with_lock(
                     upload_id, lambda: self._handle_patch(upload_id, headers, body)
                 )
+        elif method == "GET" and self.enable_downloads and path.startswith(self.base_path + "/"):
+            upload_id = path[len(self.base_path) + 1 :]
+            if not self._validate_upload_id(upload_id):
+                result = self._error_response(400, "Invalid upload ID format")
+            else:
+                result = self._handle_get_download(upload_id, headers)
         elif method == "DELETE" and path.startswith(self.base_path + "/"):
             upload_id = path[len(self.base_path) + 1 :]
             if not self._validate_upload_id(upload_id):
@@ -382,11 +549,15 @@ class TusServerCore:
         if self._metrics is not None and status >= 400:
             self._metrics.inc("tusd_errors_total", labels={"status": str(status)})
 
-        return (status, self._add_cors_headers(resp_headers), resp_body)
+        return (
+            status,
+            self._add_cors_headers(resp_headers, headers.get("origin"), method == "OPTIONS"),
+            resp_body,
+        )
 
     async def handle_request_async(
         self, method: str, path: str, headers: dict[str, str], body: bytes = b""
-    ) -> tuple[int, dict[str, str], bytes]:
+    ) -> tuple[int, dict[str, str], "bytes | BinaryIO"]:
         """Async sibling of :meth:`handle_request`.
 
         Mirrors the same protocol surface but awaits storage I/O so true-async
@@ -410,13 +581,31 @@ class TusServerCore:
                     status, resp_headers, resp_body = self._error_response(
                         400, f"Unsupported X-HTTP-Method-Override value: {override}"
                     )
-                    return (status, self._add_cors_headers(resp_headers), resp_body)
+                    return (
+                        status,
+                        self._add_cors_headers(
+                            resp_headers, headers.get("origin"), method == "OPTIONS"
+                        ),
+                        resp_body,
+                    )
                 method = override
 
         if method == "PATCH" and self.max_chunk_size > 0 and len(body) > self.max_chunk_size:
-            return self._error_response(413, "Chunk exceeds maximum chunk size")
+            status, resp_headers, resp_body = self._error_response(
+                413, "Chunk exceeds maximum chunk size"
+            )
+            return (
+                status,
+                self._add_cors_headers(resp_headers, headers.get("origin"), False),
+                resp_body,
+            )
         if self.max_size > 0 and len(body) > self.max_size:
-            return self._error_response(413, "Request entity too large")
+            status, resp_headers, resp_body = self._error_response(413, "Request entity too large")
+            return (
+                status,
+                self._add_cors_headers(resp_headers, headers.get("origin"), False),
+                resp_body,
+            )
 
         if self._on_incoming_request:
             try:
@@ -424,11 +613,15 @@ class TusServerCore:
             except TusHookError as e:
                 return (
                     e.status_code,
-                    self._add_cors_headers({"Tus-Resumable": self.TUS_VERSION}),
+                    self._add_cors_headers(
+                        {"Tus-Resumable": self.TUS_VERSION},
+                        headers.get("origin"),
+                        method == "OPTIONS",
+                    ),
                     e.body.encode(),
                 )
 
-        if method != "OPTIONS":
+        if method not in ("OPTIONS", "GET"):
             tus_version = headers.get("tus-resumable")
             if tus_version != self.TUS_VERSION:
                 logger.warning(
@@ -439,7 +632,13 @@ class TusServerCore:
                     {"Tus-Resumable": self.TUS_VERSION},
                     b"Precondition Failed: Invalid TUS version",
                 )
-                return (status, self._add_cors_headers(resp_headers), resp_body)
+                return (
+                    status,
+                    self._add_cors_headers(
+                        resp_headers, headers.get("origin"), method == "OPTIONS"
+                    ),
+                    resp_body,
+                )
 
         if method == "OPTIONS":
             result = await self._handle_options_async(path, headers)
@@ -461,6 +660,12 @@ class TusServerCore:
                     upload_id,
                     lambda: self._handle_patch_async(upload_id, headers, body),
                 )
+        elif method == "GET" and self.enable_downloads and path.startswith(self.base_path + "/"):
+            upload_id = path[len(self.base_path) + 1 :]
+            if not self._validate_upload_id(upload_id):
+                result = self._error_response(400, "Invalid upload ID format")
+            else:
+                result = await self._handle_get_download_async(upload_id, headers)
         elif method == "DELETE" and path.startswith(self.base_path + "/"):
             upload_id = path[len(self.base_path) + 1 :]
             if not self._validate_upload_id(upload_id):
@@ -494,7 +699,11 @@ class TusServerCore:
         if self._metrics is not None and status >= 400:
             self._metrics.inc("tusd_errors_total", labels={"status": str(status)})
 
-        return (status, self._add_cors_headers(resp_headers), resp_body)
+        return (
+            status,
+            self._add_cors_headers(resp_headers, headers.get("origin"), method == "OPTIONS"),
+            resp_body,
+        )
 
     # --- Per-method delegates ---------------------------------------------
     # These exist so subclasses can override a single method without rewiring
@@ -531,6 +740,11 @@ class TusServerCore:
     ) -> tuple[int, dict[str, str], bytes]:
         return handle_delete(self, upload_id, headers)
 
+    def _handle_get_download(
+        self, upload_id: str, headers: dict[str, str]
+    ) -> tuple[int, dict[str, str], "bytes | BinaryIO"]:
+        return handle_get_download(self, upload_id, headers)
+
     # --- Async per-method delegates ---------------------------------------
 
     async def _handle_options_async(
@@ -562,3 +776,8 @@ class TusServerCore:
         self, upload_id: str, headers: dict[str, str]
     ) -> tuple[int, dict[str, str], bytes]:
         return await handle_delete_async(self, upload_id, headers)
+
+    async def _handle_get_download_async(
+        self, upload_id: str, headers: dict[str, str]
+    ) -> tuple[int, dict[str, str], "bytes | BinaryIO"]:
+        return await handle_get_download_async(self, upload_id, headers)

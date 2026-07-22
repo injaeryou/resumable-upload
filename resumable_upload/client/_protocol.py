@@ -7,6 +7,7 @@ from __future__ import annotations
 import base64
 import hashlib
 import re
+import uuid
 from typing import Any
 
 _KEY_RE = re.compile(r"^$|[\s,]+")
@@ -43,11 +44,15 @@ def parse_upload_info(
     offset: str | None, length: str | None, metadata: str | None, encoding: str
 ) -> dict[str, Any]:
     off = int(offset) if offset else 0
-    ln = int(length) if length else 0
+    # Distinguish an absent Upload-Length (deferred, length unknown → never
+    # complete) from a present "0" (a real zero-length upload, complete at
+    # offset 0). Guarding on ``ln > 0`` alone wrongly reports 0-byte uploads
+    # as incomplete.
+    ln = int(length) if length is not None else 0
     return {
         "offset": off,
         "length": ln,
-        "complete": ln > 0 and off >= ln,
+        "complete": length is not None and off >= ln,
         "metadata": parse_upload_metadata(metadata, encoding),
     }
 
@@ -77,6 +82,17 @@ def checksum_header(algo: str, data: bytes) -> str:
     hasher = hashlib.new(algo)
     hasher.update(data)
     return f"{algo} {base64.b64encode(hasher.digest()).decode('ascii')}"
+
+
+def maybe_add_request_id(headers: dict[str, str], enabled: bool) -> dict[str, str]:
+    """Add a per-request ``X-Request-ID`` UUID when enabled.
+
+    A user-supplied X-Request-ID (via custom headers) always wins.
+    Mutates and returns ``headers``.
+    """
+    if enabled and not any(k.lower() == "x-request-id" for k in headers):
+        headers["X-Request-ID"] = str(uuid.uuid4())
+    return headers
 
 
 def retry_delay(base: float, attempt: int) -> float:

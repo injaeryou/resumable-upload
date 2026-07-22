@@ -40,6 +40,9 @@ class _ClientAttrs:
     before_request: Optional[Callable[[str, str, dict[str, str]], None]]
     after_response: Optional[Callable[[str, str, int], None]]
     on_should_retry: Optional[Callable[[Exception, int], bool]]
+    override_patch_method: bool
+    add_request_id: bool
+    on_upload_url_available: Optional[Callable[[str], None]]
     ssl_context: Optional[ssl.SSLContext]
 
     def upload_file(
@@ -50,6 +53,7 @@ class _ClientAttrs:
         progress_callback: Optional[Callable[[UploadStats], None]] = None,
         stop_at: Optional[int] = None,
         parallel_uploads: int = 1,
+        metadata_for_partial_uploads: Optional[dict[str, str]] = None,
     ) -> str:
         raise NotImplementedError
 

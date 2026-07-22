@@ -114,6 +114,59 @@ class TestConcatenation:
         assert total == len(chunk) * 6
         assert storage.read_file(final_id) == chunk * 6
 
+    def test_concatenate_persists_partial_ids(self, storage):
+        # HEAD on a final upload must echo `Upload-Concat: final;<urls>`,
+        # so the storage layer has to remember which partials built it.
+        p1 = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+        p2 = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+        _fill(storage, p1, b"hello", is_partial=True)
+        _fill(storage, p2, b"-world", is_partial=True)
+
+        final_id = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+        storage.concatenate_uploads(final_id=final_id, partial_ids=[p1, p2], metadata={})
+
+        final = storage.get_upload(final_id)
+        assert final["concat_partial_ids"] == [p1, p2]
+
+    def test_non_final_upload_has_no_concat_partial_ids(self, storage):
+        p = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+        _fill(storage, p, b"hi", is_partial=True)
+        assert storage.get_upload(p).get("concat_partial_ids") is None
+
+    def test_migration_adds_concat_partial_ids_column(self):
+        # A database created before the column existed must auto-migrate on open.
+        import sqlite3
+
+        temp_dir = tempfile.mkdtemp()
+        try:
+            db_path = os.path.join(temp_dir, "old.db")
+            conn = sqlite3.connect(db_path)
+            conn.execute(
+                """
+                CREATE TABLE uploads (
+                    upload_id TEXT PRIMARY KEY,
+                    upload_length INTEGER,
+                    offset INTEGER DEFAULT 0,
+                    metadata TEXT,
+                    created_at TIMESTAMP,
+                    expires_at TIMESTAMP,
+                    completed BOOLEAN DEFAULT 0,
+                    is_partial BOOLEAN DEFAULT 0
+                )
+                """
+            )
+            conn.commit()
+            conn.close()
+
+            storage = SQLiteStorage(db_path=db_path, upload_dir=os.path.join(temp_dir, "files"))
+            p = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+            _fill(storage, p, b"hello", is_partial=True)
+            final_id = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+            storage.concatenate_uploads(final_id=final_id, partial_ids=[p], metadata={})
+            assert storage.get_upload(final_id)["concat_partial_ids"] == [p]
+        finally:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+
     def test_concatenate_records_expires_at(self, storage):
         # The expiration extension must apply to merged uploads too,
         # otherwise concatenated objects live forever.
@@ -296,37 +349,10 @@ class TestConcatenationServer:
         )
         assert status == 403
 
-    def test_create_final_rejects_incomplete_partial(self, server):
-        # Create a partial and only upload 3 of 10 bytes
-        status, headers, _ = server.handle_request(
-            "POST",
-            "/files",
-            self._h(**{"Upload-Length": "10", "Upload-Concat": "partial"}),
-            b"",
-        )
-        assert status == 201
-        location = headers["Location"]
-        p = location.rsplit("/", 1)[1]
-        server.handle_request(
-            "PATCH",
-            location,
-            self._h(
-                **{
-                    "Upload-Offset": "0",
-                    "Content-Type": "application/offset+octet-stream",
-                }
-            ),
-            b"abc",
-        )
-
-        status, _, body = server.handle_request(
-            "POST",
-            "/files",
-            self._h(**{"Upload-Concat": f"final;/files/{p}"}),
-            b"",
-        )
-        assert status == 400
-        assert b"not complete" in body or b"incomplete" in body.lower()
+    # NOTE: "final over an incomplete partial" used to be a hard 400. Since the
+    # concatenation-unfinished extension it creates a *pending* final on
+    # backends that support it (SQLite does); both behaviors are covered in
+    # tests/test_concatenation_unfinished.py.
 
     def test_create_final_rejects_unknown_partial_url(self, server):
         # URL not under /files/ base path
@@ -357,6 +383,38 @@ class TestConcatenationServer:
             b"",
         )
         assert status == 201
+
+    def test_head_final_echoes_upload_concat(self, server):
+        # Spec: HEAD on a final upload MUST echo the Upload-Concat header
+        # with the (relative) URLs of the source partials, in original order.
+        p1 = self._create_and_fill_partial(server, 5, b"hello")
+        p2 = self._create_and_fill_partial(server, 6, b"-world")
+
+        status, headers, _ = server.handle_request(
+            "POST",
+            "/files",
+            self._h(**{"Upload-Concat": f"final;/files/{p1} /files/{p2}"}),
+            b"",
+        )
+        assert status == 201
+        final_id = headers["Location"].rsplit("/", 1)[1]
+
+        status, head_headers, _ = server.handle_request(
+            "HEAD", f"/files/{final_id}", self._h(), b""
+        )
+        assert status == 200
+        assert head_headers["Upload-Concat"] == f"final;/files/{p1} /files/{p2}"
+
+    def test_head_normal_upload_has_no_upload_concat(self, server):
+        status, headers, _ = server.handle_request(
+            "POST", "/files", self._h(**{"Upload-Length": "2"}), b""
+        )
+        upload_id = headers["Location"].rsplit("/", 1)[1]
+        status, head_headers, _ = server.handle_request(
+            "HEAD", f"/files/{upload_id}", self._h(), b""
+        )
+        assert status == 200
+        assert "Upload-Concat" not in head_headers
 
     def test_cors_allow_and_expose_include_upload_concat(self):
         from resumable_upload.server import TusServer

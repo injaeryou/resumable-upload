@@ -27,6 +27,15 @@ from resumable_upload import TusClient
 | `before_request` | Callable | `None` | Observability hook: `(method, url, headers) -> None`, called before every HTTP request |
 | `after_response` | Callable | `None` | Observability hook: `(method, url, status) -> None`, called after every HTTP response |
 | `on_should_retry` | Callable | `None` | `(exception, attempt) -> bool`. Return `False` to abort retry; `True` to keep retrying with the standard backoff. |
+| `override_patch_method` | bool | `False` | Send PATCH as POST + `X-HTTP-Method-Override: PATCH` for proxies/firewalls that reject PATCH |
+| `add_request_id` | bool | `False` | Add a unique `X-Request-ID` UUID to every request for log correlation (a user-supplied header wins) |
+| `on_upload_url_available` | Callable | `None` | `(url) -> None`, called as soon as the upload URL is known — right after creation or when resolved from URL storage |
+
+`upload_file()` additionally accepts `metadata_for_partial_uploads` — metadata
+attached to each partial created by `parallel_uploads=N` (the final upload
+still carries the real `metadata`).
+
+All four options exist on `AsyncTusClient` too.
 
 ### Methods
 

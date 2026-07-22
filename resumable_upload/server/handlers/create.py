@@ -182,11 +182,11 @@ def _plan_create_final(
 
 
 def _create_response(
-    plan: _CreatePlan, initial_offset: int, server: TusServerCore
+    plan: _CreatePlan, initial_offset: int, server: TusServerCore, headers: dict[str, str]
 ) -> tuple[int, dict[str, str], bytes]:
     response_headers = {
         "Tus-Resumable": server.TUS_VERSION,
-        "Location": f"{server.base_path}/{plan.upload_id}",
+        "Location": server._build_location(plan.upload_id, headers),
         "Upload-Offset": str(initial_offset),
     }
     if plan.expires_at:
@@ -195,17 +195,38 @@ def _create_response(
 
 
 def _create_final_response(
-    plan: _CreateFinalPlan, total_length: int, server: TusServerCore
+    plan: _CreateFinalPlan,
+    total_length: int | None,
+    server: TusServerCore,
+    headers: dict[str, str],
 ) -> tuple[int, dict[str, str], bytes]:
     response_headers = {
         "Tus-Resumable": server.TUS_VERSION,
-        "Location": f"{server.base_path}/{plan.final_id}",
-        "Upload-Offset": str(total_length),
-        "Upload-Length": str(total_length),
+        "Location": server._build_location(plan.final_id, headers),
     }
+    if total_length is not None:
+        # Assembled synchronously; a pending (unfinished) final has no known
+        # offset/length yet, so those headers are omitted.
+        response_headers["Upload-Offset"] = str(total_length)
+        response_headers["Upload-Length"] = str(total_length)
     if plan.expires_at:
         response_headers["Upload-Expires"] = format_expiry(plan.expires_at)
     return (201, response_headers, b"")
+
+
+def _final_concat_kwargs(server: TusServerCore, plan: _CreateFinalPlan) -> dict:
+    """kwargs for Storage.concatenate_uploads, passed only when needed.
+
+    Optional kwargs are omitted when inactive so third-party Storage
+    subclasses predating them keep working (mirrors the is_partial pattern
+    in handle_create).
+    """
+    kwargs: dict = {}
+    if plan.expires_at is not None:
+        kwargs["expires_at"] = plan.expires_at
+    if getattr(server.storage, "supports_unfinished_concat", False):
+        kwargs["allow_unfinished"] = True
+    return kwargs
 
 
 def handle_create(
@@ -215,6 +236,8 @@ def handle_create(
     #   Upload-Concat: partial     -> create a partial upload
     #   Upload-Concat: final;<...> -> create a final upload that merges partials
     concat_header = headers.get("upload-concat", "").strip()
+    if concat_header and server.disable_concatenation:
+        return server._error_response(400, "Concatenation extension is disabled")
     if concat_header.startswith("final"):
         return handle_create_final(server, concat_header, headers)
 
@@ -248,6 +271,7 @@ def handle_create(
 
     # Handle upload completion (zero-length upload or creation-with-upload).
     # Deferred-length uploads cannot complete here; their length is unknown.
+    completion_result = None
     if (
         plan.upload_length is not None
         and initial_offset >= plan.upload_length
@@ -255,16 +279,20 @@ def handle_create(
     ):
         if server._metrics is not None:
             server._metrics.inc("tusd_uploads_finished_total")
-        if server._on_upload_complete:
+        # Partials never fire on_upload_complete individually (parity with
+        # the PATCH completion path); only the assembled final does.
+        if server._on_upload_complete and not plan.is_partial:
             file_info = server.storage.get_file_info(plan.upload_id)
-            server._invoke_post_hook(
+            completion_result = server._invoke_post_hook(
                 server._on_upload_complete,
                 plan.upload_id,
                 plan.metadata,
                 file_info,
             )
 
-    return _create_response(plan, initial_offset, server)
+    return server._apply_completion_response(
+        completion_result, _create_response(plan, initial_offset, server, headers)
+    )
 
 
 def handle_create_final(
@@ -275,20 +303,44 @@ def handle_create_final(
     if not isinstance(plan, _CreateFinalPlan):
         return plan
 
-    # Only pass expires_at when set so third-party Storage subclasses predating
-    # this fix don't need to adapt their concatenate_uploads signature
-    # (mirrors the is_partial pattern in handle_create).
-    concat_kwargs: dict = {}
-    if plan.expires_at is not None:
-        concat_kwargs["expires_at"] = plan.expires_at
+    # Enforce Tus-Max-Size on the declared partial lengths up front, so a
+    # pending (unfinished) final that could never fit is rejected before any
+    # row is created. Deferred-length partials have no knowable size here;
+    # reject them outright rather than accept a final that assembly might have
+    # to destroy later with no client request left to answer 413 to.
+    if server.max_size > 0:
+        declared = 0
+        for pid in plan.partial_ids:
+            p = server.storage.get_upload(pid)
+            if p and p.get("upload_length") is None:
+                return server._error_response(
+                    400,
+                    "Cannot enforce Tus-Max-Size on a final over deferred-length partials",
+                )
+            if p and p.get("upload_length") is not None:
+                declared += p["upload_length"]
+        if declared > server.max_size:
+            return server._error_response(413, "Concatenated upload exceeds maximum size")
+
     try:
         total_length = server.storage.concatenate_uploads(
-            plan.final_id, plan.partial_ids, plan.metadata, **concat_kwargs
+            plan.final_id, plan.partial_ids, plan.metadata, **_final_concat_kwargs(server, plan)
         )
     except ValueError as e:
         return server._error_response(400, str(e))
     except NotImplementedError as e:
         return server._error_response(501, str(e))
+
+    if total_length is None:
+        # concatenation-unfinished: final stays pending until its partials
+        # complete; assembly (and on_upload_complete) happens in the PATCH
+        # handler that finishes the last partial.
+        logger.info(
+            "Created pending final upload %s over %s unfinished partials",
+            plan.final_id,
+            len(plan.partial_ids),
+        )
+        return _create_final_response(plan, None, server, headers)
 
     if server.max_size > 0 and total_length > server.max_size:
         # Concatenated payload exceeds limit — delete and reject.
@@ -310,7 +362,7 @@ def handle_create_final(
             server._on_upload_complete, plan.final_id, plan.metadata, file_info
         )
 
-    return _create_final_response(plan, total_length, server)
+    return _create_final_response(plan, total_length, server, headers)
 
 
 # ---------------------------------------------------------------------------
@@ -323,6 +375,8 @@ async def handle_create_async(
 ) -> tuple[int, dict[str, str], bytes]:
     """Async sibling of :func:`handle_create`."""
     concat_header = headers.get("upload-concat", "").strip()
+    if concat_header and server.disable_concatenation:
+        return server._error_response(400, "Concatenation extension is disabled")
     if concat_header.startswith("final"):
         return await handle_create_final_async(server, concat_header, headers)
 
@@ -352,6 +406,7 @@ async def handle_create_async(
         await server.storage.update_offset_async(plan.upload_id, initial_offset)
         logger.info("creation-with-upload: wrote %s bytes for %s", initial_offset, plan.upload_id)
 
+    completion_result = None
     if (
         plan.upload_length is not None
         and initial_offset >= plan.upload_length
@@ -359,16 +414,20 @@ async def handle_create_async(
     ):
         if server._metrics is not None:
             server._metrics.inc("tusd_uploads_finished_total")
-        if server._on_upload_complete:
+        # Partials never fire on_upload_complete individually (parity with
+        # the PATCH completion path); only the assembled final does.
+        if server._on_upload_complete and not plan.is_partial:
             file_info = server.storage.get_file_info(plan.upload_id)
-            server._invoke_post_hook(
+            completion_result = server._invoke_post_hook(
                 server._on_upload_complete,
                 plan.upload_id,
                 plan.metadata,
                 file_info,
             )
 
-    return _create_response(plan, initial_offset, server)
+    return server._apply_completion_response(
+        completion_result, _create_response(plan, initial_offset, server, headers)
+    )
 
 
 async def handle_create_final_async(
@@ -379,17 +438,31 @@ async def handle_create_final_async(
     if not isinstance(plan, _CreateFinalPlan):
         return plan
 
-    concat_kwargs: dict = {}
-    if plan.expires_at is not None:
-        concat_kwargs["expires_at"] = plan.expires_at
+    if server.max_size > 0:
+        declared = 0
+        for pid in plan.partial_ids:
+            p = await server.storage.get_upload_async(pid)
+            if p and p.get("upload_length") is not None:
+                declared += p["upload_length"]
+        if declared > server.max_size:
+            return server._error_response(413, "Concatenated upload exceeds maximum size")
+
     try:
         total_length = await server.storage.concatenate_uploads_async(
-            plan.final_id, plan.partial_ids, plan.metadata, **concat_kwargs
+            plan.final_id, plan.partial_ids, plan.metadata, **_final_concat_kwargs(server, plan)
         )
     except ValueError as e:
         return server._error_response(400, str(e))
     except NotImplementedError as e:
         return server._error_response(501, str(e))
+
+    if total_length is None:
+        logger.info(
+            "Created pending final upload %s over %s unfinished partials",
+            plan.final_id,
+            len(plan.partial_ids),
+        )
+        return _create_final_response(plan, None, server, headers)
 
     if server.max_size > 0 and total_length > server.max_size:
         await server.storage.delete_upload_async(plan.final_id)
@@ -410,4 +483,4 @@ async def handle_create_final_async(
             server._on_upload_complete, plan.final_id, plan.metadata, file_info
         )
 
-    return _create_final_response(plan, total_length, server)
+    return _create_final_response(plan, total_length, server, headers)

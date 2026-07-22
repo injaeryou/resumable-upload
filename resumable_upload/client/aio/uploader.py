@@ -49,6 +49,8 @@ class AsyncUploader:
         before_request: Callable[[str, str, dict[str, str]], None] | None = None,
         after_response: Callable[[str, str, int], None] | None = None,
         on_should_retry: Callable[[Exception, int], bool] | None = None,
+        override_patch_method: bool = False,
+        add_request_id: bool = False,
     ) -> None:
         if not file_path and not file_stream:
             raise ValueError("Either file_path or file_stream must be provided")
@@ -71,12 +73,17 @@ class AsyncUploader:
         self._before_request = before_request
         self._after_response = after_response
         self._on_should_retry = on_should_retry
+        self.override_patch_method = override_patch_method
+        self.add_request_id = add_request_id
 
         # Populated by _init_io / open()
         self._file_handle: IO[bytes] | None = None
         self._owns_file: bool = False
         self.file_size: int = 0
         self.offset: int = 0
+        # Set when the upload was created with Upload-Defer-Length; the
+        # committing PATCH must then carry Upload-Length (see _get_offset).
+        self._length_deferred: bool = False
         self._stats: UploadStats | None = None
         self.stats_lock = Lock()
 
@@ -152,6 +159,7 @@ class AsyncUploader:
             "Tus-Resumable": self.TUS_VERSION,
             **self.headers,
         }
+        _protocol.maybe_add_request_id(headers, self.add_request_id)
         resp = await _http.request(
             self._client, "HEAD", self.url, headers=headers, timeout=self.timeout
         )
@@ -160,6 +168,9 @@ class AsyncUploader:
         offset = resp.headers.get("Upload-Offset")
         if offset is None:
             raise TusCommunicationError("Server did not return Upload-Offset header")
+        # A deferred upload advertises Upload-Defer-Length until its length is
+        # committed; remember so the next PATCH carries Upload-Length.
+        self._length_deferred = resp.headers.get("Upload-Defer-Length") == "1"
         return int(offset)
 
     def _update_stats_after_chunk(self) -> None:
@@ -182,15 +193,29 @@ class AsyncUploader:
             **self.headers,
         }
 
+        # Commit a deferred upload's length on its first PATCH (spec-required);
+        # cleared once the server accepts it.
+        if self._length_deferred:
+            headers["Upload-Length"] = str(self.file_size)
+
         algo = _protocol.resolve_checksum_algorithm(self.checksum)
         if algo is not None:
             headers["Upload-Checksum"] = _protocol.checksum_header(algo, data)
 
+        _protocol.maybe_add_request_id(headers, self.add_request_id)
+
+        # X-HTTP-Method-Override: tunnel PATCH through POST for environments
+        # whose proxies/firewalls reject PATCH. The server rewrites it back.
+        method = "PATCH"
+        if self.override_patch_method:
+            method = "POST"
+            headers["X-HTTP-Method-Override"] = "PATCH"
+
         if self._before_request is not None:
-            self._before_request("PATCH", self.url, headers)
+            self._before_request(method, self.url, headers)
 
         resp = await _http.request(
-            self._client, "PATCH", self.url, headers=headers, content=data, timeout=self.timeout
+            self._client, method, self.url, headers=headers, content=data, timeout=self.timeout
         )
 
         if resp.status_code == 409:
@@ -203,13 +228,15 @@ class AsyncUploader:
             )
 
         if self._after_response is not None:
-            self._after_response("PATCH", self.url, resp.status_code)
+            self._after_response(method, self.url, resp.status_code)
 
         new_offset = resp.headers.get("Upload-Offset")
         if new_offset:
             self.offset = int(new_offset)
         else:
             self.offset += len(data)
+        # Length is now committed server-side; don't resend it.
+        self._length_deferred = False
 
     async def _upload_chunk(self, data: bytes) -> None:
         """Upload a chunk, optionally with retry. Updates stats on success."""

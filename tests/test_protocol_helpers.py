@@ -27,6 +27,11 @@ def test_parse_upload_info_complete_flag():
     info = P.parse_upload_info("10", "10", None, "utf-8")
     assert info == {"offset": 10, "length": 10, "complete": True, "metadata": {}}
     assert P.parse_upload_info("0", "10", None, "utf-8")["complete"] is False
+    # A real zero-length upload (Upload-Length "0") is complete at offset 0.
+    assert P.parse_upload_info("0", "0", None, "utf-8")["complete"] is True
+    # A deferred upload has no Upload-Length header (None) — never complete,
+    # even though its offset may be 0.
+    assert P.parse_upload_info("0", None, None, "utf-8")["complete"] is False
 
 
 def test_parse_server_info_extensions_and_max_size():
