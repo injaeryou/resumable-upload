@@ -21,7 +21,7 @@ resumable_upload/
 ├── fingerprint.py         — default SHA-256 full-file fingerprint
 ├── metrics.py             — zero-dependency Prometheus counter registry
 ├── asgi.py                — TusASGIApp (FastAPI / Starlette adapter)
-├── cli.py / __main__.py   — `resumable-upload serve` entry point
+├── cli.py / __main__.py   — `resumable-upload` CLI: `serve` (server) + `upload`/`download`/`info` (client)
 │
 ├── server/
 │   ├── __init__.py        — re-exports TusServer, TusServerCore, TusHTTPRequestHandler
@@ -137,6 +137,22 @@ Issue-first, sub-PR-per-task. Same workflow real OSS projects like `tusd` use.
 - Include a testing-evidence section: `pytest -v` output excerpt, `ruff check` clean, `ty check` clean.
 - Default merge strategy: **squash merge**. One logical change on `main` per PR.
 - Never force-push to `main`. Never skip pre-commit hooks.
+
+## Feature Surface Checklist (every new server/client capability)
+
+A new option or behavior is not "done" until every surface that should expose
+it does. Before marking a feature complete, walk this list and either wire it
+up or note why it doesn't apply:
+
+- [ ] **server / client** — the core implementation + its sync **and** async paths
+- [ ] **CLI** — in `cli.py`: a `serve` flag (+ `_serve` wiring) for a server option a deployer sets, or an `upload`/`download`/`info` subcommand/flag for a client capability
+- [ ] **docs** — every surface that describes the feature: the `docs/` mkdocs pages (usage/API/operations, incl. `docs/operations/cli.md`), the README (feature list, extension/compliance table, API-reference links, CLI section), and `TUS_COMPLIANCE.md` when it touches the wire protocol. Keep `README.ko.md` in sync with `README.md`.
+- [ ] **CHANGELOG** — an entry under `## [Unreleased]` in `CHANGELOG.md` (Added/Changed/Fixed) for any user-visible change
+- [ ] **tests** — unit coverage on both sync and async surfaces
+- [ ] **interop** — a `tests/test_interop.py` case when it touches the wire protocol and a counterpart (tusd / tus-js-client / tus-py-client) supports it
+
+Example gap this caught: server gained `cors_allow_credentials`, `cors_max_age`,
+and `checksum_algorithms`, but the `serve` CLI never exposed them until later.
 
 ## Quality Gates
 
