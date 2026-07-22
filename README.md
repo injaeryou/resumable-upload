@@ -171,19 +171,21 @@ app.mount("/files", TusASGIApp(tus))
 
 The adapter awaits `TusServer.handle_request_async` directly. Storage backends that keep the default `*_async` implementations inherit `asyncio.to_thread`-based wrappers, so the event loop stays free with no rewrite required. Storage backends that override `*_async` with native async I/O run non-blocking end-to-end.
 
-### Command-line Server
+### Command-line Server & Client
 
-Run a TUS server from the shell without writing any Python:
+Run a TUS server, or upload/download/inspect against one, from the shell — no Python needed:
 
 ```bash
-# Console script (installed via pip/uv)
+# Server
 resumable-upload serve --host 0.0.0.0 --port 8080 --upload-dir ./uploads
 
-# Or via module invocation
-python -m resumable_upload serve --port 8080
+# Client: upload (resumable, progress line), inspect, download
+resumable-upload upload big.bin --url http://host/files --parallel 4
+resumable-upload info http://host/files/<id>
+resumable-upload download http://host/files/<id> -o out.bin
 ```
 
-Flags: `--host`, `--port`, `--base-path`, `--upload-dir`, `--db-path`, `--max-size`, `--max-chunk-size`, `--upload-expiry`, `--cors-origin`, `--cors-credentials`, `--cors-max-age`, `--checksum-algorithms`, `--enable-downloads`, `--behind-proxy`, `--location-base-url`, `--disable-termination`, `--disable-concatenation`, `--metrics-path`, `--lock-backend`, `--redis-url`, `--log-level`. Run `resumable-upload serve --help` for details.
+Server flags: `--host`, `--port`, `--base-path`, `--upload-dir`, `--db-path`, `--max-size`, `--max-chunk-size`, `--upload-expiry`, `--cors-origin`, `--cors-credentials`, `--cors-max-age`, `--checksum-algorithms`, `--enable-downloads`, `--behind-proxy`, `--location-base-url`, `--disable-termination`, `--disable-concatenation`, `--metrics-path`, `--lock-backend`, `--redis-url`, `--log-level`. Run `resumable-upload serve --help` for details.
 
 ### Parallel chunk uploads
 
