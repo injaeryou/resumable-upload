@@ -54,7 +54,7 @@ Compliance status against the [TUS resumable upload protocol v1.0.0](https://tus
 | DELETE returns `404` for unknown upload | ✅ | |
 | `Upload-Concat: partial` creates a partial upload | ✅ | Partials never fire `on_upload_complete` individually |
 | HEAD on a partial echoes `Upload-Concat: partial` | ✅ | Lets a conformant client distinguish a partial from a normal upload |
-| `Upload-Concat: final;…` merges partials into a final upload | ✅ | Returns `400` if any partial is missing or incomplete |
+| `Upload-Concat: final;…` merges partials into a final upload | ✅ | Returns `400` if any partial is missing or incomplete, or if `Tus-Max-Size` is configured and a source partial still has a deferred length (the total can't be checked) |
 | HEAD on a final echoes `Upload-Concat: final;…` | ✅ | Source partial IDs are persisted on the final upload (`concat_partial_ids`); HEAD reconstructs `final;<relative urls>` in original order. Supported by SQLite, S3, GCS, and Azure backends. |
 | Concurrent PATCH/DELETE serialized via `LockBackend` | ✅ | On by default for `TusServer` (in-process `InMemoryLockBackend`; pass `lock_backend=None` to opt out, a distributed backend for multi-node). `TusServerCore` stays lock-free. `423 Locked` on contention beyond `lock_wait_seconds` |
 | Malformed `Content-Length` header → `400` | ✅ | |

@@ -218,6 +218,76 @@ class TestAssemblyRobustness:
         )
         assert status == 201
 
+    @pytest.mark.anyio
+    async def test_final_over_deferred_partials_rejected_async(self, storage, anyio_backend):
+        # Async parity: handle_create_final_async must reject the same request
+        # the sync path does (previously it silently accepted a pending final).
+        server = TusServer(storage=storage, base_path="/files", max_size=8)
+        locs = []
+        for _ in range(2):
+            _, h, _ = await server.handle_request_async(
+                "POST",
+                "/files",
+                _h(**{"Upload-Defer-Length": "1", "Upload-Concat": "partial"}),
+                b"",
+            )
+            locs.append(h["Location"])
+
+        status, _, body = await server.handle_request_async(
+            "POST", "/files", _h(**{"Upload-Concat": "final;" + " ".join(locs)}), b""
+        )
+        assert status == 400
+        assert b"deferred-length" in body
+
+    def test_transport_level_error_carries_cors(self, storage):
+        # A chunked PATCH whose declared chunk exceeds max_chunk_size is
+        # rejected by the transport parser (_send_error), short-circuiting the
+        # core. That 413 must still carry CORS so a browser can read the status.
+        server = TusServer(
+            storage=storage,
+            base_path="/files",
+            cors_allow_origins="*",
+            max_chunk_size=10,
+        )
+
+        class Handler(TusHTTPRequestHandler):
+            pass
+
+        Handler.tus_server = server
+        httpd = HTTPServer(("127.0.0.1", 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        try:
+            conn = socket.create_connection(("127.0.0.1", port), timeout=5)
+            req = (
+                "PATCH /files/00000000-0000-0000-0000-000000000000 HTTP/1.1\r\n"
+                f"Host: 127.0.0.1:{port}\r\n"
+                "Tus-Resumable: 1.0.0\r\n"
+                "Upload-Offset: 0\r\n"
+                "Content-Type: application/offset+octet-stream\r\n"
+                "Origin: https://app.example\r\n"
+                "Transfer-Encoding: chunked\r\n"
+                "\r\n"
+                "14\r\n"  # 0x14 = 20 bytes, over the 10-byte max_chunk_size
+                "xxxxxxxxxxxxxxxxxxxx\r\n"
+                "0\r\n\r\n"
+            )
+            conn.sendall(req.encode())
+            raw = b""
+            while b"\r\n\r\n" not in raw:
+                part = conn.recv(4096)
+                if not part:
+                    break
+                raw += part
+            conn.close()
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
+        resp = raw.decode("latin1")
+        assert "413" in resp.split("\r\n", 1)[0]
+        assert "Access-Control-Allow-Origin: *" in resp
+
     def test_pending_final_row_is_atomic(self, storage):
         # Finding 8: the row must carry concat_partial_ids from birth — a
         # crash between INSERT and UPDATE previously left a plain orphan row.
