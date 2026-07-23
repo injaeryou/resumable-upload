@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import functools
 import os
 from collections.abc import Callable
 from typing import IO, Any
@@ -16,6 +17,30 @@ from resumable_upload.client.stats import UploadStats
 from resumable_upload.exceptions import TusCommunicationError
 from resumable_upload.fingerprint import Fingerprint
 from resumable_upload.url_storage import FileURLStorage, URLStorage
+
+
+def _managed(method):
+    """Auto-close the httpx client for a standalone call.
+
+    When the client is used outside ``async with`` (no ``__aenter__``), each
+    public entry point opens the httpx client lazily and must close it, or the
+    connection pool leaks. A depth counter makes nested public calls (e.g.
+    parallel upload -> create_partial_upload) close only at the outermost one.
+    """
+
+    @functools.wraps(method)
+    async def wrapper(self, *args, **kwargs):
+        if self._entered:
+            return await method(self, *args, **kwargs)
+        self._call_depth += 1
+        try:
+            return await method(self, *args, **kwargs)
+        finally:
+            self._call_depth -= 1
+            if self._call_depth == 0:
+                await self.aclose()
+
+    return wrapper
 
 
 class AsyncTusClient:
@@ -103,17 +128,21 @@ class AsyncTusClient:
         self.on_upload_url_available = on_upload_url_available
         self._transport = _transport
         self._client: Any | None = None  # httpx.AsyncClient, built lazily
+        self._entered = False  # True while inside `async with`
+        self._call_depth = 0  # nesting depth for standalone auto-close
 
     # ------------------------------------------------------------------
     # Async context manager
     # ------------------------------------------------------------------
 
     async def __aenter__(self) -> AsyncTusClient:
+        self._entered = True
         await self._ensure_client()
         return self
 
     async def __aexit__(self, *_: Any) -> None:
         await self.aclose()
+        self._entered = False
 
     async def aclose(self) -> None:
         """Close the underlying httpx AsyncClient."""
@@ -204,6 +233,7 @@ class AsyncTusClient:
     # Public API
     # ------------------------------------------------------------------
 
+    @_managed
     async def upload_file(
         self,
         file_path: str | None = None,
@@ -408,6 +438,7 @@ class AsyncTusClient:
 
         return await self.create_final_upload(list(partial_urls), metadata=metadata)
 
+    @_managed
     async def resume_upload(
         self,
         file_path: str | None = None,
@@ -462,6 +493,7 @@ class AsyncTusClient:
 
         return upload_url
 
+    @_managed
     async def delete_upload(self, upload_url: str) -> None:
         """Delete an upload from the server. A 404 response is silently tolerated.
 
@@ -490,6 +522,7 @@ class AsyncTusClient:
                 f"Failed to delete upload: server returned {resp.status_code}"
             )
 
+    @_managed
     async def create_deferred_upload(
         self,
         metadata: dict[str, str] | None = None,
@@ -501,6 +534,7 @@ class AsyncTusClient:
         """
         return await self._create_upload(file_size=0, metadata=metadata or {}, defer_length=True)
 
+    @_managed
     async def create_partial_upload(
         self,
         file_path: str | None = None,
@@ -562,6 +596,7 @@ class AsyncTusClient:
         finally:
             await up.aclose()
 
+    @_managed
     async def create_final_upload(
         self,
         partial_urls: list[str],
@@ -678,6 +713,7 @@ class AsyncTusClient:
             add_request_id=self.add_request_id,
         )
 
+    @_managed
     async def get_metadata(self, upload_url: str) -> dict[str, str]:
         """Get metadata for an upload via HEAD request.
 
@@ -706,6 +742,7 @@ class AsyncTusClient:
             resp.headers.get("Upload-Metadata"), self.metadata_encoding
         )
 
+    @_managed
     async def get_server_info(self) -> dict[str, Any]:
         """Get server information and capabilities via OPTIONS request.
 
@@ -731,6 +768,7 @@ class AsyncTusClient:
             self.TUS_VERSION,
         )
 
+    @_managed
     async def get_upload_info(self, upload_url: str) -> dict[str, Any]:
         """Get upload status: offset, length, complete flag, and metadata.
 
