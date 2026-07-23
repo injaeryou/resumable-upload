@@ -147,7 +147,7 @@ up or note why it doesn't apply:
 - [ ] **server / client** — the core implementation + its sync **and** async paths
 - [ ] **CLI** — in `cli.py`: a `serve` flag (+ `_serve` wiring) for a server option a deployer sets, or an `upload`/`download`/`info` subcommand/flag for a client capability
 - [ ] **docs** — every surface that describes the feature: the `docs/` mkdocs pages (usage/API/operations, incl. `docs/operations/cli.md`), the README (feature list, extension/compliance table, API-reference links, CLI section), and `TUS_COMPLIANCE.md` when it touches the wire protocol. Keep `README.ko.md` in sync with `README.md`.
-- [ ] **CHANGELOG** — an entry under `## [Unreleased]` in `CHANGELOG.md` (Added/Changed/Fixed) for any user-visible change
+- [ ] **release notes** — no manual `CHANGELOG.md`; notes are auto-generated on GitHub Releases from merged PRs. For any user-visible change, make sure the **PR title** is a clear Conventional-Commits summary so it reads well in the generated notes
 - [ ] **tests** — unit coverage on both sync and async surfaces
 - [ ] **interop** — a `tests/test_interop.py` case when it touches the wire protocol and a counterpart (tusd / tus-js-client / tus-py-client) supports it
 

@@ -7,10 +7,14 @@ from resumable_upload import TusServer, SQLiteStorage
 
 tus_server = TusServer(storage=SQLiteStorage())
 
+
 @csrf_exempt
 def tus_upload_view(request, upload_id=None):
-    headers = {key[5:].replace('_', '-'): value
-               for key, value in request.META.items() if key.startswith('HTTP_')}
+    headers = {
+        key[5:].replace("_", "-"): value
+        for key, value in request.META.items()
+        if key.startswith("HTTP_")
+    }
     status, response_headers, response_body = tus_server.handle_request(
         request.method, request.path, headers, request.body
     )
@@ -28,8 +32,8 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
-    path('files/', views.tus_upload_view),
-    path('files/<str:upload_id>/', views.tus_upload_view),
+    path("files/", views.tus_upload_view),
+    path("files/<str:upload_id>/", views.tus_upload_view),
 ]
 ```
 

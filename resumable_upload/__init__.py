@@ -4,7 +4,15 @@ A Python implementation of the TUS resumable upload protocol.
 Provides both server and client components with minimal dependencies.
 """
 
-__version__ = "0.0.5"
+from importlib.metadata import PackageNotFoundError, version as _pkg_version
+
+# Version comes from the git tag at build time (setuptools-scm); read it back
+# from the installed package metadata so the two can never drift.
+try:
+    __version__ = _pkg_version("resumable-upload")
+except PackageNotFoundError:  # not installed (e.g. running from a source tree)
+    __version__ = "0.0.0+unknown"
+del _pkg_version, PackageNotFoundError
 
 from resumable_upload.client import TusClient, Uploader, UploadStats
 from resumable_upload.exceptions import TusCommunicationError, TusHookError, TusUploadFailed

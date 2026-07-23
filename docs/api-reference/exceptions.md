@@ -3,9 +3,7 @@
 ## Exceptions
 
 ```python
-from resumable_upload.exceptions import (
-    TusCommunicationError, TusUploadFailed, TusHookError
-)
+from resumable_upload.exceptions import TusCommunicationError, TusUploadFailed, TusHookError
 ```
 
 ### Client Exceptions
@@ -73,6 +71,7 @@ Cheap strategy — MD5 of the first `probe_bytes` bytes plus the file size. Matc
 ```python
 def my_fp(file_source) -> str:
     return f"user-42:{file_source}"
+
 
 client = TusClient("...", fingerprinter=CallableFingerprint(my_fp))
 ```

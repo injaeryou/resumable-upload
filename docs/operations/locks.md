@@ -11,8 +11,8 @@ from resumable_upload.locks import InMemoryLockBackend
 server = TusServer(
     storage=SQLiteStorage(),
     lock_backend=InMemoryLockBackend(),
-    lock_ttl_seconds=60.0,   # auto-release if the holder crashes
-    lock_wait_seconds=5.0,   # 423 Locked when contention exceeds this
+    lock_ttl_seconds=60.0,  # auto-release if the holder crashes
+    lock_wait_seconds=5.0,  # 423 Locked when contention exceeds this
 )
 ```
 
@@ -55,6 +55,7 @@ Subclass `LockBackend` to plug in an alternative coordinator (Zookeeper, etcd, P
 
 ```python
 from resumable_upload.locks import LockBackend
+
 
 class MyLockBackend(LockBackend):
     def acquire(self, key: str, ttl_seconds: float, wait_timeout: float = 0.0) -> str | None:

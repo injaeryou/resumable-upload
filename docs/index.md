@@ -58,8 +58,10 @@ from resumable_upload import TusServer, TusHTTPRequestHandler, SQLiteStorage
 storage = SQLiteStorage(db_path="uploads.db", upload_dir="uploads")
 tus_server = TusServer(storage=storage, base_path="/files")
 
+
 class Handler(TusHTTPRequestHandler):
     pass
+
 
 Handler.tus_server = tus_server
 server = HTTPServer(("0.0.0.0", 8080), Handler)
@@ -80,9 +82,10 @@ See [CLI](operations/cli.md) for all flags.
 ```python
 from resumable_upload import TusClient, UploadStats
 
+
 def progress(stats: UploadStats):
-    print(f"Progress: {stats.progress_percent:.1f}% | "
-          f"Speed: {stats.upload_speed_mbps:.2f} MB/s")
+    print(f"Progress: {stats.progress_percent:.1f}% | Speed: {stats.upload_speed_mbps:.2f} MB/s")
+
 
 client = TusClient("http://localhost:8080/files")
 upload_url = client.upload_file(

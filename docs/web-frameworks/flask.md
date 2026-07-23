@@ -7,8 +7,9 @@ from resumable_upload import TusServer, SQLiteStorage
 app = Flask(__name__)
 tus_server = TusServer(storage=SQLiteStorage())
 
-@app.route('/files', methods=['OPTIONS', 'POST'])
-@app.route('/files/<upload_id>', methods=['HEAD', 'PATCH', 'DELETE'])
+
+@app.route("/files", methods=["OPTIONS", "POST"])
+@app.route("/files/<upload_id>", methods=["HEAD", "PATCH", "DELETE"])
 def handle_upload(upload_id=None):
     status, headers, body = tus_server.handle_request(
         request.method, request.path, dict(request.headers), request.get_data()

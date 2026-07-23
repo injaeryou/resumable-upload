@@ -29,6 +29,7 @@ from resumable_upload import TusServer, SQLiteStorage
 app = FastAPI()
 tus_server = TusServer(storage=SQLiteStorage())
 
+
 @app.api_route("/files", methods=["OPTIONS", "POST"])
 @app.api_route("/files/{upload_id}", methods=["HEAD", "PATCH", "DELETE"])
 async def handle_upload(request: Request):

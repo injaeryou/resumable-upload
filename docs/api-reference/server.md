@@ -84,12 +84,15 @@ For out-of-band cancellation there is also `TusServer.terminate_upload(upload_id
 from resumable_upload import TusServer, SQLiteStorage
 from resumable_upload.exceptions import TusHookError
 
+
 def auth_check(method, path, headers):
     if "authorization" not in headers:
         raise TusHookError("Unauthorized", status_code=401)
 
+
 def on_complete(upload_id, metadata, file_info):
     print(f"Upload {upload_id} completed: {file_info}")
+
 
 server = TusServer(
     storage=SQLiteStorage(),
@@ -131,8 +134,10 @@ Async sibling used by `TusASGIApp`. Storage backends that keep the default `*_as
 ```python
 from resumable_upload import TusHTTPRequestHandler
 
+
 class Handler(TusHTTPRequestHandler):
     pass
+
 
 Handler.tus_server = tus_server
 server = HTTPServer(("0.0.0.0", 8080), Handler)

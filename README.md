@@ -57,9 +57,11 @@ storage = SQLiteStorage(db_path="uploads.db", upload_dir="uploads")
 # Create TUS server
 tus_server = TusServer(storage=storage, base_path="/files")
 
+
 # Create HTTP handler
 class Handler(TusHTTPRequestHandler):
     pass
+
 
 Handler.tus_server = tus_server
 
@@ -80,15 +82,17 @@ client = TusClient("http://localhost:8080/files")
 # Upload file with progress callback
 from resumable_upload import UploadStats
 
+
 def progress(stats: UploadStats):
-    print(f"Progress: {stats.progress_percent:.1f}% | "
-          f"{stats.uploaded_bytes}/{stats.total_bytes} bytes | "
-          f"Speed: {stats.upload_speed_mbps:.2f} MB/s")
+    print(
+        f"Progress: {stats.progress_percent:.1f}% | "
+        f"{stats.uploaded_bytes}/{stats.total_bytes} bytes | "
+        f"Speed: {stats.upload_speed_mbps:.2f} MB/s"
+    )
+
 
 upload_url = client.upload_file(
-    "large_file.bin",
-    metadata={"filename": "large_file.bin"},
-    progress_callback=progress
+    "large_file.bin", metadata={"filename": "large_file.bin"}, progress_callback=progress
 )
 
 print(f"Upload complete: {upload_url}")
@@ -101,9 +105,11 @@ print(f"Upload complete: {upload_url}")
 import asyncio
 from resumable_upload import AsyncTusClient
 
+
 async def main():
     async with AsyncTusClient("http://localhost:8080/files") as client:
         url = await client.upload_file("large_file.bin")
+
 
 asyncio.run(main())
 ```
@@ -129,9 +135,17 @@ TusClient("...", checksum="sha256")
 Observability + domain-specific retry gating:
 
 ```python
-def before(method, url, headers): print(f"-> {method} {url}")
-def after(method, url, status):   print(f"<- {method} {status}")
-def should_retry(err, attempt):   return not isinstance(err, PermissionError)
+def before(method, url, headers):
+    print(f"-> {method} {url}")
+
+
+def after(method, url, status):
+    print(f"<- {method} {status}")
+
+
+def should_retry(err, attempt):
+    return not isinstance(err, PermissionError)
+
 
 client = TusClient(
     "...",

@@ -8,8 +8,10 @@
 def before(method, url, headers):
     print(f"-> {method} {url}")
 
+
 def after(method, url, status):
     print(f"<- {method} {url} {status}")
+
 
 client = TusClient(
     "http://localhost:8080/files",
@@ -27,8 +29,9 @@ The hooks are forwarded to any `Uploader` you obtain from `TusClient.create_uplo
 ```python
 def should_retry(err: Exception, attempt: int) -> bool:
     if isinstance(err, PermissionError):
-        return False              # don't retry auth failures
-    return attempt < 5            # cap above the configured max_retries
+        return False  # don't retry auth failures
+    return attempt < 5  # cap above the configured max_retries
+
 
 client = TusClient(
     "http://localhost:8080/files",
