@@ -32,7 +32,12 @@ from resumable_upload.server import TusHTTPRequestHandler, TusServer
 from resumable_upload.storage import SQLiteStorage
 
 INTEROP_DIR = os.path.join(os.path.dirname(__file__), "interop")
-TUSD_BIN = os.environ.get("TUSD_BIN") or shutil.which("tusd")
+_FETCHED_TUSD = os.path.join(INTEROP_DIR, "tusd", "tusd")  # where fetch_tusd.sh drops it
+TUSD_BIN = (
+    os.environ.get("TUSD_BIN")
+    or shutil.which("tusd")
+    or (_FETCHED_TUSD if os.access(_FETCHED_TUSD, os.X_OK) else None)
+)
 NODE_BIN = shutil.which("node")
 HAS_TUS_JS = os.path.isdir(os.path.join(INTEROP_DIR, "node_modules", "tus-js-client"))
 
@@ -60,7 +65,9 @@ def _wait_until_up(url: str, timeout: float = 10.0) -> None:
             req = urllib.request.Request(url, method="OPTIONS")
             with urllib.request.urlopen(req, timeout=1):
                 return
-        except Exception:
+        except (urllib.error.URLError, ConnectionError, OSError):
+            # Not up yet (connection refused / reset). A real bug (bad URL,
+            # typo) raises a different type and surfaces immediately.
             time.sleep(0.05)
     raise RuntimeError(f"server at {url} never came up")
 
@@ -206,6 +213,59 @@ class TestNativeRoundTrip:
         url = client.upload_file(path)
         assert _download(url)[0] == data
 
+    def test_concurrent_patch_stale_offset_conflicts(self, ours_server):
+        # Two PATCHes at the same starting offset: the server must accept
+        # exactly one (204) and reject the stale one (409), never double-
+        # advance the offset (TUS invariant #6). The bundled HTTPServer is
+        # single-threaded so the outcome is deterministic, but this still
+        # exercises the 409-on-stale-offset wire contract end to end; the
+        # true concurrent CAS is covered at the storage layer in test_storage.
+        base_url, _ = ours_server
+        root = base_url.rsplit("/files", 1)[0]
+        chunk = b"x" * 256
+
+        create = urllib.request.Request(
+            base_url,
+            method="POST",
+            headers={"Tus-Resumable": "1.0.0", "Upload-Length": "1024"},
+        )
+        with urllib.request.urlopen(create) as resp:
+            loc = resp.headers["Location"]
+        url = loc if loc.startswith("http") else root + loc
+
+        codes: list[int] = []
+        lock = threading.Lock()
+        barrier = threading.Barrier(2)
+
+        def patch() -> None:
+            req = urllib.request.Request(
+                url,
+                method="PATCH",
+                data=chunk,
+                headers={
+                    "Tus-Resumable": "1.0.0",
+                    "Upload-Offset": "0",
+                    "Content-Type": "application/offset+octet-stream",
+                },
+            )
+            barrier.wait()
+            try:
+                with urllib.request.urlopen(req) as r:
+                    code = r.status
+            except urllib.error.HTTPError as e:
+                code = e.code
+            with lock:
+                codes.append(code)
+
+        threads = [threading.Thread(target=patch) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert sorted(codes) == [204, 409], codes
+        assert TusClient(base_url).get_upload_info(url)["offset"] == 256
+
 
 @pytest.mark.skipif(not TUSD_BIN, reason="tusd binary not found (set TUSD_BIN or add to PATH)")
 class TestClientAgainstTusd:
@@ -213,27 +273,44 @@ class TestClientAgainstTusd:
 
     @pytest.fixture
     def tusd_server(self, tmp_path):
-        port = _free_port()
-        proc = subprocess.Popen(
-            [
-                TUSD_BIN,
-                "-host",
-                "127.0.0.1",
-                "-port",
-                str(port),
-                "-upload-dir",
-                str(tmp_path / "tusd-data"),
-            ],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
-        base = f"http://127.0.0.1:{port}/files/"
+        # _free_port() closes the socket before tusd rebinds it, so the port
+        # can be stolen in between; retry a few times to absorb that race.
+        proc = None
+        base = None
+        for attempt in range(3):
+            port = _free_port()
+            proc = subprocess.Popen(
+                [
+                    TUSD_BIN,
+                    "-host",
+                    "127.0.0.1",
+                    "-port",
+                    str(port),
+                    "-upload-dir",
+                    str(tmp_path / f"tusd-data-{attempt}"),
+                ],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+            )
+            base = f"http://127.0.0.1:{port}/files/"
+            try:
+                _wait_until_up(base)
+                break
+            except RuntimeError:
+                proc.terminate()
+                proc.wait(timeout=10)
+                proc = None
+        if proc is None:
+            raise RuntimeError("tusd never came up after 3 attempts")
         try:
-            _wait_until_up(base)
             yield base
         finally:
             proc.terminate()
-            proc.wait(timeout=10)
+            try:
+                proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                proc.kill()  # SIGTERM ignored — don't leak the process
+                proc.wait(timeout=5)
 
     def test_single_upload(self, tusd_server, payload_file):
         client = TusClient(tusd_server, chunk_size=256 * 1024, checksum=False)
@@ -473,3 +550,56 @@ class TestServerAgainstTusPy:
 
     # Termination is skipped for this lane: tus-py-client exposes no
     # delete/terminate call, so there is nothing client-side to drive it.
+
+
+@pytest.fixture
+def anyio_backend():
+    return "asyncio"
+
+
+class TestNativeRoundTripAsync:
+    """our ASYNC client <-> our server over a real socket.
+
+    The in-process ASGI suite already drives handle_request_async; this is the
+    async analogue of TestNativeRoundTrip — AsyncTusClient against a live
+    threaded HTTP server, so the async client's real transport is exercised
+    end to end, not just the server's async dispatch.
+    """
+
+    @pytest.mark.anyio
+    async def test_async_roundtrip(self, ours_server, payload_file):
+        pytest.importorskip("httpx")
+        from resumable_upload import AsyncTusClient
+
+        base_url, _ = ours_server
+        async with AsyncTusClient(base_url, chunk_size=256 * 1024) as client:
+            url = await client.upload_file(payload_file)
+            info = await client.get_upload_info(url)
+            assert info["offset"] == len(PAYLOAD)
+            assert info["complete"] is True
+        assert _download_sha(url) == PAYLOAD_SHA
+
+    @pytest.mark.anyio
+    async def test_async_resume_after_interruption(self, ours_server, payload_file):
+        pytest.importorskip("httpx")
+        from resumable_upload import AsyncTusClient
+
+        base_url, _ = ours_server
+        async with AsyncTusClient(base_url, chunk_size=256 * 1024) as client:
+            url = await client.upload_file(payload_file, stop_at=512 * 1024)
+            mid = await client.get_upload_info(url)
+            assert 0 < mid["offset"] < len(PAYLOAD)
+            await client.resume_upload(payload_file, url)
+        assert _download_sha(url) == PAYLOAD_SHA
+
+    @pytest.mark.anyio
+    async def test_async_empty_file(self, ours_server, tmp_path):
+        pytest.importorskip("httpx")
+        from resumable_upload import AsyncTusClient
+
+        base_url, _ = ours_server
+        path = _write(tmp_path, "empty.bin", b"")
+        async with AsyncTusClient(base_url, chunk_size=256 * 1024) as client:
+            url = await client.upload_file(path)
+            assert (await client.get_upload_info(url))["complete"] is True
+        assert _download(url)[0] == b""
