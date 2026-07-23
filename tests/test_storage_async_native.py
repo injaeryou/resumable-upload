@@ -45,7 +45,10 @@ def _h(**extra: str) -> dict[str, str]:
 
 @pytest.fixture
 def server() -> TusServer:
-    return TusServer(storage=AsyncDictStorage(), base_path="/files")
+    # lock_backend=None: this test asserts the STORAGE async path is native
+    # (no to_thread). The default InMemoryLockBackend legitimately wraps its
+    # sync acquire/release in to_thread, which is unrelated to storage I/O.
+    return TusServer(storage=AsyncDictStorage(), base_path="/files", lock_backend=None)
 
 
 @pytest.mark.anyio

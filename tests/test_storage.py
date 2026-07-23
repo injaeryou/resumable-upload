@@ -111,6 +111,15 @@ class TestSQLiteStorage:
         assert sum(results) == 1, f"expected exactly one winner, got {results}"
         assert storage.get_upload("cas-race")["offset"] == 256
 
+    def test_complete_upload_returns_true_only_on_first_completion(self, storage):
+        # C3: the crash-reclaim clause in try_assemble_final can let two callers
+        # assemble the same final; complete_upload must transition once so the
+        # on_upload_complete hook (gated on this return) fires exactly once.
+        storage.create_upload("done", 5, {})
+        assert storage.complete_upload("done") is True  # 0 -> 1
+        assert storage.complete_upload("done") is False  # already completed
+        assert storage.get_upload("done")["completed"] is True
+
     def test_write_and_read_chunk(self, storage):
         """Test writing and reading chunks."""
         upload_id = "test-upload-3"

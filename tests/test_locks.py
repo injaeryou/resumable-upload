@@ -85,6 +85,39 @@ class TestLockBackendContract:
         assert lock.acquire("k-b", ttl_seconds=5) is not None
 
 
+class TestDefaultLockBackend:
+    """S2: TusServer defaults to an in-process lock; TusServerCore does not."""
+
+    def _storage(self, tmp_path):
+        import os
+
+        from resumable_upload.storage import SQLiteStorage
+
+        return SQLiteStorage(
+            db_path=os.path.join(str(tmp_path), "u.db"),
+            upload_dir=os.path.join(str(tmp_path), "files"),
+        )
+
+    def test_tusserver_defaults_to_in_memory_lock(self, tmp_path):
+        from resumable_upload.server import TusServer
+
+        server = TusServer(storage=self._storage(tmp_path), base_path="/files")
+        assert isinstance(server._locks, InMemoryLockBackend)
+
+    def test_tusserver_explicit_none_opts_out(self, tmp_path):
+        # CLI `--lock-backend none` passes None explicitly; must stay unlocked.
+        from resumable_upload.server import TusServer
+
+        server = TusServer(storage=self._storage(tmp_path), base_path="/files", lock_backend=None)
+        assert server._locks is None
+
+    def test_core_has_no_default_lock(self, tmp_path):
+        from resumable_upload.server import TusServerCore
+
+        server = TusServerCore(storage=self._storage(tmp_path), base_path="/files")
+        assert server._locks is None
+
+
 class TestServerLockIntegration:
     """Server uses LockBackend to serialize PATCH/DELETE on the same upload."""
 

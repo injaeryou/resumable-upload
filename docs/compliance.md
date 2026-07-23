@@ -56,7 +56,7 @@ Compliance status against the [TUS resumable upload protocol v1.0.0](https://tus
 | HEAD on a partial echoes `Upload-Concat: partial` | ✅ | Lets a conformant client distinguish a partial from a normal upload |
 | `Upload-Concat: final;…` merges partials into a final upload | ✅ | Returns `400` if any partial is missing or incomplete |
 | HEAD on a final echoes `Upload-Concat: final;…` | ✅ | Source partial IDs are persisted on the final upload (`concat_partial_ids`); HEAD reconstructs `final;<relative urls>` in original order. Supported by SQLite, S3, GCS, and Azure backends. |
-| Concurrent PATCH/DELETE serialized via `LockBackend` | ✅ | Optional; `423 Locked` on contention beyond `lock_wait_seconds` |
+| Concurrent PATCH/DELETE serialized via `LockBackend` | ✅ | On by default for `TusServer` (in-process `InMemoryLockBackend`; pass `lock_backend=None` to opt out, a distributed backend for multi-node). `TusServerCore` stays lock-free. `423 Locked` on contention beyond `lock_wait_seconds` |
 | Malformed `Content-Length` header → `400` | ✅ | |
 | Negative `Content-Length` → `400` | ✅ | |
 | `Upload-Metadata` larger than 4 KB → `400` | ✅ | DoS protection |
@@ -82,7 +82,7 @@ Compliance status against the [TUS resumable upload protocol v1.0.0](https://tus
 | `Upload-Checksum` (configurable algorithm) | ✅ | `sha1` default; `sha256`, `sha512`, `md5` opt-in |
 | Cross-session URL persistence (fingerprint-based) | ✅ | `FileURLStorage` / `SQLiteURLStorage` / `InMemoryURLStorage` |
 | Full-file fingerprint (not just first 64 KB) | ✅ | SHA-256 of entire content (default; `PartialMD5Fingerprint` and `CallableFingerprint` available) |
-| `409` on concurrent offset conflict (atomic CAS) | ✅ | `UPDATE ... WHERE offset = ?`; returns `409` if row not updated |
+| `409` on concurrent offset conflict (atomic CAS) | ✅ | Every backend does a real compare-and-swap: SQLite `UPDATE ... WHERE offset = ?`, S3/Azure conditional write on the info object's ETag, GCS `if_generation_match`. Returns `409` when the CAS loses. |
 | `409` received → HEAD re-sync before retry | ✅ | Client fetches current offset and re-seeks before retrying chunk |
 | Parallel concatenation upload | ✅ | `parallel_uploads=N` on `upload_file()` |
 | Manual partial / final concatenation primitives | ✅ | `create_partial_upload()` / `create_final_upload()` |

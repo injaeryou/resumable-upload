@@ -176,6 +176,32 @@ class TestS3StorageOffset:
         upload = storage.get_upload("conflict-id")
         assert upload["offset"] == 30
 
+    def test_update_offset_atomic_loses_to_concurrent_writer(self, storage):
+        """A CAS that reads, then loses the race, must not clobber the winner.
+
+        Both writers see offset 0. The loser's write-back has to fail on the
+        ETag the winner already changed — a plain read-modify-write would
+        silently overwrite the winner's committed offset (TUS invariant #6).
+        """
+        storage.create_upload("cas-race", 100, {})
+        real_get_object = storage.s3.get_object
+        raced = []
+
+        def get_object_then_let_rival_win(**kwargs):
+            resp = real_get_object(**kwargs)
+            if not raced:  # only interleave the first read
+                raced.append(True)
+                storage.update_offset("cas-race", 40)  # another node commits first
+            return resp
+
+        storage.s3.get_object = get_object_then_let_rival_win
+        try:
+            assert storage.update_offset_atomic("cas-race", 0, 50) is False
+        finally:
+            storage.s3.get_object = real_get_object
+        assert raced, "the rival write never interleaved; the test proved nothing"
+        assert storage.get_upload("cas-race")["offset"] == 40
+
 
 # -- File info ---------------------------------------------------------------
 

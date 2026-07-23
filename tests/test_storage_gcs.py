@@ -8,14 +8,24 @@ import pytest
 class FakeBlob:
     """In-memory blob that mimics google.cloud.storage.Blob."""
 
-    def __init__(self, name: str, bucket: "FakeBucket"):
+    def __init__(self, name: str, bucket: "FakeBucket", generation=None):
         self.name = name
         self._bucket = bucket
+        self.generation = generation
 
-    def upload_from_string(self, data, content_type=None):
+    def upload_from_string(self, data, content_type=None, if_generation_match=None):
         if isinstance(data, str):
             data = data.encode()
+        # Enforce the generation precondition so the CAS conflict path is testable.
+        if if_generation_match is not None:
+            current = self._bucket._generations.get(self.name)
+            if current != if_generation_match:
+                from google.cloud.exceptions import PreconditionFailed
+
+                raise PreconditionFailed("generation mismatch")
         self._bucket._blobs[self.name] = data
+        self._bucket._generations[self.name] = self._bucket._generations.get(self.name, 0) + 1
+        self.generation = self._bucket._generations[self.name]
 
     def download_as_bytes(self):
         from google.cloud.exceptions import NotFound
@@ -44,9 +54,17 @@ class FakeBucket:
     def __init__(self, name: str):
         self.name = name
         self._blobs: dict[str, bytes] = {}
+        self._generations: dict[str, int] = {}
 
     def blob(self, name: str) -> FakeBlob:
         return FakeBlob(name, self)
+
+    def get_blob(self, name: str):
+        # Real GCS get_blob() returns None if the object doesn't exist, else a
+        # blob populated with its current generation.
+        if name not in self._blobs:
+            return None
+        return FakeBlob(name, self, generation=self._generations.get(name))
 
     def copy_blob(self, source_blob, destination_bucket, destination_key):
         destination_bucket._blobs[destination_key] = self._blobs[source_blob.name]
@@ -83,8 +101,12 @@ def mock_gcs_imports():
     class NotFound(Exception):
         pass
 
+    class PreconditionFailed(Exception):
+        pass
+
     exceptions_mod = types.ModuleType("google.cloud.exceptions")
     exceptions_mod.NotFound = NotFound
+    exceptions_mod.PreconditionFailed = PreconditionFailed
 
     # Create mock google.cloud.storage module
     storage_mod = types.ModuleType("google.cloud.storage")
@@ -270,6 +292,32 @@ class TestGCSStorageOffset:
         assert storage.update_offset_atomic("conflict-id", 0, 50) is False
         upload = storage.get_upload("conflict-id")
         assert upload["offset"] == 30
+
+    def test_update_offset_atomic_loses_to_concurrent_writer(self, storage):
+        """A CAS that reads, then loses the race, must not clobber the winner.
+
+        Both writers see offset 0. The loser's write-back has to fail its
+        if_generation_match precondition — a plain read-modify-write would
+        silently overwrite the winner's committed offset (TUS invariant #6).
+        """
+        storage.create_upload("cas-race", 100, {})
+        real_download = FakeBlob.download_as_bytes
+        raced = []
+
+        def download_then_let_rival_win(blob_self):
+            data = real_download(blob_self)
+            if not raced:  # only interleave the first read
+                raced.append(True)
+                storage.update_offset("cas-race", 40)  # another node commits first
+            return data
+
+        FakeBlob.download_as_bytes = download_then_let_rival_win
+        try:
+            assert storage.update_offset_atomic("cas-race", 0, 50) is False
+        finally:
+            FakeBlob.download_as_bytes = real_download
+        assert raced, "the rival write never interleaved; the test proved nothing"
+        assert storage.get_upload("cas-race")["offset"] == 40
 
 
 # -- File info ---------------------------------------------------------------

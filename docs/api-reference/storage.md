@@ -115,6 +115,8 @@ For small files (all data fits in the buffer), a single `PutObject` is used inst
 
 Concatenation is implemented via `UploadPartCopy` so partial-to-final merge happens entirely on the S3 side.
 
+`update_offset_atomic()` writes the offset back under an `If-Match` on the info object's ETag, so a concurrent writer on another node loses with `412` and gets `False` instead of silently overwriting the winner.
+
 ```python
 storage.complete_upload(upload_id)  # Assembles the final S3 object
 data = storage.read_file(upload_id)  # Read the completed file
@@ -150,6 +152,8 @@ storage = GCSStorage(
 ### How it Works
 
 Chunks are buffered and flushed as individual part blobs. On `complete_upload()`, parts are assembled using GCS `compose()` (handles the 32-object limit via hierarchical composition). For small files, a direct upload is used. Concatenation also uses `compose()`.
+
+`update_offset_atomic()` writes the offset back with `if_generation_match`, so a concurrent writer on another node loses with `412` and gets `False` instead of silently overwriting the winner.
 
 ```python
 storage.complete_upload(upload_id)
@@ -187,6 +191,8 @@ storage = AzureBlobStorage(
 ### How it Works
 
 Chunks are buffered and staged as Azure blocks via `stage_block()`. On `complete_upload()`, all blocks are committed via `commit_block_list()` to form the final blob. For small files, a direct `upload_blob()` is used. Concatenation reuses the block-list mechanism — partials are committed by referencing their staged blocks in the final blob's block list.
+
+`update_offset_atomic()` writes the offset back under `MatchConditions.IfNotModified` on the info blob's ETag, so a concurrent writer on another node loses and gets `False` instead of silently overwriting the winner.
 
 ```python
 storage.complete_upload(upload_id)
