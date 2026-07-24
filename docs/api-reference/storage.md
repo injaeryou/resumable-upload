@@ -41,8 +41,11 @@ Subclass `Storage` to implement a custom backend:
 ```python
 from resumable_upload.storage import Storage
 
+
 class MyStorage(Storage):
-    def create_upload(self, upload_id, upload_length, metadata, expires_at=None, is_partial=False): ...
+    def create_upload(
+        self, upload_id, upload_length, metadata, expires_at=None, is_partial=False
+    ): ...
     def get_upload(self, upload_id): ...
     def update_offset(self, upload_id, offset): ...
     def delete_upload(self, upload_id): ...
@@ -70,8 +73,7 @@ class S3AsyncStorage(S3Storage):
         # native non-blocking upload-part call
         ...
 
-    async def complete_upload_async(self, upload_id):
-        ...
+    async def complete_upload_async(self, upload_id): ...
 
     # everything else inherits the to_thread default
 ```
@@ -91,8 +93,8 @@ from resumable_upload.storage_s3 import S3Storage
 
 storage = S3Storage(
     bucket="my-uploads",
-    prefix="tus",           # optional key prefix
-    part_size=8*1024*1024,  # 8MB (default), min 5MB enforced
+    prefix="tus",  # optional key prefix
+    part_size=8 * 1024 * 1024,  # 8MB (default), min 5MB enforced
 )
 ```
 
@@ -115,7 +117,7 @@ Concatenation is implemented via `UploadPartCopy` so partial-to-final merge happ
 
 ```python
 storage.complete_upload(upload_id)  # Assembles the final S3 object
-data = storage.read_file(upload_id) # Read the completed file
+data = storage.read_file(upload_id)  # Read the completed file
 info = storage.get_file_info(upload_id)
 # {"upload_id": "...", "bucket": "my-uploads", "key": "tus/abc123"}
 ```
@@ -132,7 +134,7 @@ from resumable_upload.storage_gcs import GCSStorage
 storage = GCSStorage(
     bucket="my-uploads",
     prefix="tus",
-    part_size=8*1024*1024,
+    part_size=8 * 1024 * 1024,
 )
 ```
 
@@ -168,7 +170,7 @@ storage = AzureBlobStorage(
     container="my-uploads",
     connection_string="DefaultEndpointsProtocol=https;...",
     prefix="tus",
-    part_size=8*1024*1024,
+    part_size=8 * 1024 * 1024,
 )
 ```
 
@@ -204,6 +206,7 @@ JSON file-based URL storage for cross-session resumability.
 
 ```python
 from resumable_upload import FileURLStorage
+
 storage = FileURLStorage(".tus_urls.json")
 ```
 
@@ -221,6 +224,7 @@ SQLite-backed URL storage. Preferred over `FileURLStorage` for multi-process cli
 
 ```python
 from resumable_upload import SQLiteURLStorage
+
 storage = SQLiteURLStorage("tus_urls.db")
 ```
 
@@ -235,6 +239,7 @@ Fast, process-local URL storage. Everything is forgotten when the process exits 
 
 ```python
 from resumable_upload import InMemoryURLStorage
+
 storage = InMemoryURLStorage()
 ```
 
@@ -242,6 +247,7 @@ storage = InMemoryURLStorage()
 
 ```python
 from resumable_upload.url_storage import URLStorage
+
 
 class MyURLStorage(URLStorage):
     def get_url(self, fingerprint: str) -> str | None: ...

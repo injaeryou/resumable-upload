@@ -9,7 +9,7 @@ from resumable_upload import TusClient
 
 client = TusClient(
     "http://localhost:8080/files",
-    max_retries=3,    # Retry up to 3 times per chunk (default: 3)
+    max_retries=3,  # Retry up to 3 times per chunk (default: 3)
     retry_delay=1.0,  # Base delay; doubles each attempt, capped at 60s
 )
 ```
@@ -25,16 +25,20 @@ Pass a callback to `upload_file()` to receive `UploadStats` after each chunk:
 ```python
 from resumable_upload import TusClient, UploadStats
 
+
 def progress_callback(stats: UploadStats):
-    print(f"Progress: {stats.progress_percent:.1f}% | "
-          f"Speed: {stats.upload_speed/1024/1024:.2f} MB/s | "
-          f"ETA: {stats.eta_seconds:.0f}s | "
-          f"Chunks: {stats.chunks_completed}/{stats.total_chunks} | "
-          f"Retried: {stats.chunks_retried}")
+    print(
+        f"Progress: {stats.progress_percent:.1f}% | "
+        f"Speed: {stats.upload_speed / 1024 / 1024:.2f} MB/s | "
+        f"ETA: {stats.eta_seconds:.0f}s | "
+        f"Chunks: {stats.chunks_completed}/{stats.total_chunks} | "
+        f"Retried: {stats.chunks_retried}"
+    )
+
 
 client = TusClient(
     "http://localhost:8080/files",
-    chunk_size=1.5*1024*1024,
+    chunk_size=1.5 * 1024 * 1024,
     checksum=True,
 )
 upload_url = client.upload_file(

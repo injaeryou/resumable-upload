@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61.0", "wheel"]
+requires = ["setuptools>=61.0", "setuptools-scm>=8", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "resumable-upload"
-version = "0.1.0"
+dynamic = ["version"]
 description = "A Python implementation of the `TUS resumable upload protocol` for server and client, with zero runtime dependencies."
 readme = "README.md"
 requires-python = ">=3.9"
@@ -28,14 +28,13 @@ classifiers = [
     "Programming Language :: Python :: 3.14",
     "Programming Language :: Python :: 3 :: Only",
 ]
-dependencies = []
 
 [project.urls]
 Homepage = "https://github.com/injaeryou/resumable-upload"
 Documentation = "https://injaeryou.github.io/resumable-upload/"
 Repository = "https://github.com/injaeryou/resumable-upload"
 Issues = "https://github.com/injaeryou/resumable-upload/issues"
-Changelog = "https://github.com/injaeryou/resumable-upload/blob/main/CHANGELOG.md"
+Changelog = "https://github.com/injaeryou/resumable-upload/releases"
 Releases = "https://github.com/injaeryou/resumable-upload/releases"
 
 [project.scripts]
@@ -91,6 +90,9 @@ docs = [
     "mkdocs-git-revision-date-localized-plugin>=1.2",
 ]
 
+[tool.setuptools_scm]
+fallback_version = "0.0.0+unknown"
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
@@ -129,6 +131,9 @@ ignore = [
     # f-string format
     "UP032",
 ]
+
+[tool.ruff.lint.per-file-ignores]
+"resumable_upload/__init__.py" = ["E402", "I001"]
 
 [tool.ruff.format]
 docstring-code-format = true

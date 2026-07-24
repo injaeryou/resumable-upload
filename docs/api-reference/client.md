@@ -135,12 +135,15 @@ Create an `Uploader` instance for fine-grained chunk-level control.
 def before(method, url, headers):
     print(f"-> {method} {url}")
 
+
 def after(method, url, status):
     print(f"<- {method} {url} {status}")
+
 
 def should_retry(err, attempt):
     # don't retry permission errors; do retry everything else
     return not isinstance(err, PermissionError)
+
 
 client = TusClient(
     "http://localhost:8080/files",
@@ -219,10 +222,12 @@ importable without it — a helpful `ImportError` is raised if you forget.
 import asyncio
 from resumable_upload import AsyncTusClient
 
+
 async def main():
     async with AsyncTusClient("http://localhost:8080/files") as client:
         url = await client.upload_file("large.bin", progress_callback=print)
         print("Uploaded to", url)
+
 
 asyncio.run(main())
 ```

@@ -51,8 +51,10 @@ from resumable_upload import TusServer, TusHTTPRequestHandler, SQLiteStorage
 storage = SQLiteStorage(db_path="uploads.db", upload_dir="uploads")
 tus_server = TusServer(storage=storage, base_path="/files")
 
+
 class Handler(TusHTTPRequestHandler):
     pass
+
 
 Handler.tus_server = tus_server
 server = HTTPServer(("0.0.0.0", 8080), Handler)
@@ -65,16 +67,18 @@ server.serve_forever()
 ```python
 from resumable_upload import TusClient, UploadStats
 
+
 def progress(stats: UploadStats):
-    print(f"진행률: {stats.progress_percent:.1f}% | "
-          f"{stats.uploaded_bytes}/{stats.total_bytes} 바이트 | "
-          f"속도: {stats.upload_speed_mbps:.2f} MB/s")
+    print(
+        f"진행률: {stats.progress_percent:.1f}% | "
+        f"{stats.uploaded_bytes}/{stats.total_bytes} 바이트 | "
+        f"속도: {stats.upload_speed_mbps:.2f} MB/s"
+    )
+
 
 client = TusClient("http://localhost:8080/files")
 upload_url = client.upload_file(
-    "large_file.bin",
-    metadata={"filename": "large_file.bin"},
-    progress_callback=progress
+    "large_file.bin", metadata={"filename": "large_file.bin"}, progress_callback=progress
 )
 print(f"업로드 완료: {upload_url}")
 ```
@@ -86,9 +90,11 @@ print(f"업로드 완료: {upload_url}")
 import asyncio
 from resumable_upload import AsyncTusClient
 
+
 async def main():
     async with AsyncTusClient("http://localhost:8080/files") as client:
         url = await client.upload_file("large_file.bin")
+
 
 asyncio.run(main())
 ```
@@ -114,9 +120,17 @@ TusClient("...", checksum="sha256")
 관측/재시도 세밀 제어:
 
 ```python
-def before(method, url, headers): print(f"-> {method} {url}")
-def after(method, url, status):   print(f"<- {method} {status}")
-def should_retry(err, attempt):   return not isinstance(err, PermissionError)
+def before(method, url, headers):
+    print(f"-> {method} {url}")
+
+
+def after(method, url, status):
+    print(f"<- {method} {status}")
+
+
+def should_retry(err, attempt):
+    return not isinstance(err, PermissionError)
+
 
 client = TusClient(
     "...",
