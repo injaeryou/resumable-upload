@@ -89,7 +89,7 @@ A complete, runnable native-async backend lives in `examples/server/async_storag
 AWS S3 backend using multipart uploads. Requires `pip install resumable-upload[s3]`.
 
 ```python
-from resumable_upload.storage_s3 import S3Storage
+from resumable_upload.storage.s3_storage import S3Storage
 
 storage = S3Storage(
     bucket="my-uploads",
@@ -131,7 +131,7 @@ info = storage.get_file_info(upload_id)
 Google Cloud Storage backend using compose API. Requires `pip install resumable-upload[gcs]`.
 
 ```python
-from resumable_upload.storage_gcs import GCSStorage
+from resumable_upload.storage.gcs_storage import GCSStorage
 
 storage = GCSStorage(
     bucket="my-uploads",
@@ -168,7 +168,7 @@ info = storage.get_file_info(upload_id)
 Azure Blob Storage backend using staged blocks. Requires `pip install resumable-upload[azure]`.
 
 ```python
-from resumable_upload.storage_azure import AzureBlobStorage
+from resumable_upload.storage.azure_storage import AzureBlobStorage
 
 storage = AzureBlobStorage(
     container="my-uploads",
