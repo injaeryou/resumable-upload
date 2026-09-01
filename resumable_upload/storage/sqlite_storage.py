@@ -39,15 +39,37 @@ class SQLiteStorage(Storage):
         self.timeout = timeout
         os.makedirs(upload_dir, exist_ok=True)
         self._file_locks: dict[str, threading.Lock] = {}
+        self._file_lock_holders: dict[str, int] = {}
         self._file_locks_lock = threading.Lock()
         self._init_db()
 
-    def _get_file_lock(self, upload_id: str) -> threading.Lock:
-        """Get or create a per-upload threading lock."""
+    @contextlib.contextmanager
+    def _upload_lock(self, upload_id: str):
+        """Hold the per-upload lock, reclaiming the entry once nobody wants it.
+
+        The entry is refcounted rather than dropped when an upload completes:
+        evicting a lock somebody still holds hands the next caller a brand new
+        ``Lock``, which silently voids the mutual exclusion the holder is
+        relying on. Refcounting also keeps the dict to locks currently in use,
+        so abandoned uploads no longer accumulate entries.
+        """
         with self._file_locks_lock:
-            if upload_id not in self._file_locks:
-                self._file_locks[upload_id] = threading.Lock()
-            return self._file_locks[upload_id]
+            lock = self._file_locks.get(upload_id)
+            if lock is None:
+                lock = self._file_locks[upload_id] = threading.Lock()
+            self._file_lock_holders[upload_id] = self._file_lock_holders.get(upload_id, 0) + 1
+        lock.acquire()
+        try:
+            yield
+        finally:
+            lock.release()
+            with self._file_locks_lock:
+                remaining = self._file_lock_holders[upload_id] - 1
+                if remaining:
+                    self._file_lock_holders[upload_id] = remaining
+                else:
+                    del self._file_lock_holders[upload_id]
+                    del self._file_locks[upload_id]
 
     def _init_db(self) -> None:
         """Initialize database schema."""
@@ -209,7 +231,7 @@ class SQLiteStorage(Storage):
             conn.close()
 
     def complete_upload(self, upload_id: str) -> bool:
-        """Mark upload as completed, clean up lock, and report first completion.
+        """Mark upload as completed and report first completion.
 
         Uses a conditional ``UPDATE ... WHERE completed = 0`` so only the call
         that actually transitions the row returns True (the base contract). If
@@ -227,12 +249,16 @@ class SQLiteStorage(Storage):
             first_completion = cursor.rowcount == 1
         finally:
             conn.close()
-        with self._file_locks_lock:
-            self._file_locks.pop(upload_id, None)
         return first_completion
 
     def delete_upload(self, upload_id: str) -> None:
-        """Delete an upload entry."""
+        """Delete an upload entry.
+
+        Unlinks under the per-upload lock: expiry cleanup runs on a request
+        thread without the server's own lock, so without this it can remove a
+        file another thread is mid-``write_chunk`` on. On POSIX the unlink
+        succeeds and the writer's bytes go to an orphaned inode.
+        """
         conn = sqlite3.connect(self.db_path, timeout=self.timeout)
         try:
             conn.execute("DELETE FROM uploads WHERE upload_id = ?", (upload_id,))
@@ -240,14 +266,10 @@ class SQLiteStorage(Storage):
         finally:
             conn.close()
 
-        # Delete file if exists
-        file_path = self.get_file_path(upload_id)
-        if os.path.exists(file_path):
-            os.remove(file_path)
-
-        # Remove per-upload lock entry
-        with self._file_locks_lock:
-            self._file_locks.pop(upload_id, None)
+        with self._upload_lock(upload_id):
+            file_path = self.get_file_path(upload_id)
+            if os.path.exists(file_path):
+                os.remove(file_path)
 
     def write_chunk(self, upload_id: str, offset: int, data: bytes) -> None:
         """Write a chunk of data to the upload file.
@@ -256,15 +278,17 @@ class SQLiteStorage(Storage):
         (in-process) combined with fcntl.flock (cross-process, POSIX only).
         """
         file_path = self.get_file_path(upload_id)
-        if not os.path.exists(file_path):
-            with open(file_path, "wb"):
-                pass
-        lock = self._get_file_lock(upload_id)
-        with lock, open(file_path, "r+b") as f:
-            if _HAS_FCNTL:
-                _fcntl.flock(f, _fcntl.LOCK_EX)
-            f.seek(offset)
-            f.write(data)
+        with self._upload_lock(upload_id):
+            # Create under the lock too: a concurrent delete between the
+            # create and the open would leave the open to fail.
+            if not os.path.exists(file_path):
+                with open(file_path, "wb"):
+                    pass
+            with open(file_path, "r+b") as f:
+                if _HAS_FCNTL:
+                    _fcntl.flock(f, _fcntl.LOCK_EX)
+                f.seek(offset)
+                f.write(data)
 
     def read_file(self, upload_id: str) -> bytes:
         """Read the complete uploaded file."""
@@ -448,7 +472,7 @@ class SQLiteStorage(Storage):
         # idempotent (rewrites the final file from scratch), so retrying is
         # safe. The per-upload lock serializes in-process callers; concurrent
         # PATCHes completing different partials still assemble at most once.
-        with self._get_file_lock(final_id):
+        with self._upload_lock(final_id):
             conn = sqlite3.connect(self.db_path, timeout=self.timeout)
             try:
                 cursor = conn.execute(
