@@ -8,6 +8,8 @@ The package installs a `resumable-upload` console script that runs a TUS server 
 resumable-upload serve --host 0.0.0.0 --port 8080 --upload-dir ./uploads
 ```
 
+`serve` handles each connection on its own thread, so concurrent `PATCH`es, `--parallel` uploads and lock contention behave the way they will in production. `SIGINT`/`SIGTERM` stop accepting new connections and wait for in-flight requests to finish, bounded by `--request-timeout` (30s default) — set it below your orchestrator's grace period so a stalled client can't push the drain into a `SIGKILL`. Threads are one-per-connection and uncapped, so put the bundled server behind a reverse proxy rather than exposing it directly.
+
 ### Flags
 
 | Flag | Default | Description |
@@ -24,6 +26,7 @@ resumable-upload serve --host 0.0.0.0 --port 8080 --upload-dir ./uploads
 | `--disable-concatenation` | off | Reject `Upload-Concat` requests with `400` and drop the concatenation extensions |
 | `--max-size` | `0` | Max upload size in bytes (0 = unlimited) |
 | `--max-chunk-size` | `0` | Max single PATCH size in bytes (0 = unlimited) |
+| `--request-timeout` | `30` | Socket read timeout in seconds; also caps how long a stalled connection delays a graceful shutdown |
 | `--upload-expiry` | unset | Upload expiry in seconds (unset = no expiry) |
 | `--cors-origin` | unset | `Access-Control-Allow-Origin` value (unset = no CORS) |
 | `--cors-credentials` | off | Send `Access-Control-Allow-Credentials`; a `*` origin is echoed per request |

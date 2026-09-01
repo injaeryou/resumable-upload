@@ -6,12 +6,26 @@ import argparse
 import logging
 import signal
 import sys
-from http.server import HTTPServer
+import threading
+from http.server import ThreadingHTTPServer
 
 from resumable_upload.server import TusHTTPRequestHandler, TusServer
 from resumable_upload.storage import SQLiteStorage
 
 log = logging.getLogger("resumable_upload.cli")
+
+
+class _ThreadingHTTPServer(ThreadingHTTPServer):
+    """One thread per connection, joined on close so shutdown drains.
+
+    ``daemon_threads = False`` makes ``server_close()`` block on in-flight
+    requests instead of killing them at interpreter exit, so SIGTERM finishes
+    the chunk being written rather than truncating it. A stalled connection can
+    hold shutdown for up to ``request_timeout`` (30s default), which is the
+    socket read timeout that eventually reaps it.
+    """
+
+    daemon_threads = False
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -75,6 +89,15 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=0,
         help="Max chunk size in bytes (0 = unlimited, default: 0)",
+    )
+    serve.add_argument(
+        "--request-timeout",
+        type=int,
+        default=30,
+        help=(
+            "Socket read timeout in seconds; also caps how long a stalled "
+            "connection can delay a graceful shutdown (default: 30)"
+        ),
     )
     serve.add_argument(
         "--upload-expiry",
@@ -198,6 +221,7 @@ def _serve(args: argparse.Namespace) -> int:
         max_size=args.max_size,
         max_chunk_size=args.max_chunk_size,
         upload_expiry=args.upload_expiry,
+        request_timeout=args.request_timeout,
         cors_allow_origins=args.cors_origin,
         cors_allow_credentials=args.cors_credentials,
         cors_max_age=args.cors_max_age,
@@ -221,11 +245,14 @@ def _serve(args: argparse.Namespace) -> int:
 
     Handler.tus_server = tus
 
-    httpd = HTTPServer((args.host, args.port), Handler)
+    httpd = _ThreadingHTTPServer((args.host, args.port), Handler)
 
     def _shutdown(_signum: int, _frame: object) -> None:
-        log.info("Shutdown signal received; stopping.")
-        httpd.shutdown()
+        log.info("Shutdown signal received; draining.")
+        # shutdown() blocks until serve_forever() returns, and serve_forever()
+        # runs on the thread this signal handler interrupts — calling it inline
+        # deadlocks the process. Hand it to a thread that can outlive us.
+        threading.Thread(target=httpd.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGINT, _shutdown)
     signal.signal(signal.SIGTERM, _shutdown)

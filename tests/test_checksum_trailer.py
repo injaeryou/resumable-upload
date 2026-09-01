@@ -243,7 +243,7 @@ def test_cli_serve_enables_checksum_trailer(tmp_path, monkeypatch):
 
     captured = {}
 
-    class FakeHTTPServer:
+    class FakeThreadingHTTPServer:
         def __init__(self, addr, handler):
             captured["server"] = handler.tus_server
             self.server_address = (addr[0], 0)
@@ -257,7 +257,7 @@ def test_cli_serve_enables_checksum_trailer(tmp_path, monkeypatch):
         def server_close(self):
             pass
 
-    monkeypatch.setattr(cli, "HTTPServer", FakeHTTPServer)
+    monkeypatch.setattr(cli, "_ThreadingHTTPServer", FakeThreadingHTTPServer)
     monkeypatch.setattr(
         "sys.argv",
         [
