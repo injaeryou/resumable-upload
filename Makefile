@@ -27,10 +27,10 @@ help:
 
 install:
 	@command -v uv >/dev/null 2>&1 || { echo "Error: uv is not installed. Install it with: curl -LsSf https://astral.sh/uv/install.sh | sh"; exit 1; }
-	uv pip install -e ".[dev,test]"
+	uv pip install -e ".[dev,test,all]"
 
 install-pip:
-	$(PYTHON) -m pip install -e ".[dev,test]"
+	$(PYTHON) -m pip install -e ".[dev,test,all]"
 
 lint:
 	$(RUN) ruff check .
