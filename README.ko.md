@@ -40,6 +40,20 @@ uv pip install resumable-upload
 pip install resumable-upload
 ```
 
+### 선택 extras
+
+코어 설치는 런타임 의존성이 없습니다. 필요한 기능만 골라 설치하세요:
+
+```bash
+pip install "resumable-upload[async]"         # AsyncTusClient (httpx)
+pip install "resumable-upload[s3]"            # AWS S3 스토리지 백엔드
+pip install "resumable-upload[gcs]"           # Google Cloud Storage 백엔드
+pip install "resumable-upload[azure]"         # Azure Blob Storage 백엔드
+pip install "resumable-upload[redis]"         # RedisLockBackend
+pip install "resumable-upload[all-storage]"   # 클라우드 백엔드 전체
+pip install "resumable-upload[all]"           # 선택 기능 전체
+```
+
 ## 🚀 빠른 시작
 
 ### 기본 서버

@@ -201,7 +201,7 @@ Out-of-band: `TusServer.terminate_upload(upload_id)` deletes + fires the post-ho
 
 ```bash
 # Install for development
-uv pip install -e ".[dev,test,all-storage]"
+uv pip install -e ".[dev,test,all]"
 
 # Run all tests with coverage
 pytest --cov=resumable_upload --cov-report=term-missing

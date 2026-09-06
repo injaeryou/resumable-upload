@@ -43,6 +43,20 @@ uv pip install resumable-upload
 pip install resumable-upload
 ```
 
+### Optional extras
+
+The core install has zero runtime dependencies. Opt into the features you need:
+
+```bash
+pip install "resumable-upload[async]"         # AsyncTusClient (httpx)
+pip install "resumable-upload[s3]"            # AWS S3 storage backend
+pip install "resumable-upload[gcs]"           # Google Cloud Storage backend
+pip install "resumable-upload[azure]"         # Azure Blob Storage backend
+pip install "resumable-upload[redis]"         # RedisLockBackend
+pip install "resumable-upload[all-storage]"   # All cloud backends
+pip install "resumable-upload[all]"           # Every optional feature
+```
+
 ## 🚀 Quick Start
 
 ### Basic Server
