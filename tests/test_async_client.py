@@ -300,3 +300,29 @@ async def test_async_deferred_length_commits(asgi_base):
         head = await c.request("HEAD", url, headers={"Tus-Resumable": "1.0.0"})
         assert head.headers["Upload-Offset"] == str(len(data))
         assert head.headers["Upload-Length"] == str(len(data))
+
+
+@pytest.mark.anyio
+async def test_standalone_call_keeps_uploader_client_alive(asgi_base, tmp_path):
+    """create_uploader hands out the httpx client; auto-close must not reclaim it.
+
+    Outside `async with`, every @_managed method closes the client on its way
+    out. An AsyncUploader borrowed from create_uploader holds that same client,
+    so a plain get_upload_info between the two calls used to close it under the
+    uploader's feet.
+    """
+    import os
+
+    from resumable_upload.client.aio.client import AsyncTusClient
+
+    transport, base = asgi_base
+    f = tmp_path / "data.bin"
+    payload = os.urandom(20_000)
+    f.write_bytes(payload)
+
+    client = AsyncTusClient(base, _transport=transport, chunk_size=4096)
+    uploader = await client.create_uploader(str(f))
+    assert (await client.get_upload_info(uploader.url))["offset"] == 0
+    await uploader.upload()
+    assert (await client.get_upload_info(uploader.url))["offset"] == len(payload)
+    await client.aclose()

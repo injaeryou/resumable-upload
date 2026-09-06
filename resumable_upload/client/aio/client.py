@@ -26,6 +26,10 @@ def _managed(method):
     public entry point opens the httpx client lazily and must close it, or the
     connection pool leaks. A depth counter makes nested public calls (e.g.
     parallel upload -> create_partial_upload) close only at the outermost one.
+
+    ``create_uploader`` hands the live client to an ``AsyncUploader`` that
+    outlives the call, so it marks the client borrowed and auto-close stands
+    down — the caller owns ``aclose()`` from then on.
     """
 
     @functools.wraps(method)
@@ -37,7 +41,7 @@ def _managed(method):
             return await method(self, *args, **kwargs)
         finally:
             self._call_depth -= 1
-            if self._call_depth == 0:
+            if self._call_depth == 0 and not self._client_borrowed:
                 await self.aclose()
 
     return wrapper
@@ -130,6 +134,7 @@ class AsyncTusClient:
         self._client: Any | None = None  # httpx.AsyncClient, built lazily
         self._entered = False  # True while inside `async with`
         self._call_depth = 0  # nesting depth for standalone auto-close
+        self._client_borrowed = False  # True once an AsyncUploader holds the client
 
     # ------------------------------------------------------------------
     # Async context manager
@@ -149,6 +154,7 @@ class AsyncTusClient:
         if self._client is not None:
             await self._client.aclose()
             self._client = None
+        self._client_borrowed = False
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -670,6 +676,11 @@ class AsyncTusClient:
             metadata: Metadata dictionary (only used when creating a new upload).
             chunk_size: Chunk size override (uses client default when None).
 
+        The uploader borrows this client's httpx connection pool rather than
+        opening its own, so on a standalone client (no ``async with``) the
+        usual auto-close is suspended from here on: call ``aclose()`` when the
+        uploader is done, or use ``async with`` and let it close for you.
+
         Returns:
             An AsyncUploader ready to call ``upload()`` on.
 
@@ -694,6 +705,9 @@ class AsyncTusClient:
 
         actual_chunk_size = chunk_size if chunk_size is not None else self.chunk_size
         client = await self._ensure_client()
+        # The uploader outlives this call and uses the client directly, so
+        # standalone auto-close must stand down; the caller closes the client.
+        self._client_borrowed = True
         return await AsyncUploader.open(
             client,
             upload_url,
