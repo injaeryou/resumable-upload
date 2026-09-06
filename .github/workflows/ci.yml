@@ -101,7 +101,13 @@ jobs:
       working-directory: tests/interop
 
     - name: Provision tusd
-      run: echo "TUSD_BIN=$(sh tests/interop/fetch_tusd.sh)" >> "$GITHUB_ENV"
+      # Assign first: under `bash -e` a failing command substitution inside
+      # `echo ...` leaves the echo successful, so the lane used to go green
+      # with TUSD_BIN empty and every tusd test skipped.
+      run: |
+        TUSD_BIN="$(sh tests/interop/fetch_tusd.sh)"
+        test -x "$TUSD_BIN" || { echo "::error::tusd provisioning produced no binary"; exit 1; }
+        echo "TUSD_BIN=$TUSD_BIN" >> "$GITHUB_ENV"
 
     - name: Run interop lanes
       run: pytest tests/test_interop.py -v -rs
