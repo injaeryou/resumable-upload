@@ -275,7 +275,7 @@ that point the client stays open and you own it:
 client = AsyncTusClient(url)
 uploader = await client.create_uploader("large_file.bin")
 await uploader.upload()
-await client.aclose()          # your job once you have borrowed the client
+await client.aclose()  # your job once you have borrowed the client
 ```
 
 ### AsyncUploader
