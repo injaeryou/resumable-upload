@@ -257,6 +257,8 @@ final_url = client.create_final_upload(
 
 **`TusServer`**: `storage`, `base_path` (기본값 `/files`), `max_size`, `upload_expiry`, `cors_allow_origins`, `request_timeout` (기본값 30s — Slowloris 공격 방어) — 프록시/`Location` 설정, CORS 자격 증명, 다운로드, 체크섬 트레일러, 기능 토글 등 전체 목록: **[서버 API 레퍼런스](https://injaeryou.github.io/resumable-upload/api-reference/server/)**
 
+**`lock_backend`**: `TusServer`는 기본으로 in-process `InMemoryLockBackend`를 설치하므로 한 업로드에 대한 동시 `PATCH`/`DELETE`가 프로세스 안에서 직렬화됩니다 — `lock_wait_seconds`(5초)를 넘기면 진 쪽은 **`423 Locked`**를 받습니다. 멀티프로세스·멀티노드 배포는 `RedisLockBackend`를 넘겨야 합니다. 끄려면 `lock_backend=None`을 넘기거나, 락이 없는 `TusServerCore`를 쓰세요: **[락 백엔드](https://injaeryou.github.io/resumable-upload/operations/locks/)**
+
 **`SQLiteStorage`**: `db_path` (기본값 `uploads.db`), `upload_dir` (기본값 `uploads`) — 업로드별 락으로 스레드 안전; `fcntl.flock`으로 프로세스 안전
 
 **`FileURLStorage`**: `storage_path` (기본값 `.tus_urls.json`) — `threading.Lock`으로 스레드 안전; `fcntl.flock`으로 프로세스 안전
