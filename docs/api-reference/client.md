@@ -264,6 +264,20 @@ the file is split into N byte ranges and uploaded concurrently via `asyncio.gath
 `find_previous_uploads` stays synchronous — it is a pure local fingerprint
 lookup with no I/O, so there is no async variant.
 
+#### Client lifetime
+
+Inside `async with`, the httpx client lives for the block. Outside it, each
+call opens the client and closes it again on the way out — except
+`create_uploader`, which hands the live client to the `AsyncUploader`. From
+that point the client stays open and you own it:
+
+```python
+client = AsyncTusClient(url)
+uploader = await client.create_uploader("large_file.bin")
+await uploader.upload()
+await client.aclose()  # your job once you have borrowed the client
+```
+
 ### AsyncUploader
 
 ```python
