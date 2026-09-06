@@ -82,7 +82,7 @@ Compliance status against the [TUS resumable upload protocol v1.0.0](https://tus
 | `Upload-Checksum` (configurable algorithm) | ✅ | `sha1` default; `sha256`, `sha512`, `md5` opt-in |
 | Cross-session URL persistence (fingerprint-based) | ✅ | `FileURLStorage` / `SQLiteURLStorage` / `InMemoryURLStorage` |
 | Full-file fingerprint (not just first 64 KB) | ✅ | SHA-256 of entire content (default; `PartialMD5Fingerprint` and `CallableFingerprint` available) |
-| `409` on concurrent offset conflict (atomic CAS) | ✅ | Every backend does a real compare-and-swap: SQLite `UPDATE ... WHERE offset = ?`, S3/Azure conditional write on the info object's ETag, GCS `if_generation_match`. Returns `409` when the CAS loses. |
+| `409` on concurrent offset conflict (atomic CAS) | ✅ | Every backend does a real compare-and-swap: SQLite `UPDATE ... WHERE offset = ?`, S3/Azure conditional write on the info object's ETag, GCS `if_generation_match`. Returns `409` when the CAS loses. On the cloud backends the CAS covers the offset write alone — `write_chunk` rewrites the whole info object, so a **cross-process** PATCH pair still needs a [lock backend](operations/locks.md) to be serialized. SQLite keeps the offset in its own column and is atomic without one. |
 | `409` received → HEAD re-sync before retry | ✅ | Client fetches current offset and re-seeks before retrying chunk |
 | Parallel concatenation upload | ✅ | `parallel_uploads=N` on `upload_file()` |
 | Manual partial / final concatenation primitives | ✅ | `create_partial_upload()` / `create_final_upload()` |

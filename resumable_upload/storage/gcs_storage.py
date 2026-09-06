@@ -171,6 +171,13 @@ class GCSStorage(Storage):
         # only if the object hasn't changed since we read it. A concurrent
         # writer that already advanced the offset bumps the generation, so the
         # losing if_generation_match write gets 412 and returns False.
+        #
+        # Scope: this guards the offset write only. write_chunk() rewrites the
+        # same info object unconditionally from a snapshot taken at its start,
+        # so two PATCHes racing across processes can still lose an update; a
+        # LockBackend is what serializes that pair. Folding the chunk write and
+        # the offset commit into a single conditional write would remove the
+        # need for one.
         blob = self.gcs_bucket.get_blob(self._info_key(upload_id))
         if blob is None:
             return False

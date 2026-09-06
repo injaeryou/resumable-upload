@@ -274,6 +274,8 @@ Full API documentation is available on the docs site: [Client](https://injaeryou
 
 **`TusServer`**: `storage`, `base_path` (default `/files`), `max_size`, `upload_expiry`, `cors_allow_origins`, `request_timeout` (default 30s — Slowloris protection) — plus proxy/`Location` config, CORS credentials, downloads, checksum trailers, feature toggles, and more: **[server API reference](https://injaeryou.github.io/resumable-upload/api-reference/server/)**
 
+**`lock_backend`**: `TusServer` installs an in-process `InMemoryLockBackend` by default, so concurrent `PATCH`/`DELETE` on one upload are serialized within a process — beyond `lock_wait_seconds` (5s) the loser gets **`423 Locked`**. Multi-process or multi-node deployments must pass a `RedisLockBackend`; pass `lock_backend=None` to opt out, or use `TusServerCore`, which stays lock-free: **[lock backends](https://injaeryou.github.io/resumable-upload/operations/locks/)**
+
 **`SQLiteStorage`**: `db_path` (default `uploads.db`), `upload_dir` (default `uploads`) — thread-safe via per-upload lock; process-safe via `fcntl.flock`
 
 **`FileURLStorage`**: `storage_path` (default `.tus_urls.json`) — thread-safe via `threading.Lock`; process-safe via `fcntl.flock`

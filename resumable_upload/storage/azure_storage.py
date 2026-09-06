@@ -204,6 +204,13 @@ class AzureBlobStorage(Storage):
         # if it hasn't changed (If-Match). A concurrent writer that already
         # advanced the offset changes the ETag, so the loser's conditional
         # upload raises ResourceModifiedError and returns False (invariant #6).
+        #
+        # Scope: this guards the offset write only. write_chunk() rewrites the
+        # same info object unconditionally from a snapshot taken at its start,
+        # so two PATCHes racing across processes can still lose an update; a
+        # LockBackend is what serializes that pair. Folding the chunk write and
+        # the offset commit into a single conditional write would remove the
+        # need for one.
         from azure.storage.blob import ContentSettings
 
         blob = self._get_blob_client(self._info_key(upload_id))

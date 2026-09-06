@@ -173,6 +173,13 @@ class S3Storage(Storage):
         # back only if it hasn't changed (S3 If-Match). Two concurrent writers
         # that both read offset==expected can't both win — the second's
         # conditional PUT gets 412 and returns False (TUS invariant #6).
+        #
+        # Scope: this guards the offset write only. write_chunk() rewrites the
+        # same info object unconditionally from a snapshot taken at its start,
+        # so two PATCHes racing across processes can still lose an update; a
+        # LockBackend is what serializes that pair. Folding the chunk write and
+        # the offset commit into a single conditional write would remove the
+        # need for one.
         try:
             resp = self.s3.get_object(Bucket=self.bucket, Key=self._info_key(upload_id))
         except ClientError as e:
