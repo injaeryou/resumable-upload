@@ -69,8 +69,9 @@ class Storage(ABC):
         """Update offset only if current value equals expected_offset.
 
         Returns True on success, False if offset already changed (concurrent conflict).
-        Default implementation is non-atomic; SQLiteStorage overrides with a
-        single conditional UPDATE for true atomicity.
+        The default implementation above is non-atomic; every shipped backend
+        overrides it with a real compare-and-swap — SQLite with a conditional
+        UPDATE, S3 and Azure with an If-Match ETag, GCS with if_generation_match.
         """
         upload = self.get_upload(upload_id)
         if upload is None or upload["offset"] != expected_offset:

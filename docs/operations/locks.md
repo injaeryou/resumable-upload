@@ -1,8 +1,12 @@
 # Distributed Locks
 
-Single-process `SQLiteStorage` serializes writes via `threading.Lock` and `fcntl.flock`. For multi-instance deployments — Kubernetes replicas, ALB-fronted servers behind shared cloud storage — you need cross-host coordination so concurrent PATCH/DELETE on the same upload can't interleave. `LockBackend` provides that.
+Concurrent PATCH/DELETE on the same upload must not interleave — two racing PATCHes at the same offset can otherwise write chunk bytes and advance the offset out of order and corrupt the committed data. `LockBackend` serializes those writes per `upload_id`.
+
+`TusServer` defaults to an in-process `InMemoryLockBackend`, so a server embedded in a threaded or async host (FastAPI, threaded WSGI) is safe **within one process** out of the box. Multi-instance deployments — Kubernetes replicas, ALB-fronted servers behind shared cloud storage — need cross-host coordination and **must** pass a distributed `RedisLockBackend`. (`TusServerCore` has no default lock.)
 
 ## Enabling
+
+`TusServer` already installs `InMemoryLockBackend`; pass `lock_backend` only to tune the timeouts, switch to Redis, or opt out:
 
 ```python
 from resumable_upload import SQLiteStorage, TusServer
@@ -10,13 +14,16 @@ from resumable_upload.locks import InMemoryLockBackend
 
 server = TusServer(
     storage=SQLiteStorage(),
-    lock_backend=InMemoryLockBackend(),
+    lock_backend=InMemoryLockBackend(),  # the default; shown for the timeout tuning
     lock_ttl_seconds=60.0,  # auto-release if the holder crashes
     lock_wait_seconds=5.0,  # 423 Locked when contention exceeds this
 )
+
+# Opt out entirely (no serialization — only safe if writes can never race):
+server = TusServer(storage=SQLiteStorage(), lock_backend=None)
 ```
 
-When `lock_backend` is set, every PATCH and DELETE acquires a key keyed by `upload_id` before performing the write. Contention beyond `lock_wait_seconds` returns `423 Locked` — the standard "try again later" signal.
+When a `lock_backend` is set, every PATCH and DELETE acquires a key keyed by `upload_id` before performing the write. Contention beyond `lock_wait_seconds` returns `423 Locked` — the standard "try again later" signal.
 
 ## Backends
 

@@ -169,11 +169,32 @@ class S3Storage(Storage):
         self._write_info(upload_id, info)
 
     def update_offset_atomic(self, upload_id: str, expected_offset: int, new_offset: int) -> bool:
-        info = self._read_info(upload_id)
-        if info is None or info["offset"] != expected_offset:
+        # Conditional compare-and-swap: read the info object's ETag, then write
+        # back only if it hasn't changed (S3 If-Match). Two concurrent writers
+        # that both read offset==expected can't both win — the second's
+        # conditional PUT gets 412 and returns False (TUS invariant #6).
+        try:
+            resp = self.s3.get_object(Bucket=self.bucket, Key=self._info_key(upload_id))
+        except ClientError as e:
+            if e.response["Error"]["Code"] == "NoSuchKey":
+                return False
+            raise
+        info = json.loads(resp["Body"].read())
+        if info["offset"] != expected_offset:
             return False
         info["offset"] = new_offset
-        self._write_info(upload_id, info)
+        try:
+            self.s3.put_object(
+                Bucket=self.bucket,
+                Key=self._info_key(upload_id),
+                Body=json.dumps(info).encode(),
+                ContentType="application/json",
+                IfMatch=resp["ETag"],
+            )
+        except ClientError as e:
+            if e.response["Error"]["Code"] in ("PreconditionFailed", "412"):
+                return False
+            raise
         return True
 
     def delete_upload(self, upload_id: str) -> None:

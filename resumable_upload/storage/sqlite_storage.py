@@ -209,23 +209,27 @@ class SQLiteStorage(Storage):
             conn.close()
 
     def complete_upload(self, upload_id: str) -> bool:
-        """Mark upload as completed, clean up lock, and return True.
+        """Mark upload as completed, clean up lock, and report first completion.
 
-        Sets completed=1 in the DB (idempotent) and removes the per-upload
-        lock entry. Always returns True for local storage.
+        Uses a conditional ``UPDATE ... WHERE completed = 0`` so only the call
+        that actually transitions the row returns True (the base contract). If
+        two callers assemble the same final (the crash-reclaim clause in
+        :meth:`try_assemble_final` can let that happen across processes), only
+        the first fires ``on_upload_complete`` — the second gets False.
         """
         conn = sqlite3.connect(self.db_path, timeout=self.timeout)
         try:
-            conn.execute(
-                "UPDATE uploads SET completed = 1 WHERE upload_id = ?",
+            cursor = conn.execute(
+                "UPDATE uploads SET completed = 1 WHERE upload_id = ? AND completed = 0",
                 (upload_id,),
             )
             conn.commit()
+            first_completion = cursor.rowcount == 1
         finally:
             conn.close()
         with self._file_locks_lock:
             self._file_locks.pop(upload_id, None)
-        return True
+        return first_completion
 
     def delete_upload(self, upload_id: str) -> None:
         """Delete an upload entry."""

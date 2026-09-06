@@ -409,7 +409,7 @@ async def handle_patch_async(
         if server._metrics is not None:
             server._metrics.inc("tusd_uploads_finished_total")
         if server._on_upload_complete and not upload.get("is_partial"):
-            file_info = server.storage.get_file_info(upload_id)
+            file_info = await server.storage.get_file_info_async(upload_id)
             completion_result = server._invoke_post_hook(
                 server._on_upload_complete,
                 upload_id,

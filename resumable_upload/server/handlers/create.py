@@ -417,7 +417,7 @@ async def handle_create_async(
         # Partials never fire on_upload_complete individually (parity with
         # the PATCH completion path); only the assembled final does.
         if server._on_upload_complete and not plan.is_partial:
-            file_info = server.storage.get_file_info(plan.upload_id)
+            file_info = await server.storage.get_file_info_async(plan.upload_id)
             completion_result = server._invoke_post_hook(
                 server._on_upload_complete,
                 plan.upload_id,
@@ -442,6 +442,11 @@ async def handle_create_final_async(
         declared = 0
         for pid in plan.partial_ids:
             p = await server.storage.get_upload_async(pid)
+            if p and p.get("upload_length") is None:
+                return server._error_response(
+                    400,
+                    "Cannot enforce Tus-Max-Size on a final over deferred-length partials",
+                )
             if p and p.get("upload_length") is not None:
                 declared += p["upload_length"]
         if declared > server.max_size:
@@ -478,7 +483,7 @@ async def handle_create_final_async(
     if server._metrics is not None:
         server._metrics.inc("tusd_uploads_finished_total")
     if server._on_upload_complete:
-        file_info = server.storage.get_file_info(plan.final_id)
+        file_info = await server.storage.get_file_info_async(plan.final_id)
         server._invoke_post_hook(
             server._on_upload_complete, plan.final_id, plan.metadata, file_info
         )

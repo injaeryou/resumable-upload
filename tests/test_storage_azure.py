@@ -13,10 +13,20 @@ class FakeBlobClient:
         self.blob_name = name
         self._staged_blocks: dict[str, bytes] = {}
 
-    def upload_blob(self, data, overwrite=False, content_settings=None):
+    def upload_blob(
+        self, data, overwrite=False, content_settings=None, etag=None, match_condition=None
+    ):
         if isinstance(data, str):
             data = data.encode()
+        # Enforce the If-Match condition so the CAS conflict path is testable.
+        if match_condition is not None and etag is not None:
+            current = self._container._etags.get(self.blob_name)
+            if current is not None and etag != current:
+                from azure.core.exceptions import ResourceModifiedError
+
+                raise ResourceModifiedError("etag mismatch")
         self._container._blobs[self.blob_name] = data
+        self._container._bump_etag(self.blob_name)
         # Clear staged blocks on direct upload
         self._staged_blocks.clear()
 
@@ -26,15 +36,21 @@ class FakeBlobClient:
         if self.blob_name not in self._container._blobs:
             raise ResourceNotFoundError(f"Blob {self.blob_name} not found")
         data = self._container._blobs[self.blob_name]
+        etag = self._container._etags.get(self.blob_name)
+
+        class _Props:
+            def __init__(self, etag):
+                self.etag = etag
 
         class FakeDownload:
-            def __init__(self, content):
+            def __init__(self, content, etag):
                 self._content = content
+                self.properties = _Props(etag)
 
             def readall(self):
                 return self._content
 
-        return FakeDownload(data)
+        return FakeDownload(data, etag)
 
     def delete_blob(self):
         from azure.core.exceptions import ResourceNotFoundError
@@ -76,6 +92,12 @@ class FakeContainerClient:
         self._blobs: dict[str, bytes] = {}
         self._staged: dict[str, dict[str, bytes]] = {}
         self._blob_clients: dict[str, FakeBlobClient] = {}
+        self._etags: dict[str, str] = {}
+        self._etag_counter = 0
+
+    def _bump_etag(self, name: str) -> None:
+        self._etag_counter += 1
+        self._etags[name] = f'"etag-{self._etag_counter}"'
 
     def get_blob_client(self, blob_name: str) -> FakeBlobClient:
         if blob_name not in self._blob_clients:
@@ -100,6 +122,12 @@ def mock_azure_imports():
     class ResourceNotFoundError(Exception):
         pass
 
+    class ResourceModifiedError(Exception):
+        pass
+
+    class MatchConditions:
+        IfNotModified = "IfNotModified"
+
     class BlobBlock:
         def __init__(self, block_id):
             self.block_id = block_id
@@ -119,8 +147,10 @@ def mock_azure_imports():
     # Build module hierarchy
     azure_mod = types.ModuleType("azure")
     core_mod = types.ModuleType("azure.core")
+    core_mod.MatchConditions = MatchConditions
     core_exc_mod = types.ModuleType("azure.core.exceptions")
     core_exc_mod.ResourceNotFoundError = ResourceNotFoundError
+    core_exc_mod.ResourceModifiedError = ResourceModifiedError
     storage_mod = types.ModuleType("azure.storage")
     blob_mod = types.ModuleType("azure.storage.blob")
     blob_mod.BlobServiceClient = BlobServiceClient
@@ -310,6 +340,32 @@ class TestAzureStorageOffset:
         assert storage.update_offset_atomic("conflict-id", 0, 50) is False
         upload = storage.get_upload("conflict-id")
         assert upload["offset"] == 30
+
+    def test_update_offset_atomic_loses_to_concurrent_writer(self, storage):
+        """A CAS that reads, then loses the race, must not clobber the winner.
+
+        Both writers see offset 0. The loser's write-back has to fail its
+        If-Match condition on the ETag the winner already changed — a plain
+        read-modify-write would silently overwrite it (TUS invariant #6).
+        """
+        storage.create_upload("cas-race", 100, {})
+        real_download = FakeBlobClient.download_blob
+        raced = []
+
+        def download_then_let_rival_win(blob_self):
+            downloader = real_download(blob_self)
+            if not raced:  # only interleave the first read
+                raced.append(True)
+                storage.update_offset("cas-race", 40)  # another node commits first
+            return downloader
+
+        FakeBlobClient.download_blob = download_then_let_rival_win
+        try:
+            assert storage.update_offset_atomic("cas-race", 0, 50) is False
+        finally:
+            FakeBlobClient.download_blob = real_download
+        assert raced, "the rival write never interleaved; the test proved nothing"
+        assert storage.get_upload("cas-race")["offset"] == 40
 
 
 # -- File info ---------------------------------------------------------------

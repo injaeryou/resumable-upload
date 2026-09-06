@@ -393,6 +393,12 @@ class Uploader:
             if progress_callback:
                 progress_callback(self.stats)
 
+        # A deferred-length upload of an empty file runs zero loop iterations,
+        # so Upload-Length is never committed and the upload stays incomplete
+        # forever. Send one final empty PATCH to commit the length.
+        if self._length_deferred and self.offset >= self.file_size:
+            self._upload_chunk(b"")
+
         return self.url
 
     @property

@@ -18,7 +18,8 @@ from resumable_upload.storage.base import Storage
 logger = logging.getLogger(__name__)
 
 try:
-    from azure.core.exceptions import ResourceNotFoundError
+    from azure.core import MatchConditions
+    from azure.core.exceptions import ResourceModifiedError, ResourceNotFoundError
     from azure.storage.blob import BlobBlock, BlobServiceClient
 except ImportError as e:
     raise ImportError(
@@ -199,11 +200,32 @@ class AzureBlobStorage(Storage):
         self._write_info(upload_id, info)
 
     def update_offset_atomic(self, upload_id: str, expected_offset: int, new_offset: int) -> bool:
-        info = self._read_info(upload_id)
-        if info is None or info["offset"] != expected_offset:
+        # Conditional compare-and-swap via the info blob's ETag: write back only
+        # if it hasn't changed (If-Match). A concurrent writer that already
+        # advanced the offset changes the ETag, so the loser's conditional
+        # upload raises ResourceModifiedError and returns False (invariant #6).
+        from azure.storage.blob import ContentSettings
+
+        blob = self._get_blob_client(self._info_key(upload_id))
+        try:
+            downloader = blob.download_blob()
+            etag = downloader.properties.etag
+            info = json.loads(downloader.readall())
+        except ResourceNotFoundError:
+            return False
+        if info["offset"] != expected_offset:
             return False
         info["offset"] = new_offset
-        self._write_info(upload_id, info)
+        try:
+            blob.upload_blob(
+                json.dumps(info).encode(),
+                overwrite=True,
+                content_settings=ContentSettings(content_type="application/json"),
+                etag=etag,
+                match_condition=MatchConditions.IfNotModified,
+            )
+        except ResourceModifiedError:
+            return False
         return True
 
     def delete_upload(self, upload_id: str) -> None:

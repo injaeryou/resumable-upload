@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 try:
     from google.cloud import storage as gcs_lib
-    from google.cloud.exceptions import NotFound
+    from google.cloud.exceptions import NotFound, PreconditionFailed
 except ImportError as e:
     raise ImportError(
         "google-cloud-storage is required for GCSStorage. "
@@ -167,11 +167,25 @@ class GCSStorage(Storage):
         self._write_info(upload_id, info)
 
     def update_offset_atomic(self, upload_id: str, expected_offset: int, new_offset: int) -> bool:
-        info = self._read_info(upload_id)
-        if info is None or info["offset"] != expected_offset:
+        # Conditional compare-and-swap via GCS object generation: write back
+        # only if the object hasn't changed since we read it. A concurrent
+        # writer that already advanced the offset bumps the generation, so the
+        # losing if_generation_match write gets 412 and returns False.
+        blob = self.gcs_bucket.get_blob(self._info_key(upload_id))
+        if blob is None:
+            return False
+        info = json.loads(blob.download_as_bytes())
+        if info["offset"] != expected_offset:
             return False
         info["offset"] = new_offset
-        self._write_info(upload_id, info)
+        try:
+            blob.upload_from_string(
+                json.dumps(info).encode(),
+                content_type="application/json",
+                if_generation_match=blob.generation,
+            )
+        except PreconditionFailed:
+            return False
         return True
 
     def delete_upload(self, upload_id: str) -> None:

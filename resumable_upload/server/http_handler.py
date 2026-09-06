@@ -74,6 +74,12 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
         assert self.tus_server is not None
         self.send_response(status)
         self.send_header("Tus-Resumable", self.tus_server.TUS_VERSION)
+        # Transport-level rejections short-circuit before the core, so add CORS
+        # here too — otherwise a browser can't read the status of a 400/413 that
+        # the chunked-body parser or size gate produced (cross-origin opaque).
+        origin = self.headers.get("Origin")
+        for key, value in self.tus_server._add_cors_headers({}, origin=origin).items():
+            self.send_header(key, value)
         self.end_headers()
         self.wfile.write(message)
 
