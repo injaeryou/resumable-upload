@@ -4,6 +4,7 @@ import os
 import shutil
 import sqlite3
 import tempfile
+import threading
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -68,6 +69,47 @@ class TestSQLiteStorage:
         storage.complete_upload(upload_id)
         upload = storage.get_upload(upload_id)
         assert upload["completed"] is True
+
+    def test_update_offset_atomic_success(self, storage):
+        """CAS advances the offset and reports success when expected matches."""
+        storage.create_upload("cas-ok", 1024, {})
+        assert storage.update_offset_atomic("cas-ok", 0, 512) is True
+        assert storage.get_upload("cas-ok")["offset"] == 512
+
+    def test_update_offset_atomic_conflict(self, storage):
+        """CAS is a no-op returning False when the expected offset is stale."""
+        storage.create_upload("cas-stale", 1024, {})
+        storage.update_offset("cas-stale", 256)
+        # Client still thinks offset is 0 (stale) -> reject, don't clobber.
+        assert storage.update_offset_atomic("cas-stale", 0, 512) is False
+        assert storage.get_upload("cas-stale")["offset"] == 256
+
+    def test_update_offset_atomic_race_exactly_one_winner(self, storage):
+        """Two threads racing the same expected offset: exactly one CAS wins.
+
+        This is the whole reason update_offset_atomic exists (TUS invariant:
+        concurrent PATCH with a stale offset must be rejected). A non-atomic
+        read-then-write would let both win and double-advance the offset.
+        """
+        storage.create_upload("cas-race", 4096, {})
+        barrier = threading.Barrier(2)
+        results: list[bool] = []
+        lock = threading.Lock()
+
+        def worker() -> None:
+            barrier.wait()  # release both threads simultaneously
+            won = storage.update_offset_atomic("cas-race", 0, 256)
+            with lock:
+                results.append(won)
+
+        threads = [threading.Thread(target=worker) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        assert sum(results) == 1, f"expected exactly one winner, got {results}"
+        assert storage.get_upload("cas-race")["offset"] == 256
 
     def test_write_and_read_chunk(self, storage):
         """Test writing and reading chunks."""
