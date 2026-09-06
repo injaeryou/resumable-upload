@@ -76,7 +76,8 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
         self.send_header("Tus-Resumable", self.tus_server.TUS_VERSION)
         # Transport-level rejections short-circuit before the core, so add CORS
         # here too — otherwise a browser can't read the status of a 400/413 that
-        # the chunked-body parser or size gate produced (cross-origin opaque).
+        # the body parser or the Content-Length size gates produced: the
+        # response is opaque cross-origin and surfaces as a network error.
         origin = self.headers.get("Origin")
         for key, value in self.tus_server._add_cors_headers({}, origin=origin).items():
             self.send_header(key, value)
@@ -172,30 +173,18 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
             try:
                 content_length = int(self.headers.get("Content-Length", 0))
             except (ValueError, TypeError):
-                self.send_response(400)
-                self.send_header("Tus-Resumable", self.tus_server.TUS_VERSION)
-                self.end_headers()
-                self.wfile.write(b"Invalid Content-Length header")
+                self._send_error(400, b"Invalid Content-Length header")
                 return
             if content_length < 0:
-                self.send_response(400)
-                self.send_header("Tus-Resumable", self.tus_server.TUS_VERSION)
-                self.end_headers()
-                self.wfile.write(b"Content-Length must not be negative")
+                self._send_error(400, b"Content-Length must not be negative")
                 return
             max_size = self.tus_server.max_size
             if max_size > 0 and content_length > max_size:
-                self.send_response(413)
-                self.send_header("Tus-Resumable", self.tus_server.TUS_VERSION)
-                self.end_headers()
-                self.wfile.write(b"Request entity too large")
+                self._send_error(413, b"Request entity too large")
                 return
             max_chunk = self.tus_server.max_chunk_size
             if method == "PATCH" and max_chunk > 0 and content_length > max_chunk:
-                self.send_response(413)
-                self.send_header("Tus-Resumable", self.tus_server.TUS_VERSION)
-                self.end_headers()
-                self.wfile.write(b"Chunk exceeds maximum chunk size")
+                self._send_error(413, b"Chunk exceeds maximum chunk size")
                 return
             if content_length > 0:
                 body = self.rfile.read(content_length)
