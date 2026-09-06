@@ -41,7 +41,7 @@ pip install resumable-upload[redis]
 
 ```python
 import redis
-from resumable_upload.locks_redis import RedisLockBackend
+from resumable_upload.locks.redis_lock import RedisLockBackend
 
 client = redis.from_url("redis://localhost:6379/0")
 server = TusServer(

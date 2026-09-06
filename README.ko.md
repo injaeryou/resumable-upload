@@ -196,7 +196,9 @@ resumable-upload serve --host 0.0.0.0 --port 8080 --upload-dir ./uploads
 python -m resumable_upload serve --port 8080
 ```
 
-플래그: `--host`, `--port`, `--base-path`, `--upload-dir`, `--db-path`, `--max-size`, `--max-chunk-size`, `--upload-expiry`, `--cors-origin`, `--log-level`. 자세한 내용은 `resumable-upload serve --help`로 확인하세요.
+플래그: `--host`, `--port`, `--base-path`, `--upload-dir`, `--db-path`, `--max-size`, `--max-chunk-size`, `--request-timeout`, `--upload-expiry`, `--cors-origin`, `--cors-credentials`, `--cors-max-age`, `--checksum-algorithms`, `--enable-downloads`, `--behind-proxy`, `--location-base-url`, `--disable-termination`, `--disable-concatenation`, `--metrics-path`, `--lock-backend`, `--redis-url`, `--log-level`. 자세한 내용은 `resumable-upload serve --help`로 확인하세요.
+
+`serve`는 연결마다 스레드를 하나씩 사용하므로 동시 `PATCH`, `--parallel` 업로드, 락 경합이 실제 운영 환경과 동일하게 동작합니다. `SIGINT`/`SIGTERM`을 받으면 새 연결을 받지 않고 처리 중인 요청이 끝나기를 기다린 뒤 종료하며, 대기 시간은 `--request-timeout`(기본 30초)으로 제한됩니다 — 멈춘 클라이언트 때문에 종료가 `SIGKILL`까지 밀리지 않도록 오케스트레이터의 grace period보다 작게 두세요. 연결당 스레드 하나를 상한 없이 사용하므로, 번들 서버는 직접 노출하지 말고 리버스 프록시 뒤에 두는 것을 권장합니다.
 
 ### 병렬 청크 업로드
 

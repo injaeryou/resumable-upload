@@ -309,3 +309,71 @@ class TestSQLiteStorage:
 
         upload = storage.get_upload(upload_id)
         assert upload["expires_at"] is not None
+
+
+class TestSQLiteStorageLockLifetime:
+    """The per-upload lock must outlive completion and cover deletion.
+
+    Both invariants only became reachable once the bundled server started
+    handling connections on separate threads.
+    """
+
+    @pytest.fixture
+    def storage(self):
+        temp_dir = tempfile.mkdtemp()
+        yield SQLiteStorage(
+            db_path=os.path.join(temp_dir, "test.db"),
+            upload_dir=os.path.join(temp_dir, "uploads"),
+        )
+        shutil.rmtree(temp_dir)
+
+    def test_completion_keeps_a_held_lock_in_place(self, storage):
+        """Evicting a held lock hands the next caller a fresh, useless one."""
+        upload_id = str(uuid.uuid4())
+        storage.create_upload(upload_id, 10, {})
+
+        with storage._upload_lock(upload_id):
+            held = storage._file_locks[upload_id]
+            storage.complete_upload(upload_id)
+            assert storage._file_locks.get(upload_id) is held, (
+                "completion swapped the lock out from under its holder"
+            )
+
+    def test_delete_waits_for_an_in_flight_writer(self, storage):
+        """Expiry cleanup must not unlink a file another thread is writing."""
+        upload_id = str(uuid.uuid4())
+        storage.create_upload(upload_id, 10, {})
+        storage.write_chunk(upload_id, 0, b"0123456789")
+        file_path = storage.get_file_path(upload_id)
+
+        may_release = threading.Event()
+        deleted = threading.Event()
+
+        def deleter():
+            storage.delete_upload(upload_id)
+            deleted.set()
+
+        with storage._upload_lock(upload_id):
+            t = threading.Thread(target=deleter)
+            t.start()
+            try:
+                assert not deleted.wait(0.3), "delete_upload unlinked under an active writer"
+                assert os.path.exists(file_path)
+            finally:
+                may_release.set()
+        t.join(2)
+        assert deleted.is_set()
+        assert not os.path.exists(file_path)
+
+    def test_lock_entries_are_reclaimed_when_idle(self, storage):
+        """Refcounting replaces eviction, so abandoned uploads leak nothing."""
+        upload_id = str(uuid.uuid4())
+        with storage._upload_lock(upload_id):
+            assert upload_id in storage._file_locks
+        assert storage._file_locks == {}
+        assert storage._file_lock_holders == {}
+
+        # Never completed, never deleted — the old eviction never reclaimed these.
+        for _ in range(50):
+            storage.write_chunk(str(uuid.uuid4()), 0, b"x")
+        assert storage._file_locks == {}
