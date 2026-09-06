@@ -128,3 +128,75 @@ class TestMaxAge:
         )
         assert status == 201
         assert "Access-Control-Max-Age" not in headers
+
+
+class TestTransportRejectionsCarryCORS:
+    """The handler's own 400/413 gates short-circuit before the core.
+
+    tus-js-client and uppy send Content-Length, not chunked, so these are the
+    rejections a browser actually hits — without CORS the response is opaque
+    cross-origin and the client reports a generic network error, not the status.
+    """
+
+    @pytest.fixture
+    def port(self, storage):
+        import threading
+        from http.server import HTTPServer
+
+        from resumable_upload.server import TusHTTPRequestHandler
+
+        tus = TusServer(
+            storage=storage,
+            base_path="/files",
+            cors_allow_origins="https://app.example",
+            max_chunk_size=1024,
+            max_size=8192,
+        )
+
+        class Handler(TusHTTPRequestHandler):
+            tus_server = tus
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        try:
+            yield server.server_address[1]
+        finally:
+            server.shutdown()
+            server.server_close()
+
+    def _patch(self, port, body, content_length):
+        import urllib.error
+        import urllib.request
+
+        req = urllib.request.Request(
+            f"http://127.0.0.1:{port}/files/nonexistent",
+            data=body,
+            method="PATCH",
+            headers={
+                "Tus-Resumable": "1.0.0",
+                "Upload-Offset": "0",
+                "Content-Type": "application/offset+octet-stream",
+                "Content-Length": str(content_length),
+                "Origin": "https://app.example",
+            },
+        )
+        try:
+            with urllib.request.urlopen(req) as resp:
+                return resp.status, resp.headers
+        except urllib.error.HTTPError as e:
+            return e.code, e.headers
+
+    def test_chunk_over_cap_is_readable_cross_origin(self, port):
+        status, headers = self._patch(port, b"x" * 2048, 2048)
+        assert status == 413
+        assert headers["Access-Control-Allow-Origin"] == "https://app.example"
+
+    def test_body_over_max_size_is_readable_cross_origin(self, port):
+        status, headers = self._patch(port, b"x" * 9000, 9000)
+        assert status == 413
+        assert headers["Access-Control-Allow-Origin"] == "https://app.example"
+
+    def test_malformed_content_length_is_readable_cross_origin(self, port):
+        status, headers = self._patch(port, b"", "not-a-number")
+        assert status == 400
+        assert headers["Access-Control-Allow-Origin"] == "https://app.example"
