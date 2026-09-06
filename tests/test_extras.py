@@ -33,3 +33,26 @@ def test_all_extra_covers_every_feature_extra():
     referenced = _extra("all")
     missing = [n for n in features if not re.search(rf"[\[,]{n}[,\]]", referenced)]
     assert not missing, f"[all] does not cover: {', '.join(missing)}"
+
+
+# S3 conditional writes (If-Match on PutObject) landed in botocore 1.35.69;
+# boto3 1.35.69 is the first release that pins it. S3Storage.update_offset_atomic
+# passes IfMatch unconditionally, and botocore raises ParamValidationError —
+# not a ClientError, so nothing catches it — when the parameter is unknown.
+# An older floor therefore turns every PATCH against S3Storage into a 500.
+_BOTO3_IF_MATCH_FLOOR = (1, 35, 69)
+
+
+def _boto3_pins():
+    pins = re.findall(r'"boto3>=([0-9.]+)"', _OPTIONAL_DEPS)
+    assert pins, "no boto3 pin found in [project.optional-dependencies]"
+    return pins
+
+
+def test_boto3_floor_supports_conditional_put():
+    for pin in _boto3_pins():
+        parsed = tuple(int(p) for p in pin.split("."))
+        assert parsed >= _BOTO3_IF_MATCH_FLOOR, (
+            f"boto3>={pin} predates If-Match on PutObject "
+            f"(needs >={'.'.join(str(p) for p in _BOTO3_IF_MATCH_FLOOR)})"
+        )
