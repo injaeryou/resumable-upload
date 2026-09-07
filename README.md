@@ -19,7 +19,7 @@ A Python implementation of the [TUS resumable upload protocol](https://tus.io/) 
 - 📊 **Progress Tracking**: Detailed upload progress callbacks with stats
 - 🌐 **Web Framework Support**: Integration examples for Flask, FastAPI, and Django
 - 🐍 **Python 3.9+**: Supports Python 3.9 through 3.14
-- 🏪 **Storage Backend**: SQLite-based storage (extensible to other backends)
+- 🏪 **Storage Backends**: SQLite by default; S3, Google Cloud Storage and Azure Blob Storage via optional extras (and extensible to your own)
 - 🔐 **TLS Support**: Certificate verification control and mTLS authentication
 - 📝 **URL Storage**: Persist upload URLs across sessions
 - ⬇️ **Download Endpoint**: Opt-in tusd-style GET serving of completed uploads with safe headers
@@ -305,6 +305,8 @@ This library implements [TUS protocol v1.0.0](https://tus.io/protocols/resumable
 | Feature | Status |
 |---------|--------|
 | `X-HTTP-Method-Override` | ✅ Implemented — POST rewrites to PATCH/DELETE/HEAD for environments that block those methods |
+| `423 Locked` | ✅ Implemented — returned when a `LockBackend` holder still owns the upload and `lock_wait_seconds` elapses |
+| GET download endpoint | ✅ Implemented — opt-in via `enable_downloads`; tusd-style serving of completed uploads |
 
 ## 🧪 Testing
 
