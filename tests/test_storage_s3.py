@@ -202,6 +202,37 @@ class TestS3StorageOffset:
         assert raced, "the rival write never interleaved; the test proved nothing"
         assert storage.get_upload("cas-race")["offset"] == 40
 
+    @pytest.mark.parametrize("code", ["ConditionalRequestConflict", "409"])
+    def test_update_offset_atomic_maps_conditional_conflict(self, storage, code):
+        """409 ConditionalRequestConflict is a lost race, not a server error.
+
+        S3 documents it for a conditional PutObject that races another
+        conditional write to the same key ("On a 409 failure, retry"). moto
+        only ever produces 412, so this path needs an injected error or it
+        escapes update_offset_atomic entirely.
+
+        Scope: this asserts the storage-level contract (a lost race is False,
+        not an exception). Turning False into the 409 response lives in
+        handlers/patch.py and is covered there.
+        """
+        from botocore.exceptions import ClientError
+
+        storage.create_upload("cas-409", 100, {})
+        real_put_object = storage.s3.put_object
+
+        def put_object_conflicts(**kwargs):
+            raise ClientError(
+                {"Error": {"Code": code, "Message": "conflicting conditional write"}},
+                "PutObject",
+            )
+
+        storage.s3.put_object = put_object_conflicts
+        try:
+            assert storage.update_offset_atomic("cas-409", 0, 50) is False
+        finally:
+            storage.s3.put_object = real_put_object
+        assert storage.get_upload("cas-409")["offset"] == 0
+
 
 # -- File info ---------------------------------------------------------------
 

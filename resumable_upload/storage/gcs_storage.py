@@ -181,7 +181,16 @@ class GCSStorage(Storage):
         blob = self.gcs_bucket.get_blob(self._info_key(upload_id))
         if blob is None:
             return False
-        info = json.loads(blob.download_as_bytes())
+        try:
+            # get_blob() pins this handle to a specific generation (the fetched
+            # media_link carries it), so the download asks for *that* generation
+            # rather than "current". A writer that overwrites the object in the
+            # window since the fetch retires that generation — on a bucket
+            # without object versioning it is gone and GCS answers 404. That is
+            # a lost race, not a missing upload: report it as one.
+            info = json.loads(blob.download_as_bytes())
+        except NotFound:
+            return False
         if info["offset"] != expected_offset:
             return False
         info["offset"] = new_offset

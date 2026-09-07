@@ -199,7 +199,16 @@ class S3Storage(Storage):
                 IfMatch=resp["ETag"],
             )
         except ClientError as e:
-            if e.response["Error"]["Code"] in ("PreconditionFailed", "412"):
+            # 412 is the stale-ETag answer. 409 ConditionalRequestConflict is
+            # the *concurrent* one: S3 documents it for a conditional PutObject
+            # that races another conditional write to the same key, and tells
+            # callers to re-fetch the ETag and retry. Both mean "we lost".
+            if e.response["Error"]["Code"] in (
+                "PreconditionFailed",
+                "412",
+                "ConditionalRequestConflict",
+                "409",
+            ):
                 return False
             raise
         return True

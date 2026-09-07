@@ -32,6 +32,14 @@ class FakeBlob:
 
         if self.name not in self._bucket._blobs:
             raise NotFound(f"Blob {self.name} not found")
+        # A handle from get_blob() is pinned to the generation it fetched (the
+        # real media_link carries it), so the download asks for that exact
+        # generation. Without object versioning an overwrite retires it and
+        # GCS answers 404 — model that, or the CAS race path stays untested.
+        if self.generation is not None and self.generation != self._bucket._generations.get(
+            self.name
+        ):
+            raise NotFound(f"Blob {self.name} generation {self.generation} is gone")
         return self._bucket._blobs[self.name]
 
     def delete(self):
@@ -318,6 +326,34 @@ class TestGCSStorageOffset:
             FakeBlob.download_as_bytes = real_download
         assert raced, "the rival write never interleaved; the test proved nothing"
         assert storage.get_upload("cas-race")["offset"] == 40
+
+    def test_update_offset_atomic_loses_race_before_the_read(self, storage, gcs_client):
+        """Losing the race *before* the download is still a lost race, not a 500.
+
+        The rival commits between get_blob() and download_as_bytes(), retiring
+        the generation this handle is pinned to. GCS answers 404 for a gone
+        generation, so the download raises NotFound — which must surface as
+        False (-> 409 Conflict) rather than escaping and becoming a 500.
+        """
+        storage.create_upload("cas-early", 100, {})
+        bucket = gcs_client.bucket(TEST_BUCKET)
+        real_get_blob = bucket.get_blob
+        raced = []
+
+        def get_blob_then_let_rival_win(name):
+            blob = real_get_blob(name)
+            if blob is not None and not raced:
+                raced.append(True)
+                storage.update_offset("cas-early", 40)  # retires our generation
+            return blob
+
+        bucket.get_blob = get_blob_then_let_rival_win
+        try:
+            assert storage.update_offset_atomic("cas-early", 0, 50) is False
+        finally:
+            bucket.get_blob = real_get_blob
+        assert raced, "the rival write never interleaved; the test proved nothing"
+        assert storage.get_upload("cas-early")["offset"] == 40
 
 
 # -- File info ---------------------------------------------------------------
