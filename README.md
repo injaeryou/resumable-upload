@@ -213,7 +213,7 @@ resumable-upload info http://host/files/<id>
 resumable-upload download http://host/files/<id> -o out.bin
 ```
 
-Server flags: `--host`, `--port`, `--base-path`, `--upload-dir`, `--db-path`, `--max-size`, `--max-chunk-size`, `--request-timeout`, `--upload-expiry`, `--cors-origin`, `--cors-credentials`, `--cors-max-age`, `--checksum-algorithms`, `--enable-downloads`, `--behind-proxy`, `--location-base-url`, `--disable-termination`, `--disable-concatenation`, `--metrics-path`, `--lock-backend`, `--redis-url`, `--log-level`. Run `resumable-upload serve --help` for details.
+Server flags: `--host`, `--port`, `--base-path`, `--upload-dir`, `--db-path`, `--max-size`, `--max-chunk-size`, `--request-timeout`, `--upload-expiry`, `--cleanup-interval`, `--cors-origin`, `--cors-credentials`, `--cors-max-age`, `--checksum-algorithms`, `--enable-downloads`, `--behind-proxy`, `--location-base-url`, `--disable-termination`, `--disable-concatenation`, `--metrics-path`, `--lock-backend`, `--redis-url`, `--lock-ttl`, `--lock-wait`, `--log-level`. Run `resumable-upload serve --help` for details.
 
 `serve` handles each connection on its own thread, so concurrent `PATCH`es, `--parallel` uploads and lock contention behave the way they will in production. `SIGINT`/`SIGTERM` stop accepting new connections and wait for in-flight requests to finish, bounded by `--request-timeout` (30s default) — set it below your orchestrator's grace period so a stalled client can't push the drain into a `SIGKILL`. Threads are one-per-connection and uncapped, so put the bundled server behind a reverse proxy rather than exposing it directly.
 

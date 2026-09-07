@@ -150,6 +150,26 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Redis URL (e.g., redis://localhost:6379/0), required when --lock-backend=redis",
     )
+    serve.add_argument(
+        "--lock-ttl",
+        type=float,
+        default=60.0,
+        help="Lock TTL in seconds; a holder that outruns it can be joined "
+        "by a second writer (default: 60). Ignored with --lock-backend=none.",
+    )
+    serve.add_argument(
+        "--lock-wait",
+        type=float,
+        default=5.0,
+        help="How long to wait for a contended lock before returning 423 "
+        "(default: 5). Ignored with --lock-backend=none.",
+    )
+    serve.add_argument(
+        "--cleanup-interval",
+        type=int,
+        default=60,
+        help="Minimum seconds between expired-upload cleanup runs (default: 60)",
+    )
 
     # -- client subcommands ------------------------------------------------
     upload = sub.add_parser("upload", help="Upload a file to a TUS server.")
@@ -221,6 +241,7 @@ def _serve(args: argparse.Namespace) -> int:
         max_size=args.max_size,
         max_chunk_size=args.max_chunk_size,
         upload_expiry=args.upload_expiry,
+        cleanup_interval=args.cleanup_interval,
         request_timeout=args.request_timeout,
         cors_allow_origins=args.cors_origin,
         cors_allow_credentials=args.cors_credentials,
@@ -231,6 +252,8 @@ def _serve(args: argparse.Namespace) -> int:
         metrics_registry=metrics,
         metrics_path=args.metrics_path or "/metrics",
         lock_backend=lock_backend,
+        lock_ttl_seconds=args.lock_ttl,
+        lock_wait_seconds=args.lock_wait,
         # The bundled stdlib transport parses chunked bodies + trailers.
         supports_checksum_trailer=True,
         enable_downloads=args.enable_downloads,
