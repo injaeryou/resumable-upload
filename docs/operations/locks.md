@@ -67,6 +67,7 @@ from resumable_upload.locks import LockBackend
 class MyLockBackend(LockBackend):
     def acquire(self, key: str, ttl_seconds: float, wait_timeout: float = 0.0) -> str | None:
         # Return a non-empty token on success, None on contention/timeout.
+        # wait_timeout=0.0 MUST return immediately — see below.
         ...
 
     def release(self, key: str, token: str) -> None:
@@ -75,3 +76,38 @@ class MyLockBackend(LockBackend):
 ```
 
 The `acquire` token is a capability for `release` — the server passes back exactly the value it received. Implementations must enforce `ttl_seconds` so a crashed holder's lock eventually expires without external intervention.
+
+!!! warning "`wait_timeout=0.0` must not block"
+
+    This is a hard requirement, not a convention. `LockBackend.acquire_async` — which
+    the async server path (`handle_request_async`, `TusASGIApp`) uses — bridges your
+    sync `acquire` by *polling* it with `wait_timeout=0.0` and awaiting between
+    attempts. A single attempt hops to a worker thread; the waiting happens on the
+    event loop.
+
+    Note that this is the opposite of some familiar conventions, where a zero or
+    absent timeout means "block until acquired" (`threading.Lock.acquire(timeout=-1)`,
+    redis-py's `Lock(blocking_timeout=None)`). If your `acquire` blocks on
+    `wait_timeout=0.0`, the async path pins an executor worker per waiter for as long
+    as it blocks — `lock_wait_seconds` is silently ignored, `423 Locked` is never
+    returned, and because the lock *holder*'s storage calls draw from that same
+    default executor, enough waiters will starve the very holder that would release
+    them.
+
+### Overriding the async path
+
+`acquire_async` / `release_async` are ordinary methods with working defaults, so a
+sync-only `acquire` / `release` pair is enough. Override them when your coordinator
+has a native async client, or to skip the thread hop entirely:
+
+```python
+class MyLockBackend(LockBackend):
+    async def acquire_async(
+        self, key: str, ttl_seconds: float, wait_timeout: float = 0.0
+    ) -> str | None: ...
+
+    async def release_async(self, key: str, token: str) -> None: ...
+```
+
+`InMemoryLockBackend` does exactly this — its state is a dict behind a mutex held for
+microseconds, so it polls inline and leaves the executor free.
