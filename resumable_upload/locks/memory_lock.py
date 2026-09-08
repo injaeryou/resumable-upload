@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
+import asyncio
 import secrets
 import threading
 import time
 
-from resumable_upload.locks.base import LockBackend
+from resumable_upload.locks.base import _POLL_INTERVAL, LockBackend
 
 
 class InMemoryLockBackend(LockBackend):
@@ -40,10 +41,32 @@ class InMemoryLockBackend(LockBackend):
                     return token
             if time.monotonic() >= deadline:
                 return None
-            time.sleep(0.02)
+            time.sleep(_POLL_INTERVAL)
 
     def release(self, key: str, token: str) -> None:
         with self._lock:
             entry = self._holders.get(key)
             if entry is not None and entry[0] == token:
                 del self._holders[key]
+
+    async def acquire_async(
+        self,
+        key: str,
+        ttl_seconds: float,
+        wait_timeout: float = 0.0,
+    ) -> str | None:
+        # The base implementation is correct here, but every attempt would
+        # cost a thread hop. This backend's state is a dict behind a mutex
+        # held for microseconds and never across an await, so poll it inline
+        # and keep the executor free entirely.
+        deadline = time.monotonic() + wait_timeout
+        while True:
+            token = self.acquire(key, ttl_seconds, 0.0)
+            if token is not None:
+                return token
+            if time.monotonic() >= deadline:
+                return None
+            await asyncio.sleep(_POLL_INTERVAL)
+
+    async def release_async(self, key: str, token: str) -> None:
+        self.release(key, token)

@@ -1,6 +1,5 @@
 """TUS protocol server implementation."""
 
-import asyncio
 import logging
 import threading
 from collections.abc import Awaitable
@@ -349,14 +348,17 @@ class TusServerCore:
         upload_id: str,
         fn: Callable[[], Awaitable[tuple[int, dict, bytes]]],
     ) -> tuple[int, dict, bytes]:
-        """Async sibling of :meth:`_with_lock`. ``LockBackend`` stays sync;
-        ``acquire``/``release`` run on a worker thread while the wrapped
-        coroutine is awaited under the held lock.
+        """Async sibling of :meth:`_with_lock`.
+
+        Goes through :meth:`LockBackend.acquire_async`, which waits on the event
+        loop rather than pinning a worker thread for the whole ``wait_timeout``.
+        That matters because the lock *holder*'s storage ``*_async`` calls draw
+        from the same default executor: a queue of waiters holding it would
+        starve the very holder that would release them.
         """
         if self._locks is None:
             return await fn()
-        token = await asyncio.to_thread(
-            self._locks.acquire,
+        token = await self._locks.acquire_async(
             upload_id,
             ttl_seconds=self._lock_ttl,
             wait_timeout=self._lock_wait,
@@ -366,7 +368,7 @@ class TusServerCore:
         try:
             return await fn()
         finally:
-            await asyncio.to_thread(self._locks.release, upload_id, token)
+            await self._locks.release_async(upload_id, token)
 
     def _add_cors_headers(
         self, headers: dict, origin: Optional[str] = None, preflight: bool = False

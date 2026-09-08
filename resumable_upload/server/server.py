@@ -27,6 +27,13 @@ class TusServer(TusServerCore):
     multi-node deployments must pass an explicit distributed lock**
     (``RedisLockBackend``); pass ``lock_backend=None`` to opt out entirely.
 
+    The guarantee is bounded by ``lock_ttl_seconds`` (60s by default): a lock
+    is reclaimable once its TTL expires, so a PATCH whose chunk write outruns
+    the TTL can be joined by a second one and interleave exactly as above. The
+    first holder's ``release`` then no-ops on the token mismatch, silently.
+    Raise ``lock_ttl_seconds`` past your slowest expected chunk write when
+    chunks are large or the storage backend is remote.
+
     Reserve ``TusServerCore`` for downstream code that wants the minimal,
     lock-free surface.
     """
