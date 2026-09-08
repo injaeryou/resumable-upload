@@ -49,6 +49,7 @@ client.upload_file(
     progress_callback=None,
     stop_at=None,
     parallel_uploads=1,
+    metadata_for_partial_uploads=None,
 ) -> str
 ```
 
@@ -56,6 +57,7 @@ Upload a file. Returns the upload URL.
 
 - `stop_at` (int): Stop upload at this byte offset (for partial uploads). Clamped to file size automatically.
 - `parallel_uploads` (int): When `> 1`, splits the file into N byte ranges, uploads each as a TUS partial upload concurrently, and merges them server-side via the `concatenation` extension. Requires `file_path` (streams cannot be split) and is incompatible with `stop_at`. The server must support `concatenation`.
+- `metadata_for_partial_uploads` (dict): Metadata attached to each partial upload instead of `metadata`, which stays on the final. Mirrors `tus-js-client`'s `metadataForPartialUploads`; only meaningful with `parallel_uploads > 1`.
 
 #### `resume_upload`
 
@@ -129,6 +131,36 @@ client.create_uploader(
 
 Create an `Uploader` instance for fine-grained chunk-level control.
 
+#### `get_metadata` / `encode_metadata`
+
+```python
+client.get_metadata(upload_url) -> dict[str, str]   # decode the server's Upload-Metadata
+client.encode_metadata({"filename": "a.bin"}) -> list[str]  # the wire form this client sends
+```
+
+`get_metadata` issues a HEAD and decodes the base64 pairs; `encode_metadata` is the pure
+encoder, useful when building requests by hand or asserting on the wire format in tests.
+
+#### `update_headers` / `get_headers`
+
+```python
+client.update_headers({"Authorization": "Bearer …"})  # merge into every subsequent request
+client.get_headers() -> dict[str, str]                # a copy of the current headers
+```
+
+Use `update_headers` to rotate a token mid-session without rebuilding the client.
+
+#### `get_file_size` / `get_file_stream`
+
+```python
+client.get_file_size(file_source) -> int   # file_source: a path or a file-like object
+client.get_file_stream(file_source) -> IO
+```
+
+The same resolution the upload methods use internally — size via `os.stat` or by seeking
+the stream, and a readable stream from either input. Handy when you need the byte count
+before deciding on `parallel_uploads` or `chunk_size`.
+
 ### Observability hooks
 
 ```python
@@ -181,6 +213,11 @@ Typically obtained via `TusClient.create_uploader()`.
 | `timeout` | float | `30.0` | Per-request timeout in seconds |
 | `stop_event` | threading.Event | `None` | When set, interrupts retry wait and raises `TusUploadFailed`. Useful for cancellation in threaded applications. |
 | `before_request` / `after_response` / `on_should_retry` | Callable | `None` | Same hooks as `TusClient`; forwarded automatically when the uploader is created via `TusClient.create_uploader()`. |
+| `metadata_encoding` | str | `"utf-8"` | Encoding used before base64 for `Upload-Metadata` values |
+| `headers` | dict | `None` | Extra headers sent on every request |
+| `ssl_context` | ssl.SSLContext | `None` | TLS context — certificate verification control and mTLS client certificates |
+| `override_patch_method` | bool | `False` | Tunnel PATCH as POST with `X-HTTP-Method-Override` |
+| `add_request_id` | bool | `False` | Attach a per-request UUID `X-Request-ID` (a user-supplied header wins) |
 
 ### 409 Handling
 

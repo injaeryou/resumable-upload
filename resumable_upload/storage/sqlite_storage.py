@@ -258,6 +258,14 @@ class SQLiteStorage(Storage):
         thread without the server's own lock, so without this it can remove a
         file another thread is mid-``write_chunk`` on. On POSIX the unlink
         succeeds and the writer's bytes go to an orphaned inode.
+
+        The lock does not close the row-then-file ordering below. A PATCH that
+        read its upload before the row was deleted still calls ``write_chunk``,
+        which recreates the file (``update_offset_atomic`` then fails it with a
+        409, correctly). The upload is gone from the DB, so the file is left in
+        ``upload_dir`` with nothing referencing it and DB-driven expiry cleanup
+        never reclaims it. Sweep ``upload_dir`` for files with no row if that
+        matters to you.
         """
         conn = sqlite3.connect(self.db_path, timeout=self.timeout)
         try:

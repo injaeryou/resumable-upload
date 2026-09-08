@@ -19,7 +19,7 @@
 - 📊 **진행률 추적**: `UploadStats` 콜백으로 상세한 업로드 진행률 제공
 - 🌐 **웹 프레임워크 지원**: Flask, FastAPI, Django 통합
 - 🐍 **Python 3.9+**: Python 3.9부터 3.14까지 지원
-- 🏪 **스토리지 백엔드**: SQLite 기반 스토리지 (커스텀 백엔드로 확장 가능)
+- 🏪 **스토리지 백엔드**: 기본 SQLite, 선택 extras로 S3 · Google Cloud Storage · Azure Blob Storage (커스텀 백엔드로 확장 가능)
 - 🔐 **TLS 지원**: 인증서 검증 제어 및 mTLS 인증
 - 📝 **URL 스토리지**: 세션 간 업로드 URL 유지
 - ⬇️ **다운로드 엔드포인트**: 완료된 업로드를 GET으로 서빙 (tusd 스타일, opt-in, 안전한 헤더 기본값)
@@ -290,6 +290,8 @@ final_url = client.create_final_upload(
 | 기능 | 상태 |
 |------|------|
 | `X-HTTP-Method-Override` | ✅ 구현됨 — PATCH/DELETE를 차단하는 환경을 위해 POST를 PATCH/DELETE/HEAD로 재작성 |
+| `423 Locked` | ✅ 구현됨 — `LockBackend` 보유자가 업로드를 점유한 채 `lock_wait_seconds`가 지나면 반환 |
+| GET 다운로드 엔드포인트 | ✅ 구현됨 — `enable_downloads`로 옵트인, 완료된 업로드를 tusd 방식으로 서빙 |
 
 ## 🧪 테스트
 

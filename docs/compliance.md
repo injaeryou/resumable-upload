@@ -144,7 +144,7 @@ Summary: ahead of tusd on **protocol surface** (checksum, expiration, unfinished
 | **Resume across sessions** | ✅ fingerprint → urlStorage (localStorage, default **on**) · ✅ `findPreviousUploads()` / `resumeFromPreviousUpload()` | ✅ fingerprint → URL storage (File/SQLite/Memory backends, default **off** via `store_url`) · ✅ `find_previous_uploads()` / `resume_upload()` |
 | **Fingerprint strength** | ✅ pluggable · ❌ weak default (name/size-based) | ✅ full-file SHA-256 default (collision-proof, costlier) · ✅ partial-MD5 and callable alternatives |
 | **Parallel upload (concatenation)** | ✅ `parallelUploads=N` · ✅ custom `parallelUploadBoundaries` · ✅ `metadataForPartialUploads` | ✅ `parallel_uploads=N` · ✅ `metadata_for_partial_uploads` · ❌ custom boundaries (even split only, deliberately skipped) |
-| **creation-with-upload** | ✅ `uploadDataDuringCreation` | ✅ `initial_data` on create |
+| **creation-with-upload** | ✅ `uploadDataDuringCreation` | ❌ no public option (the *server* implements the extension; the client always sends an empty creation POST) |
 | **defer-length** | ✅ `uploadLengthDeferred` | ✅ `create_deferred_upload()` |
 | **Termination** | ✅ `abort(true)` / static `terminate()` | ✅ `delete_upload()` |
 | **Pause / partial stop** | ✅ `abort()` (resume later) · ❌ stop-at-byte | ✅ `stop_event` (interrupt-safe) · ✅ `stop_at` byte offset |
@@ -156,15 +156,16 @@ Summary: ahead of tusd on **protocol surface** (checksum, expiration, unfinished
 | **Async** | ✅ Promise-based | ✅ separate `AsyncTusClient` (httpx, `[async]` extra) |
 | **tus2 / IETF RUFH** | ✅ experimental `protocol: 'ietf-draft-03'/'ietf-draft-05'` | ❌ (tracked) |
 
-Summary: ahead on **integrity** (checksum), **fingerprint strength**, TLS/mTLS, and stats-rich progress; behind only on **RUFH experimentation** and custom parallel boundaries.
+Summary: ahead on **integrity** (checksum), **fingerprint strength**, TLS/mTLS, and stats-rich progress; behind on **RUFH experimentation**, custom parallel boundaries, and **client-side creation-with-upload** (the server supports it; the client cannot yet send data with the creation POST).
 
 ## Error Response Reference
 
 | Status | Meaning | Trigger |
 |--------|---------|---------|
 | `400` | Bad Request | Missing/invalid header, negative offset, chunk overflow, oversized metadata, unsupported checksum algorithm, malformed `Upload-Concat`, partial referenced by a final that isn't complete |
-| `403` | Forbidden | PATCH on already completed upload |
+| `403` | Forbidden | PATCH on an already completed upload, or on a final upload still waiting on its partials. Also the default status of `TusHookError`. |
 | `404` | Not Found | Unknown upload ID |
+| `405` | Method Not Allowed | Client `DELETE` while `disable_termination=True` |
 | `409` | Conflict | `Upload-Offset` mismatch or concurrent write conflict |
 | `410` | Gone | Upload has expired |
 | `412` | Precondition Failed | Unsupported TUS version |
@@ -172,6 +173,8 @@ Summary: ahead on **integrity** (checksum), **fingerprint strength**, TLS/mTLS, 
 | `415` | Unsupported Media Type | Wrong `Content-Type` in PATCH |
 | `423` | Locked | `LockBackend` contention; another holder still owns the upload |
 | `460` | Checksum Mismatch | Configured-algorithm digest verification failed |
+| `500` | Internal Server Error | A pre-hook raised something other than `TusHookError` |
+| `501` | Not Implemented | A custom `Storage` backend raised `NotImplementedError` from `concatenate_uploads` |
 
 ## References
 

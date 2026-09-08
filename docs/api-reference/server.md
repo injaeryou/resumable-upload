@@ -2,11 +2,26 @@
 
 ## TusServer
 
-TUS 1.0.0 protocol server implementation.
+TUS 1.0.0 protocol server implementation. This is the class to instantiate.
 
 ```python
 from resumable_upload import TusServer
 ```
+
+!!! note "`TusServer` vs `TusServerCore`"
+
+    `TusServerCore` holds the whole protocol implementation; `TusServer` subclasses it and
+    differs in exactly one way — it defaults `lock_backend` to an `InMemoryLockBackend`, so
+    concurrent `PATCH` / `DELETE` on the same upload are serialized out of the box.
+
+    ```python
+    from resumable_upload import TusServerCore
+    ```
+
+    Reach for `TusServerCore` when you want the minimal, lock-free surface — you are
+    supplying your own serialization, or embedding the server somewhere a process-local
+    lock would be misleading. Everything below applies to both; only the `lock_backend`
+    default differs. See [Locks](../operations/locks.md).
 
 ### Parameters
 
@@ -30,8 +45,8 @@ from resumable_upload import TusServer
 | `on_before_terminate` | Callable | `None` | Blocking hook before a client DELETE (tusd's pre-terminate). Raise `TusHookError` to veto. |
 | `metrics_registry` | MetricsRegistry | `None` | Enable Prometheus-text metrics (`/metrics` by default). See [Metrics](../operations/metrics.md). |
 | `metrics_path` | str | `"/metrics"` | Path to expose metrics on |
-| `lock_backend` | LockBackend | `None` | Distributed lock for PATCH / DELETE write paths. See [Locks](../operations/locks.md). |
-| `lock_ttl_seconds` | float | `60.0` | TTL applied when acquiring a lock (released sooner if the request finishes; expired automatically if the holder crashes) |
+| `lock_backend` | LockBackend | `InMemoryLockBackend()` on `TusServer`, `None` on `TusServerCore` | Lock guarding PATCH / DELETE write paths. Pass `None` to opt out, or a `RedisLockBackend` for multi-process / multi-node. See [Locks](../operations/locks.md). |
+| `lock_ttl_seconds` | float | `60.0` | TTL applied when acquiring a lock (released sooner if the request finishes; expired automatically if the holder crashes). Also the bound on the guarantee: a chunk write that outruns the TTL can be joined by a second writer. |
 | `lock_wait_seconds` | float | `5.0` | How long to wait for a contended lock before returning `423 Locked` |
 | `checksum_algorithms` | tuple[str, …] | `("sha1",)` | Algorithms to advertise via `Tus-Checksum-Algorithm` and accept on `Upload-Checksum`. Allowed: `sha1`, `sha256`, `sha512`, `md5`. |
 | `supports_checksum_trailer` | bool | `False` | Advertise `checksum-trailer`. Set only when the transport parses chunked bodies + trailers and merges a trailing `Upload-Checksum` into the headers — the bundled `TusHTTPRequestHandler` / `serve` CLI does. |

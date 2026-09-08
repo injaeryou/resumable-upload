@@ -30,11 +30,11 @@ Both exceptions expose:
 ```python
 from resumable_upload.exceptions import TusHookError
 
-raise TusHookError("Forbidden", status_code=403)  # status_code defaults to 400
+raise TusHookError("Upload not allowed", status_code=400)  # status_code defaults to 403
 ```
 
-- `status_code` (int): HTTP status code to return to the client (default: 400)
-- `body` (str): Response body to return to the client
+- `status_code` (int): HTTP status code to return to the client (default: 403)
+- `body` (str): Response body to return to the client (default: `"Forbidden"`)
 
 ---
 
