@@ -28,6 +28,7 @@ resumable-upload serve --host 0.0.0.0 --port 8080 --upload-dir ./uploads
 | `--max-chunk-size` | `0` | Max single PATCH size in bytes (0 = unlimited) |
 | `--request-timeout` | `30` | Socket read timeout in seconds; also caps how long a stalled connection delays a graceful shutdown |
 | `--upload-expiry` | unset | Upload expiry in seconds (unset = no expiry) |
+| `--cleanup-interval` | `60` | Minimum seconds between expired-upload cleanup runs |
 | `--cors-origin` | unset | `Access-Control-Allow-Origin` value (unset = no CORS) |
 | `--cors-credentials` | off | Send `Access-Control-Allow-Credentials`; a `*` origin is echoed per request |
 | `--cors-max-age` | unset | `Access-Control-Max-Age` (seconds) on preflight responses |
@@ -36,6 +37,8 @@ resumable-upload serve --host 0.0.0.0 --port 8080 --upload-dir ./uploads
 | `--metrics-path` | unset | Path to expose Prometheus-text metrics on (unset = disabled) |
 | `--lock-backend` | `memory` | One of `none`, `memory`, `redis` |
 | `--redis-url` | unset | Redis URL, e.g., `redis://localhost:6379/0` (required when `--lock-backend=redis`) |
+| `--lock-ttl` | `60` | Lock TTL in seconds. Also the bound on the guarantee: a chunk write that outruns it can be joined by a second writer — raise it above your slowest expected chunk write. Ignored with `--lock-backend=none` |
+| `--lock-wait` | `5` | How long to wait for a contended lock before returning `423 Locked`. Ignored with `--lock-backend=none` |
 
 ### Examples
 

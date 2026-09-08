@@ -441,3 +441,67 @@ class TestCLIServeConcurrency:
             release.set()
             caller.join(5)
         assert result == [b"drained"]
+
+
+class TestServeTuningFlags:
+    """Deployer knobs on TusServerCore must be reachable from `serve`.
+
+    CLAUDE.md calls out this gap class: an option lands on the server and the
+    CLI never grows a flag for it.
+    """
+
+    def _capture_server_kwargs(self, monkeypatch, tmp_path, *flags: str) -> dict:
+        from resumable_upload import cli
+
+        captured: dict = {}
+
+        class FakeServer:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+        class FakeHTTPD:
+            def __init__(self, addr, handler):
+                pass
+
+            def serve_forever(self):
+                pass
+
+            def server_close(self):
+                pass
+
+        monkeypatch.setattr(cli, "TusServer", FakeServer)
+        monkeypatch.setattr(cli, "_ThreadingHTTPServer", FakeHTTPD)
+        # _serve installs SIGINT/SIGTERM handlers bound to the httpd it built.
+        # Left in place they outlive the test and replace pytest's own Ctrl+C.
+        monkeypatch.setattr(cli.signal, "signal", lambda *_: None)
+        argv = [
+            "serve",
+            "--db-path",
+            str(tmp_path / "u.db"),
+            "--upload-dir",
+            str(tmp_path / "uploads"),  # the default would land in the CWD
+            *flags,
+        ]
+        cli._serve(cli._build_parser().parse_args(argv))
+        return captured
+
+    def test_defaults_match_the_server_defaults(self, monkeypatch, tmp_path):
+        kwargs = self._capture_server_kwargs(monkeypatch, tmp_path)
+        assert kwargs["cleanup_interval"] == 60
+        assert kwargs["lock_ttl_seconds"] == 60.0
+        assert kwargs["lock_wait_seconds"] == 5.0
+
+    def test_flags_reach_the_server(self, monkeypatch, tmp_path):
+        kwargs = self._capture_server_kwargs(
+            monkeypatch,
+            tmp_path,
+            "--cleanup-interval",
+            "5",
+            "--lock-ttl",
+            "12.5",
+            "--lock-wait",
+            "0.25",
+        )
+        assert kwargs["cleanup_interval"] == 5
+        assert kwargs["lock_ttl_seconds"] == 12.5
+        assert kwargs["lock_wait_seconds"] == 0.25
