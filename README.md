@@ -212,6 +212,8 @@ resumable-upload upload big.bin --url http://host/files --resume
 resumable-upload upload big.bin --url http://host/files --parallel 4
 resumable-upload info http://host/files/<id>
 resumable-upload download http://host/files/<id> -o out.bin
+# Auth headers (repeatable) work on upload, info and download
+resumable-upload info http://host/files/<id> --header "Authorization=Bearer $TOKEN"
 ```
 
 Server flags: `--host`, `--port`, `--base-path`, `--upload-dir`, `--db-path`, `--max-size`, `--max-chunk-size`, `--request-timeout`, `--upload-expiry`, `--cleanup-interval`, `--cors-origin`, `--cors-credentials`, `--cors-max-age`, `--checksum-algorithms`, `--enable-downloads`, `--behind-proxy`, `--location-base-url`, `--disable-termination`, `--disable-concatenation`, `--metrics-path`, `--lock-backend`, `--redis-url`, `--lock-ttl`, `--lock-wait`, `--log-level`. Run `resumable-upload serve --help` for details.
