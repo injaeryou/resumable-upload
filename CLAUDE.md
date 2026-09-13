@@ -167,6 +167,23 @@ ty check resumable_upload
 
 Pre-commit hooks are configured in `.pre-commit-config.yaml`; they run the same tooling. Don't bypass with `--no-verify`.
 
+## Definition of Done (every change)
+
+A change is done only when, against `main`: the code change came with tests (mirrored
+`tests/` path, sync **and** async where both exist), with docs (Feature Surface
+Checklist above), and `make verify` passed:
+
+```bash
+make verify      # check-surfaces + ci + interop
+```
+
+`check-surfaces` fails when `resumable_upload/` moved without `tests/`/docs, when only one
+README moved, or when `cli.py` moved without `tests/test_cli.py` and
+`docs/operations/cli.md`. `tests/test_cli.py::TestCLIParity` fails when a `TusServer` /
+`TusClient` constructor option has no `serve` / `upload` flag. Targeted `pytest` runs are
+for iteration, not for claiming done. Stacked or parallel branches get one extra
+`make verify` on a throwaway merge of all of them.
+
 ## TUS Protocol Invariants (don't break these)
 
 These are not style preferences — they are wire-protocol requirements:

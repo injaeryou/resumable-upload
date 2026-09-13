@@ -1,4 +1,4 @@
-.PHONY: help install install-pip lint format format-check type-check test test-all test-all-versions ci clean interop
+.PHONY: help install install-pip lint format format-check type-check test test-all test-all-versions ci clean interop check-surfaces verify
 
 # Use Python from activated virtual environment if available, otherwise detect
 # Priority: .venv/bin/python > venv/bin/python > VIRTUAL_ENV/bin/python > python3 from PATH
@@ -20,6 +20,8 @@ help:
 	@echo "  make test-all-versions - Run tests on all Python versions (requires tox)"
 	@echo "  make ci               - Run full CI checks (lint, format-check, type-check, test)"
 	@echo "  make interop          - Cross-impl tests (tusd, tus-js-client, tus-py-client)"
+	@echo "  make check-surfaces   - Fail if code changed vs BASE (default main) without tests/docs"
+	@echo "  make verify           - check-surfaces + ci + interop: the definition of done"
 	@echo "  make clean            - Clean build artifacts"
 	@echo ""
 	@echo "Note: Make sure to activate your virtual environment first:"
@@ -59,6 +61,34 @@ test-all-versions:
 
 ci: lint format-check type-check test
 	@echo "✅ All CI checks passed!"
+
+# A change to resumable_upload/ must come with tests and docs (see CLAUDE.md
+# "Definition of Done"). Compares the working tree (committed + uncommitted)
+# against the merge-base with BASE, so it works on a branch before the PR.
+BASE ?= main
+check-surfaces:
+	@mb=$$(git merge-base $(BASE) HEAD); \
+	code=$$(git diff --name-only $$mb -- resumable_upload | grep -c . || true); \
+	tests=$$(git diff --name-only $$mb -- tests | grep -c . || true); \
+	docs=$$(git diff --name-only $$mb -- docs README.md README.ko.md TUS_COMPLIANCE.md | grep -c . || true); \
+	readme=$$(git diff --name-only $$mb -- README.md | grep -c . || true); \
+	readme_ko=$$(git diff --name-only $$mb -- README.ko.md | grep -c . || true); \
+	fail=0; \
+	if [ $$code -gt 0 ] && [ $$tests -eq 0 ]; then echo "✗ resumable_upload/ changed but tests/ did not"; fail=1; fi; \
+	if [ $$code -gt 0 ] && [ $$docs -eq 0 ]; then echo "✗ resumable_upload/ changed but docs/ and README did not"; fail=1; fi; \
+	if [ $$readme -ne $$readme_ko ]; then echo "✗ README.md and README.ko.md must change together"; fail=1; fi; \
+	cli=$$(git diff --name-only $$mb -- resumable_upload/cli.py | grep -c . || true); \
+	cli_tests=$$(git diff --name-only $$mb -- tests/test_cli.py | grep -c . || true); \
+	cli_docs=$$(git diff --name-only $$mb -- docs/operations/cli.md | grep -c . || true); \
+	core=$$(git diff --name-only $$mb -- resumable_upload/server resumable_upload/client | grep -c . || true); \
+	if [ $$cli -gt 0 ] && [ $$cli_tests -eq 0 ]; then echo "✗ cli.py changed but tests/test_cli.py did not"; fail=1; fi; \
+	if [ $$cli -gt 0 ] && [ $$cli_docs -eq 0 ]; then echo "✗ cli.py changed but docs/operations/cli.md did not"; fail=1; fi; \
+	if [ $$core -gt 0 ] && [ $$cli -eq 0 ]; then echo "⚠ server/client changed but cli.py did not: confirm no new option needs a serve/upload flag (TestCLIParity covers constructor kwargs)"; fi; \
+	if [ $$fail -eq 1 ]; then echo "   (compared against merge-base with $(BASE); override with BASE=<ref>)"; exit 1; fi; \
+	echo "✓ change surfaces vs $(BASE): code=$$code tests=$$tests docs=$$docs"
+
+verify: check-surfaces ci interop
+	@echo "✅ verify passed: surfaces, ci, interop"
 
 # Four interop pairings: ours<->ours always; our-client<->tusd, our-server<->
 # tus-js-client, our-server<->tus-py-client each need their reference impl.
