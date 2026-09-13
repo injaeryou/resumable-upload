@@ -251,11 +251,7 @@ class TestParallelResume:
 
     @staticmethod
     def _recording_hook(calls):
-        """Record partial creations ("partial") and chunk writes ("PATCH").
-
-        ``before_request`` does not fire for the final-creation POST, so the
-        merge itself is asserted through the stored file instead.
-        """
+        """Record partial creations ("partial"), the merge ("final;…") and chunk writes."""
 
         def record(method, url, headers):
             if method == "POST":

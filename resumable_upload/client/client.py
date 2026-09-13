@@ -5,7 +5,6 @@ import ssl
 from typing import IO, Any, Callable, Optional, Union
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
-from urllib.request import Request, urlopen
 
 from resumable_upload.client import _protocol
 from resumable_upload.client.concatenation import ConcatenationMixin
@@ -343,9 +342,8 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
         }
         _protocol.maybe_add_request_id(headers, self.add_request_id)
 
-        req = Request(upload_url, headers=headers, method="DELETE")
         try:
-            with urlopen(req, context=self.ssl_context, timeout=self.timeout):
+            with self._open("DELETE", upload_url, headers):
                 pass
         except (HTTPError, URLError) as e:
             if isinstance(e, HTTPError) and e.code == 404:
@@ -392,14 +390,9 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
             headers["Content-Length"] = str(len(initial_data))
 
         _protocol.maybe_add_request_id(headers, self.add_request_id)
-        if self.before_request is not None:
-            self.before_request("POST", self.url, headers)
 
         try:
-            req = Request(self.url, data=body or None, headers=headers, method="POST")
-            with urlopen(req, context=self.ssl_context, timeout=self.timeout) as response:
-                if self.after_response is not None:
-                    self.after_response("POST", self.url, response.status)
+            with self._open("POST", self.url, headers, data=body or None) as response:
                 location: Optional[str] = response.headers.get("Location")
                 if not location:
                     raise TusCommunicationError("Server did not return Location header")

@@ -165,9 +165,13 @@ class Uploader:
         }
         _protocol.maybe_add_request_id(headers, self.add_request_id)
 
+        if self._before_request is not None:
+            self._before_request("HEAD", self.url, headers)
         try:
             req = Request(self.url, headers=headers, method="HEAD")
             with urlopen(req, context=self.ssl_context, timeout=self.timeout) as response:
+                if self._after_response is not None:
+                    self._after_response("HEAD", self.url, response.status)
                 offset = response.headers.get("Upload-Offset")
                 if offset is None:
                     raise TusCommunicationError("Server did not return Upload-Offset header")

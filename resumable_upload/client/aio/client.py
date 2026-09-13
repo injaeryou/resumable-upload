@@ -176,6 +176,25 @@ class AsyncTusClient:
             self._client = httpx.AsyncClient(verify=self.verify_tls_cert)
         return self._client
 
+    async def _request(
+        self, method: str, url: str, headers: dict[str, str], content: bytes = b""
+    ) -> Any:
+        """``_http.request`` with the observability hooks around it.
+
+        ``before_request`` sees the mutable header dict before the request goes
+        out; ``after_response`` sees every response status. Every request the
+        client makes goes through here.
+        """
+        if self.before_request is not None:
+            self.before_request(method, url, headers)
+        client = await self._ensure_client()
+        resp = await _http.request(
+            client, method, url, headers=headers, content=content, timeout=self.timeout
+        )
+        if self.after_response is not None:
+            self.after_response(method, url, resp.status_code)
+        return resp
+
     async def _create_upload(
         self,
         file_size: int,
@@ -210,16 +229,7 @@ class AsyncTusClient:
             headers["Content-Length"] = str(len(initial_data))
 
         _protocol.maybe_add_request_id(headers, self.add_request_id)
-        if self.before_request is not None:
-            self.before_request("POST", self.url, headers)
-
-        client = await self._ensure_client()
-        resp = await _http.request(
-            client, "POST", self.url, headers=headers, content=content, timeout=self.timeout
-        )
-
-        if self.after_response is not None:
-            self.after_response("POST", self.url, resp.status_code)
+        resp = await self._request("POST", self.url, headers, content)
 
         if resp.status_code >= 400:
             raise TusCommunicationError(
@@ -600,11 +610,7 @@ class AsyncTusClient:
             **self.headers,
         }
         _protocol.maybe_add_request_id(headers, self.add_request_id)
-
-        client = await self._ensure_client()
-        resp = await _http.request(
-            client, "DELETE", upload_url, headers=headers, timeout=self.timeout
-        )
+        resp = await self._request("DELETE", upload_url, headers)
 
         if resp.status_code == 404:
             return  # Already deleted — tolerated per spec
@@ -724,9 +730,7 @@ class AsyncTusClient:
         _protocol.maybe_add_request_id(headers, self.add_request_id)
         if encoded:
             headers["Upload-Metadata"] = ",".join(encoded)
-
-        client = await self._ensure_client()
-        resp = await _http.request(client, "POST", self.url, headers=headers, timeout=self.timeout)
+        resp = await self._request("POST", self.url, headers)
 
         if resp.status_code >= 400:
             raise TusCommunicationError(
@@ -829,10 +833,7 @@ class AsyncTusClient:
             "Tus-Resumable": self.TUS_VERSION,
             **self.headers,
         }
-        client = await self._ensure_client()
-        resp = await _http.request(
-            client, "HEAD", upload_url, headers=headers, timeout=self.timeout
-        )
+        resp = await self._request("HEAD", upload_url, headers)
         if resp.status_code >= 400:
             raise TusCommunicationError(
                 f"Failed to get metadata: server returned {resp.status_code}"
@@ -854,8 +855,7 @@ class AsyncTusClient:
         Raises:
             TusCommunicationError: If the OPTIONS request fails.
         """
-        client = await self._ensure_client()
-        resp = await _http.request(client, "OPTIONS", self.url, headers={}, timeout=self.timeout)
+        resp = await self._request("OPTIONS", self.url, {})
         if resp.status_code >= 400:
             raise TusCommunicationError(
                 f"Failed to get server info: server returned {resp.status_code}"
@@ -884,10 +884,7 @@ class AsyncTusClient:
             "Tus-Resumable": self.TUS_VERSION,
             **self.headers,
         }
-        client = await self._ensure_client()
-        resp = await _http.request(
-            client, "HEAD", upload_url, headers=headers, timeout=self.timeout
-        )
+        resp = await self._request("HEAD", upload_url, headers)
         if resp.status_code >= 400:
             raise TusCommunicationError(
                 f"Failed to get upload info: server returned {resp.status_code}",

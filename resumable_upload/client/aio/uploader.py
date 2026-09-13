@@ -160,6 +160,8 @@ class AsyncUploader:
             **self.headers,
         }
         _protocol.maybe_add_request_id(headers, self.add_request_id)
+        if self._before_request is not None:
+            self._before_request("HEAD", self.url, headers)
         resp = await _http.request(
             self._client, "HEAD", self.url, headers=headers, timeout=self.timeout
         )
@@ -168,6 +170,8 @@ class AsyncUploader:
                 f"Failed to get offset: server returned {resp.status_code}",
                 status_code=resp.status_code,
             )
+        if self._after_response is not None:
+            self._after_response("HEAD", self.url, resp.status_code)
         offset = resp.headers.get("Upload-Offset")
         if offset is None:
             raise TusCommunicationError("Server did not return Upload-Offset header")

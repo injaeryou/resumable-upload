@@ -432,3 +432,34 @@ async def test_async_interrupted_parallel_upload_resumes(asgi_base, tmp_path):
         calls.clear()
         assert await client.upload_file(str(f), parallel_uploads=4) == final
         assert calls == []
+
+
+@pytest.mark.anyio
+async def test_async_hooks_fire_on_every_request(asgi_base, tmp_path):
+    """Async twin of TestHooksCoverEveryRequest: every request goes through the hooks."""
+    from resumable_upload.client.aio.client import AsyncTusClient
+
+    transport, base = asgi_base
+    befores: list[str] = []
+    afters: list[str] = []
+    f = tmp_path / "x.bin"
+    f.write_bytes(b"x" * 3000)
+    async with AsyncTusClient(
+        base,
+        _transport=transport,
+        chunk_size=1024,
+        before_request=lambda m, u, h: befores.append(m),
+        after_response=lambda m, u, s: afters.append(m),
+    ) as client:
+        url = await client.upload_file(str(f), parallel_uploads=2)
+        await client.get_upload_info(url)
+        await client.get_metadata(url)
+        await client.get_server_info()
+        await client.delete_upload(url)
+
+    assert befores.count("POST") == 3
+    assert befores.count("HEAD") == 4
+    assert befores.count("PATCH") == 4
+    assert befores.count("OPTIONS") == 1
+    assert befores.count("DELETE") == 1
+    assert sorted(afters) == sorted(befores)
