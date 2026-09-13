@@ -33,6 +33,8 @@ The fingerprint is a SHA-256 hash of the full file content + size, so different 
 
 If the stored URL no longer exists on the server (`404`/`410`: expired or deleted), the client forgets it and creates a fresh upload instead of failing on every run.
 
+From the shell, `resumable-upload upload FILE --url … --resume` does the same with `./.tus_urls.json`; see [CLI](../operations/cli.md).
+
 ## Using File Streams
 
 Upload from a file-like object instead of a path:

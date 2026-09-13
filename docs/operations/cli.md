@@ -1,6 +1,8 @@
 # CLI
 
-The package installs a `resumable-upload` console script that runs a TUS server with no Python boilerplate. Equivalent invocation: `python -m resumable_upload`.
+The package installs a `resumable-upload` console script that runs a TUS server with no Python boilerplate. Equivalent invocation: `python -m resumable_upload`. Try it without installing: `uvx resumable-upload --help`.
+
+`resumable-upload --version` prints the installed version. Every command exits `0` on success and `1` with a one-line `error: …` on stderr for anything the user can act on (missing file, port in use, connection refused, HTTP errors), `2` for bad arguments.
 
 ## `resumable-upload serve`
 
@@ -67,8 +69,12 @@ The same console script also uploads, downloads, and inspects uploads against
 any TUS server — no Python needed.
 
 ```bash
-# Upload (resumable, with a progress line); prints the upload URL
+# Upload; prints the upload URL (progress line on stderr when it is a terminal)
 resumable-upload upload big.bin --url http://host/files
+
+# Resumable: remembers the upload URL in ./.tus_urls.json, so re-running the
+# same command after an interruption continues where it stopped
+resumable-upload upload big.bin --url http://host/files --resume
 
 # Split into concurrent partials and merge server-side (concatenation)
 resumable-upload upload big.bin --url http://host/files --parallel 4
@@ -91,7 +97,10 @@ resumable-upload download http://host/files/<id> -o out.bin
 | `--chunk-size` | `4194304` | Chunk size in bytes (4 MB) |
 | `--parallel` | `1` | Concurrent partial uploads (concatenation) |
 | `--metadata KEY=VALUE` | — | Upload metadata, repeatable |
-| `--checksum` | `sha1` | Checksum algorithm, or `none` to disable |
-| `--no-progress` | off | Suppress the progress line |
+| `--checksum` | `sha1` | One of `md5`, `sha1`, `sha256`, `sha512`, or `none` to disable |
+| `--resume` | off | Remember upload URLs in `./.tus_urls.json` (keyed by file fingerprint) so re-running on the same file resumes; a URL the server has forgotten is dropped and the upload recreated. Not combinable with `--parallel` |
+| `--no-progress` | off | Suppress the progress line (already off when stderr is not a terminal) |
+
+Progress goes to stderr, so `URL=$(resumable-upload upload …)` captures just the URL. An unsupported `--checksum` for the server fails immediately with its `400` rather than retrying.
 
 The CLI handles `SIGINT` / `SIGTERM` cleanly and shuts the HTTP server down before exiting.

@@ -192,7 +192,8 @@ Python 코드를 작성하지 않고 쉘에서 바로 TUS 서버를 실행하거
 # 서버
 resumable-upload serve --host 0.0.0.0 --port 8080 --upload-dir ./uploads
 
-# 클라이언트: 업로드(재개 가능, 진행률 표시), 조회, 다운로드
+# 클라이언트: 업로드(--resume 으로 중단된 업로드 이어가기), 조회, 다운로드
+resumable-upload upload big.bin --url http://host/files --resume
 resumable-upload upload big.bin --url http://host/files --parallel 4
 resumable-upload info http://host/files/<id>
 resumable-upload download http://host/files/<id> -o out.bin

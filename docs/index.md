@@ -12,7 +12,7 @@ A Python implementation of the [TUS resumable upload protocol](https://tus.io/) 
 - **Progress Tracking** — detailed `UploadStats` callback
 - **Async** — awaitable `AsyncTusClient` (`[async]` extra, httpx) and an ASGI server adapter (`TusASGIApp`) that awaits `handle_request_async`
 - **Web Framework Support** — Flask, FastAPI, Django, plus a generic ASGI adapter (`TusASGIApp`)
-- **Command-line Server & Client** — `resumable-upload serve` runs a TUS server; `upload` / `download` / `info` drive one from the shell, with no Python boilerplate
+- **Command-line Server & Client** — `resumable-upload serve` runs a TUS server; `upload` / `download` / `info` drive one from the shell, with no Python boilerplate; `upload --resume` continues an interrupted upload
 - **Concatenation Extension** — server-side merge of partial uploads (SQLite, S3, GCS, Azure), including `concatenation-unfinished` when the backend supports it; `parallel_uploads=N` on the client
 - **Download Endpoint** — opt-in `enable_downloads` serves completed uploads over GET, tusd-style, with safe headers
 - **Deferred Length** — `Upload-Defer-Length` extension for streams whose total size is unknown at creation
