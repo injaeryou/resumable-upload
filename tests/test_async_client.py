@@ -329,6 +329,31 @@ async def test_standalone_call_keeps_uploader_client_alive(asgi_base, tmp_path):
 
 
 @pytest.mark.anyio
+async def test_async_client_store_url_stale_entry_is_replaced(asgi_base, tmp_path):
+    """A stored URL the server no longer knows is dropped and the upload recreated."""
+    import os
+
+    from resumable_upload.client.aio.client import AsyncTusClient
+    from resumable_upload.url_storage import FileURLStorage
+
+    transport, base = asgi_base
+    f = tmp_path / "data.bin"
+    f.write_bytes(os.urandom(40_000))
+    async with AsyncTusClient(
+        base,
+        _transport=transport,
+        chunk_size=8192,
+        store_url=True,
+        url_storage=FileURLStorage(str(tmp_path / "urls.json")),
+    ) as client:
+        first = await client.upload_file(str(f))
+        await client.delete_upload(first)
+        second = await client.upload_file(str(f))
+        assert second != first
+        assert client.url_storage.get_url(client.fingerprinter.get_fingerprint(str(f))) == second
+
+
+@pytest.mark.anyio
 async def test_async_uploader_does_not_retry_client_errors(asgi_base, tmp_path, monkeypatch):
     """A 4xx (other than 409/423/429) is deterministic; retrying only burns the backoff."""
     from resumable_upload.client.aio import uploader as uploader_mod

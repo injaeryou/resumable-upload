@@ -17,7 +17,7 @@ from resumable_upload import TusClient
 | `checksum` | bool \| str | `True` | `True` enables SHA1; pass an algorithm name (`"sha1"`, `"sha256"`, `"sha512"`, `"md5"`) to choose; `False` disables. Server must advertise the chosen algorithm. |
 | `verify_tls_cert` | bool | `True` | Verify TLS certificates |
 | `metadata_encoding` | str | `"utf-8"` | Encoding for metadata values |
-| `store_url` | bool | `False` | Persist upload URLs for cross-session resume |
+| `store_url` | bool | `False` | Persist upload URLs for cross-session resume; a stored URL the server answers `404`/`410` for is dropped and the upload recreated |
 | `url_storage` | URLStorage | `None` | Custom URL storage backend (auto-created as `FileURLStorage()` when `store_url=True` and unset) |
 | `fingerprinter` | Fingerprint | `None` | Custom fingerprint implementation (`Fingerprint`, `PartialMD5Fingerprint`, `CallableFingerprint`, or your own) |
 | `headers` | dict | `{}` | Custom headers added to all requests |

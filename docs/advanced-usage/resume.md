@@ -31,6 +31,8 @@ upload_url = client.upload_file("large_file.bin")
 
 The fingerprint is a SHA-256 hash of the full file content + size, so different files never collide. See `examples/client/resume.py` for a runnable demo.
 
+If the stored URL no longer exists on the server (`404`/`410`: expired or deleted), the client forgets it and creates a fresh upload instead of failing on every run.
+
 ## Using File Streams
 
 Upload from a file-like object instead of a path:
