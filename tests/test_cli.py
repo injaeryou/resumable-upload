@@ -897,3 +897,81 @@ class TestCLIParity:
             if self.CLIENT_ALIASES.get(p, p) not in self._dests("upload")
         }
         assert not missing, f"TusClient options without an `upload` flag: {sorted(missing)}"
+
+
+class TestCLIServeKeepAlive:
+    def test_one_connection_carries_the_whole_flow(self, cli_server):
+        """The bundled server speaks HTTP/1.1 and keeps the socket open across requests."""
+        import http.client
+        from urllib.parse import urlsplit
+
+        u = urlsplit(cli_server)
+        conn = http.client.HTTPConnection(u.hostname, u.port, timeout=5)
+
+        def do(method, path, body=None, **extra):
+            conn.request(method, path, body=body, headers={"Tus-Resumable": "1.0.0", **extra})
+            resp = conn.getresponse()
+            data = resp.read()
+            assert resp.version == 11, (method, resp.version)
+            assert resp.will_close is False, (method, resp.getheader("Connection"))
+            return resp, data
+
+        try:
+            do("OPTIONS", u.path)
+            sock = conn.sock
+            assert sock is not None
+            resp, _ = do("POST", u.path, **{"Upload-Length": "10"})
+            assert resp.status == 201
+            loc = resp.getheader("Location")
+            patch = {"Content-Type": "application/offset+octet-stream"}
+            resp, _ = do("PATCH", loc, b"12345", **{"Upload-Offset": "0", **patch})
+            assert resp.status == 204
+            resp, _ = do("PATCH", loc, b"67890", **{"Upload-Offset": "5", **patch})
+            assert resp.status == 204
+            resp, _ = do("HEAD", loc)
+            assert resp.getheader("Upload-Offset") == "10"
+            resp, data = do("GET", loc)
+            assert resp.status == 200
+            assert data == b"1234567890"
+            # http.client silently reconnects when the server closed on it.
+            assert conn.sock is sock
+        finally:
+            conn.close()
+    def test_single_threaded_server_falls_back_to_closing_connections(self, tmp_path):
+        """A plain HTTPServer serves one socket at a time; keeping it alive would
+        block every other client, so the handler answers HTTP/1.0 there."""
+        import http.client
+        import threading
+        from http.server import HTTPServer
+
+        from resumable_upload.server import TusHTTPRequestHandler, TusServer
+        from resumable_upload.storage import SQLiteStorage
+
+        tus = TusServer(
+            storage=SQLiteStorage(db_path=str(tmp_path / "u.db"), upload_dir=str(tmp_path / "f")),
+            base_path="/files",
+        )
+
+        class Handler(TusHTTPRequestHandler):
+            pass
+
+        Handler.tus_server = tus
+        httpd = HTTPServer(("127.0.0.1", 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        a = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+        b = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+        try:
+            a.request("OPTIONS", "/files")
+            resp = a.getresponse()
+            resp.read()
+            assert resp.version == 10
+            assert resp.will_close is True
+            # With `a` still open, a second client must not be starved.
+            b.request("OPTIONS", "/files")
+            assert b.getresponse().status == 204
+        finally:
+            a.close()
+            b.close()
+            httpd.shutdown()
+            httpd.server_close()

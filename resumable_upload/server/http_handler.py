@@ -9,6 +9,7 @@ and call :meth:`TusServer.handle_request` directly.
 from __future__ import annotations
 
 import shutil
+import socketserver
 from http.server import BaseHTTPRequestHandler
 from typing import Any
 
@@ -23,6 +24,10 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
     """HTTP request handler for TUS server."""
 
     tus_server: TusServer | None = None
+    # Keep-alive: a chunked upload is many PATCHes, each one a fresh TCP (and
+    # TLS) handshake under HTTP/1.0. Every response below is framed with
+    # Content-Length so the next request can start on the same socket.
+    protocol_version = "HTTP/1.1"
 
     def do_OPTIONS(self) -> None:
         """Handle OPTIONS request."""
@@ -69,6 +74,11 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
         super().setup()
         if self.tus_server and self.tus_server.request_timeout > 0:
             self.connection.settimeout(self.tus_server.request_timeout)
+        # Keep-alive needs one thread per connection: a plain single-threaded
+        # HTTPServer (the README's minimal example) would sit in readline() on
+        # a parked socket and starve every other client until request_timeout.
+        if not isinstance(self.server, socketserver.ThreadingMixIn):
+            self.protocol_version = "HTTP/1.0"
 
     def _send_error(self, status: int, message: bytes) -> None:
         assert self.tus_server is not None
@@ -206,10 +216,14 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
             method, self.path, headers, body
         )
 
-        # Send response
+        # Send response. The core sets Content-Length whenever there is a body;
+        # a bodiless 200/201 still needs an explicit 0 or a keep-alive client
+        # waits for EOF. 204 must not carry one (RFC 9110 §8.6).
         self.send_response(status)
         for key, value in response_headers.items():
             self.send_header(key, value)
+        if status != 204 and not any(k.lower() == "content-length" for k in response_headers):
+            self.send_header("Content-Length", "0")
         self.end_headers()
         if isinstance(response_body, (bytes, bytearray)):
             if response_body:
