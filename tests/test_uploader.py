@@ -372,7 +372,7 @@ class TestUploader:
         uploader = Uploader(url=upload_url, file_path=test_file)
 
         urlopen_err = patch(
-            "resumable_upload.client.uploader.urlopen", side_effect=URLError("network error")
+            "resumable_upload.client.uploader.Uploader._send", side_effect=URLError("network error")
         )
         with urlopen_err, pytest.raises(TusCommunicationError):
             uploader._get_offset()
@@ -443,7 +443,7 @@ class TestUploader:
         )
 
         urlopen_patch = unittest.mock.patch(
-            "resumable_upload.client.uploader.urlopen", side_effect=failing_urlopen
+            "resumable_upload.client.uploader.Uploader._send", side_effect=failing_urlopen
         )
         with urlopen_patch, pytest.raises(TusUploadFailed):
             uploader.upload_chunk()
@@ -469,15 +469,6 @@ class TestUploader:
             location = response.headers.get("Location")
             upload_url = urljoin(url, location) if not location.startswith("http") else location
 
-        attempt = 0
-
-        def fail_once(*args, **kwargs):
-            nonlocal attempt
-            attempt += 1
-            if attempt == 1:
-                raise URLError("first attempt fails")
-            return real_urlopen(*args, **kwargs)
-
         uploader = Uploader(
             url=upload_url,
             file_path=test_file,
@@ -485,11 +476,16 @@ class TestUploader:
             max_retries=2,
             retry_delay=0.0,
         )
+        attempt = 0
 
-        urlopen_once = unittest.mock.patch(
-            "resumable_upload.client.uploader.urlopen", side_effect=fail_once
-        )
-        with urlopen_once:
+        def fail_once(req):
+            nonlocal attempt
+            attempt += 1
+            if attempt == 1:
+                raise URLError("first attempt fails")
+            return Uploader._send(uploader, req)
+
+        with unittest.mock.patch.object(uploader, "_send", side_effect=fail_once):
             uploader.upload_chunk()
 
         assert uploader.stats.chunks_retried == 1
@@ -590,7 +586,7 @@ class TestUploader:
 
         uploader = Uploader(url=upload_url, file_path=test_file, max_retries=3, retry_delay=0.0)
         patched = unittest.mock.patch(
-            "resumable_upload.client.uploader.urlopen", side_effect=bad_request
+            "resumable_upload.client.uploader.Uploader._send", side_effect=bad_request
         )
         with patched, pytest.raises(TusUploadFailed) as ei:
             uploader.upload_chunk()
@@ -616,9 +612,155 @@ class TestUploader:
 
         uploader = Uploader(url=upload_url, file_path=test_file, max_retries=2, retry_delay=0.0)
         patched = unittest.mock.patch(
-            "resumable_upload.client.uploader.urlopen", side_effect=locked
+            "resumable_upload.client.uploader.Uploader._send", side_effect=locked
         )
         with patched, pytest.raises(TusUploadFailed):
             uploader.upload_chunk()
         uploader.close()
         assert calls == 3
+
+
+@pytest.fixture
+def counting_server(tmp_path):
+    """Threaded TUS server that counts accepted TCP connections.
+
+    Yields ``(base_url, handler_class, counts)``; tests may set
+    ``handler_class.protocol_version`` before uploading.
+    """
+    from resumable_upload.cli import _ThreadingHTTPServer
+
+    def make(request_timeout: int = 30):
+        storage = SQLiteStorage(
+            db_path=str(tmp_path / f"u{request_timeout}.db"),
+            upload_dir=str(tmp_path / f"f{request_timeout}"),
+        )
+        tus = TusServer(storage=storage, base_path="/files", request_timeout=request_timeout)
+        counts = {"connections": 0}
+
+        class Handler(TusHTTPRequestHandler):
+            def setup(self) -> None:
+                counts["connections"] += 1
+                super().setup()
+
+        Handler.tus_server = tus
+        httpd = _ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        Thread(target=httpd.serve_forever, daemon=True).start()
+        servers.append(httpd)
+        return f"http://127.0.0.1:{httpd.server_address[1]}/files", Handler, counts
+
+    servers: list = []
+    try:
+        yield make
+    finally:
+        for httpd in servers:
+            httpd.shutdown()
+            httpd.server_close()
+
+
+class TestUploaderKeepAlive:
+    """The sync Uploader keeps one connection for HEAD + every PATCH, and
+    degrades to one connection per request against HTTP/1.0 peers."""
+
+    @staticmethod
+    def _file(tmp_path):
+        f = tmp_path / "data.bin"
+        f.write_bytes(b"k" * 13_000)  # 13 chunks of 1024
+        return str(f)
+
+    def test_http11_server_gets_one_connection(self, counting_server, tmp_path):
+        base, _, counts = counting_server()
+        client = TusClient(base, chunk_size=1024)
+        url = client.upload_file(self._file(tmp_path))
+        assert client.get_upload_info(url)["complete"] is True
+        # POST (urlopen) + HEAD/PATCH x13 (uploader) + HEAD (info) => 3 sockets
+        assert counts["connections"] == 3
+
+    def test_http10_server_reconnects_per_request(self, counting_server, tmp_path):
+        base, handler, counts = counting_server()
+        handler.protocol_version = "HTTP/1.0"
+        client = TusClient(base, chunk_size=1024)
+        url = client.upload_file(self._file(tmp_path))
+        assert client.get_upload_info(url)["complete"] is True
+        assert counts["connections"] == 1 + 1 + 13 + 1  # every request its own socket
+
+    def test_stale_keepalive_socket_is_reopened_once(self, counting_server, tmp_path):
+        import time
+
+        base, _, counts = counting_server(request_timeout=1)
+        client = TusClient(base, chunk_size=1024)
+
+        def stall_after_first_chunk(stats):
+            if stats.chunks_completed == 1:
+                time.sleep(1.6)  # server's idle timeout reaps the kept-alive socket
+
+        url = client.upload_file(self._file(tmp_path), progress_callback=stall_after_first_chunk)
+        assert client.get_upload_info(url)["complete"] is True
+        assert counts["connections"] == 4  # POST, uploader, reopened uploader, info
+
+    def test_environment_proxy_falls_back_to_urlopen(self, counting_server, tmp_path, monkeypatch):
+        from unittest.mock import patch
+        from urllib.error import URLError
+
+        from resumable_upload.exceptions import TusCommunicationError
+
+        base, _, _ = counting_server()
+        client = TusClient(base, chunk_size=1024)
+        upload_url = client.upload_file(self._file(tmp_path))
+        monkeypatch.setenv("http_proxy", "http://127.0.0.1:9")
+        monkeypatch.delenv("no_proxy", raising=False)
+        calls = []
+
+        def spy(req, **kwargs):
+            calls.append(req.get_method())
+            raise URLError("proxy unreachable")
+
+        spied = patch("resumable_upload.client.uploader.urlopen", side_effect=spy)
+        with spied, pytest.raises(TusCommunicationError):
+            Uploader(url=upload_url, file_path=self._file(tmp_path))
+        assert calls == ["HEAD"]
+
+    def test_redirect_on_patch_is_an_error_not_a_silent_success(self, tmp_path):
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+
+        from resumable_upload.exceptions import TusUploadFailed
+
+        class Redirecting(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_HEAD(self):  # noqa: N802
+                self.send_response(200)
+                self.send_header("Upload-Offset", "0")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def do_PATCH(self):  # noqa: N802
+                self.rfile.read(int(self.headers["Content-Length"]))
+                self.send_response(307)
+                self.send_header("Location", "https://elsewhere.example/files/x")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *args):  # noqa: ARG002
+                pass
+
+        # Single-threaded server: the uploader's kept-alive socket must be
+        # closed before shutdown() or serve_forever never returns.
+        httpd = HTTPServer(("127.0.0.1", 0), Redirecting)
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        uploader = None
+        try:
+            uploader = Uploader(
+                url=f"http://127.0.0.1:{httpd.server_address[1]}/files/x",
+                file_path=self._file(tmp_path),
+                chunk_size=1024,
+            )
+            with pytest.raises(TusUploadFailed) as ei:
+                uploader.upload_chunk()
+            assert "307" in str(ei.value)
+            assert uploader.offset == 0  # nothing was applied, nothing advanced
+        finally:
+            if uploader is not None:
+                uploader.close()
+            httpd.shutdown()
+            httpd.server_close()

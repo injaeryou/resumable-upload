@@ -203,7 +203,7 @@ resumable-upload info http://host/files/<id> --header "Authorization=Bearer $TOK
 
 서버 플래그: `--host`, `--port`, `--base-path`, `--upload-dir`, `--db-path`, `--max-size`, `--max-chunk-size`, `--request-timeout`, `--upload-expiry`, `--cleanup-interval`, `--cors-origin`, `--cors-credentials`, `--cors-max-age`, `--checksum-algorithms`, `--enable-downloads`, `--behind-proxy`, `--location-base-url`, `--disable-termination`, `--disable-concatenation`, `--metrics-path`, `--lock-backend`, `--redis-url`, `--lock-ttl`, `--lock-wait`, `--log-level`. 자세한 내용은 `resumable-upload serve --help`로 확인하세요.
 
-`serve`는 HTTP/1.1 keep-alive를 지원하므로 청크 업로드가 `PATCH`마다 TCP(및 TLS) 핸드셰이크를 반복하지 않고 연결 하나를 재사용합니다. 연결마다 스레드를 하나씩 사용하므로 동시 `PATCH`, `--parallel` 업로드, 락 경합이 실제 운영 환경과 동일하게 동작합니다. `SIGINT`/`SIGTERM`을 받으면 새 연결을 받지 않고, 유휴 keep-alive 연결은 즉시 닫고, 처리 중인 요청이 끝나기를 기다린 뒤 종료하며, 대기 시간은 `--request-timeout`(기본 30초)으로 제한됩니다 — 멈춘 클라이언트 때문에 종료가 `SIGKILL`까지 밀리지 않도록 오케스트레이터의 grace period보다 작게 두세요. 연결당 스레드 하나를 상한 없이 사용하므로, 번들 서버는 직접 노출하지 말고 리버스 프록시 뒤에 두는 것을 권장합니다.
+`serve`는 HTTP/1.1 keep-alive를 지원하므로 청크 업로드가 `PATCH`마다 TCP(및 TLS) 핸드셰이크를 반복하지 않고 연결 하나를 재사용합니다. 번들 클라이언트도 마찬가지로 `TusClient`/`Uploader`가 `HEAD`와 `PATCH` 전체에 연결 하나를 유지하며, HTTP/1.0이나 `Connection: close` 서버를 만나면 요청마다 새로 연결하고, 서버가 끊어 둔 keep-alive 소켓은 다시 엽니다. 연결마다 스레드를 하나씩 사용하므로 동시 `PATCH`, `--parallel` 업로드, 락 경합이 실제 운영 환경과 동일하게 동작합니다. `SIGINT`/`SIGTERM`을 받으면 새 연결을 받지 않고, 유휴 keep-alive 연결은 즉시 닫고, 처리 중인 요청이 끝나기를 기다린 뒤 종료하며, 대기 시간은 `--request-timeout`(기본 30초)으로 제한됩니다 — 멈춘 클라이언트 때문에 종료가 `SIGKILL`까지 밀리지 않도록 오케스트레이터의 grace period보다 작게 두세요. 연결당 스레드 하나를 상한 없이 사용하므로, 번들 서버는 직접 노출하지 말고 리버스 프록시 뒤에 두는 것을 권장합니다.
 
 ### 병렬 청크 업로드
 
