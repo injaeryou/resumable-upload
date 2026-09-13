@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import logging
 import signal
+import socket
 import sys
 import threading
 import urllib.request
 from http.server import ThreadingHTTPServer
+from typing import Any
 from urllib.parse import urlsplit
 
 from resumable_upload import __version__
@@ -25,12 +28,34 @@ class _ThreadingHTTPServer(ThreadingHTTPServer):
 
     ``daemon_threads = False`` makes ``server_close()`` block on in-flight
     requests instead of killing them at interpreter exit, so SIGTERM finishes
-    the chunk being written rather than truncating it. A stalled connection can
-    hold shutdown for up to ``request_timeout`` (30s default), which is the
-    socket read timeout that eventually reaps it.
+    the chunk being written rather than truncating it. A connection stalled
+    mid-request can hold shutdown for up to ``request_timeout`` (30s default),
+    which is the socket read timeout that eventually reaps it. Idle keep-alive
+    connections (parked between requests) are cut immediately instead.
     """
 
     daemon_threads = False
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        # Both read by TusHTTPRequestHandler: sockets waiting for a request
+        # line, and whether they should stop waiting. Set before binding:
+        # TCPServer.__init__ calls server_close() when bind() fails (port in
+        # use), and that must surface the OSError, not an AttributeError.
+        self.idle_connections: set[socket.socket] = set()
+        self.closing = False
+        super().__init__(*args, **kwargs)
+
+    def server_close(self) -> None:
+        # serve_forever() has returned, so nothing new is accepted. Wake the
+        # idle handlers (their readline() returns b"" and the thread exits)
+        # before the join below; a socket the peer already dropped raises
+        # ENOTCONN here, which is the outcome we wanted anyway. The flag goes
+        # up first so a request finishing after the sweep doesn't park again.
+        self.closing = True
+        for sock in list(self.idle_connections):
+            with contextlib.suppress(OSError):
+                sock.shutdown(socket.SHUT_RDWR)
+        super().server_close()
 
 
 def _build_parser() -> argparse.ArgumentParser:

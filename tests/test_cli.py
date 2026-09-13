@@ -900,6 +900,18 @@ class TestCLIParity:
 
 
 class TestCLIServeKeepAlive:
+    def test_bind_failure_surfaces_the_oserror(self):
+        """server_close() runs from TCPServer.__init__ when bind() fails; it must
+        not trip over attributes that are only set after binding."""
+        from resumable_upload.cli import _ThreadingHTTPServer
+        from resumable_upload.server import TusHTTPRequestHandler
+
+        with socket.socket() as taken:
+            taken.bind(("127.0.0.1", 0))
+            taken.listen()
+            with pytest.raises(OSError, match="Address already in use"):
+                _ThreadingHTTPServer(("127.0.0.1", taken.getsockname()[1]), TusHTTPRequestHandler)
+
     def test_one_connection_carries_the_whole_flow(self, cli_server):
         """The bundled server speaks HTTP/1.1 and keeps the socket open across requests."""
         import http.client
@@ -968,6 +980,61 @@ class TestCLIServeKeepAlive:
         finally:
             s.close()
             _stop(proc)
+
+    def test_shutdown_does_not_wait_for_idle_keepalive_connections(self, tmp_path):
+        """An idle kept-alive socket is blocked in readline() for up to
+        ``request_timeout``; shutdown must cut it loose instead of waiting."""
+        port = _find_free_port()
+        proc = _spawn_serve(tmp_path, port, "--request-timeout", "20")
+        idle = socket.socket()
+        try:
+            _wait_until_serving(proc, port)
+            idle.settimeout(5)
+            idle.connect(("127.0.0.1", port))
+            idle.sendall(b"OPTIONS /files HTTP/1.1\r\nHost: x\r\n\r\n")
+            raw = b""
+            while b"\r\n\r\n" not in raw:
+                raw += idle.recv(4096)
+            assert raw.startswith(b"HTTP/1.1 204")
+            # Now parked in keep-alive, waiting for a request line that never comes.
+            started = time.time()
+            proc.terminate()
+            assert proc.wait(timeout=15) is not None
+            assert time.time() - started < 5
+        finally:
+            idle.close()
+            _stop(proc)
+
+    def test_shutdown_does_not_wait_for_a_request_that_finishes_late(self, tmp_path):
+        """A request in flight when shutdown starts is served, and its connection
+        must then exit rather than park in keep-alive for ``request_timeout``."""
+        port = _find_free_port()
+        proc = _spawn_serve(tmp_path, port, "--request-timeout", "20")
+        s = socket.socket()
+        try:
+            _wait_until_serving(proc, port)
+            s.settimeout(5)
+            s.connect(("127.0.0.1", port))
+            s.sendall(
+                b"POST /files HTTP/1.1\r\nHost: x\r\nTus-Resumable: 1.0.0\r\n"
+                b"Upload-Length: 5\r\nContent-Type: application/offset+octet-stream\r\n"
+                b"Content-Length: 5\r\n\r\n12"
+            )  # server is now blocked reading the last 3 body bytes
+            time.sleep(0.5)
+            started = time.time()
+            proc.terminate()
+            time.sleep(0.5)  # let the shutdown sweep run while we are in flight
+            s.sendall(b"345")
+            raw = b""
+            while b"\r\n\r\n" not in raw:
+                raw += s.recv(4096)
+            assert raw.startswith(b"HTTP/1.1 201")
+            assert proc.wait(timeout=15) is not None
+            assert time.time() - started < 5
+        finally:
+            s.close()
+            _stop(proc)
+
     def test_single_threaded_server_falls_back_to_closing_connections(self, tmp_path):
         """A plain HTTPServer serves one socket at a time; keeping it alive would
         block every other client, so the handler answers HTTP/1.0 there."""

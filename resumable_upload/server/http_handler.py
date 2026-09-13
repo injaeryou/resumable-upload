@@ -80,6 +80,34 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
         if not isinstance(self.server, socketserver.ThreadingMixIn):
             self.protocol_version = "HTTP/1.0"
 
+    # A kept-alive socket parks in readline() between requests. A server that
+    # exposes ``idle_connections`` (the CLI's does) can cut those on shutdown
+    # instead of waiting ``request_timeout`` for each; in-flight requests are
+    # not in the set, so they still drain. Once the server is ``closing``, a
+    # connection that just finished a request must not park again — it
+    # registers as idle first, then checks the flag, so it is either cut by
+    # the shutdown sweep or sees the flag; there is no window in between.
+    def handle_one_request(self) -> None:
+        idle = getattr(self.server, "idle_connections", None)
+        if idle is not None:
+            idle.add(self.connection)
+            if getattr(self.server, "closing", False):
+                idle.discard(self.connection)
+                self.close_connection = True
+                return
+        try:
+            super().handle_one_request()
+        finally:
+            if idle is not None:
+                idle.discard(self.connection)
+
+    def parse_request(self) -> bool:
+        # Runs right after the request line arrived: no longer idle.
+        idle = getattr(self.server, "idle_connections", None)
+        if idle is not None:
+            idle.discard(self.connection)
+        return super().parse_request()
+
     def _send_error(self, status: int, message: bytes) -> None:
         """Reject a request whose body has not been (fully) read.
 
