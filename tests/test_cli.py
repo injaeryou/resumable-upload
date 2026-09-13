@@ -937,6 +937,37 @@ class TestCLIServeKeepAlive:
             assert conn.sock is sock
         finally:
             conn.close()
+
+    def test_early_rejection_closes_the_connection(self, tmp_path):
+        """A 413 sent before the body was read must not leave that body queued
+        as the next request on a kept-alive socket."""
+        port = _find_free_port()
+        proc = _spawn_serve(tmp_path, port, "--max-size", "10")
+        s = socket.socket()
+        try:
+            _wait_until_serving(proc, port)
+            s.settimeout(5)
+            s.connect(("127.0.0.1", port))
+            s.sendall(
+                b"POST /files HTTP/1.1\r\nHost: x\r\nTus-Resumable: 1.0.0\r\n"
+                b"Upload-Length: 100\r\nContent-Length: 100\r\n\r\n"
+            )  # body deliberately never sent
+            raw = b""
+            while b"\r\n\r\n" not in raw:
+                raw += s.recv(4096)
+            head = raw.split(b"\r\n\r\n", 1)[0].decode()
+            assert head.startswith("HTTP/1.1 413")
+            assert "connection: close" in head.lower()
+            # The server hangs up: recv drains the error body and then returns b"".
+            while s.recv(4096):
+                pass
+            # A fresh connection is served normally.
+            req = urllib.request.Request(f"http://127.0.0.1:{port}/files", method="OPTIONS")
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                assert resp.status == 204
+        finally:
+            s.close()
+            _stop(proc)
     def test_single_threaded_server_falls_back_to_closing_connections(self, tmp_path):
         """A plain HTTPServer serves one socket at a time; keeping it alive would
         block every other client, so the handler answers HTTP/1.0 there."""

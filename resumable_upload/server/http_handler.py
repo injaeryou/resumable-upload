@@ -81,9 +81,18 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
             self.protocol_version = "HTTP/1.0"
 
     def _send_error(self, status: int, message: bytes) -> None:
+        """Reject a request whose body has not been (fully) read.
+
+        Every caller short-circuits before consuming the body, so the unread
+        bytes would be parsed as the next request on a kept-alive socket.
+        Close instead; ``send_header("Connection", "close")`` also flips
+        ``close_connection`` so the handler loop exits after this response.
+        """
         assert self.tus_server is not None
         self.send_response(status)
         self.send_header("Tus-Resumable", self.tus_server.TUS_VERSION)
+        self.send_header("Content-Length", str(len(message)))
+        self.send_header("Connection", "close")
         # Transport-level rejections short-circuit before the core, so add CORS
         # here too — otherwise a browser can't read the status of a 400/413 that
         # the body parser or the Content-Length size gates produced: the
@@ -167,7 +176,10 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
     def _handle_request(self, method: str) -> None:
         """Handle incoming request."""
         if self.tus_server is None:
+            # Misconfigured handler: no body is read, so don't keep the socket.
             self.send_response(500)
+            self.send_header("Content-Length", "0")
+            self.send_header("Connection", "close")
             self.end_headers()
             return
         # Read body for POST/PATCH
