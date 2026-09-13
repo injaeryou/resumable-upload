@@ -4,7 +4,7 @@ The TUS [`concatenation` extension](https://tus.io/protocols/resumable-upload.ht
 
 ## Parallel Upload (high-level)
 
-For large files over high-bandwidth links, ask the client to split the file into `N` byte ranges, upload them concurrently, and merge them server-side:
+For large files over high-bandwidth links, ask the client to split the file into `N` byte ranges, create the `N` partial uploads up front, upload them concurrently, and merge them server-side:
 
 ```python
 from resumable_upload import TusClient
@@ -20,6 +20,8 @@ Constraints:
 - The server must advertise the `concatenation` extension (this library does).
 
 The wire interaction is identical to [`tus-js-client`'s](https://github.com/tus/tus-js-client) `parallelUploads` option, so the same servers work for both clients.
+
+With `store_url=True` the partial URLs are remembered (like tus-js-client's `parallelUploadUrls`), so an interrupted parallel upload resumes each slice from its server offset on the next `upload_file(..., parallel_uploads=N)` call. The list is dropped once the final upload is created, or when `N` changes, or when the server no longer knows a partial (that slice is recreated).
 
 ## Manual partial / final control
 

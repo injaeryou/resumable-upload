@@ -347,10 +347,6 @@ def _upload(args: argparse.Namespace) -> int:
     from resumable_upload.client import TusClient
     from resumable_upload.client.stats import UploadStats
 
-    if args.resume and args.parallel > 1:
-        # The parallel (concatenation) path never consults URL storage, so the
-        # flag would be a silent no-op. Refuse rather than pretend.
-        raise SystemExit("--resume cannot be combined with --parallel (partials are not stored)")
     checksum: bool | str = False if args.checksum.lower() == "none" else args.checksum
     metadata = _parse_pairs("--metadata", args.metadata)
     metadata.setdefault("filename", os.path.basename(args.file))

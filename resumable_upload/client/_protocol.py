@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import json
 import re
 import uuid
 from typing import Any
@@ -105,6 +106,22 @@ def is_retriable_status(status: int | None) -> bool:
 def retry_delay(base: float, attempt: int) -> float:
     """Exponential back-off capped at 60 seconds."""
     return min(base * (2**attempt), 60.0)
+
+
+def partials_key(fingerprint: str) -> str:
+    """URL-storage key under which a parallel upload's partial URLs live.
+
+    Kept apart from the plain fingerprint key so ``find_previous_uploads`` /
+    ``resume_upload`` keep seeing a single URL, never a list."""
+    return fingerprint + "#partials"
+
+
+def encode_partials(urls: list[str]) -> str:
+    return json.dumps(urls)
+
+
+def decode_partials(value: str | None) -> list[str] | None:
+    return json.loads(value) if value else None
 
 
 def split_boundaries(file_size: int, parts: int) -> list[tuple[int, int]]:

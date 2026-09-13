@@ -379,3 +379,56 @@ async def test_async_uploader_does_not_retry_client_errors(asgi_base, tmp_path, 
             await up.upload_chunk()
         assert calls == 1
         assert ei.value.status_code == 400
+
+
+@pytest.mark.anyio
+async def test_async_interrupted_parallel_upload_resumes(asgi_base, tmp_path):
+    """store_url=True remembers the partial URLs across an interrupted parallel upload."""
+    from resumable_upload.client.aio.client import AsyncTusClient
+    from resumable_upload.url_storage import FileURLStorage
+
+    transport, base = asgi_base
+    payload = bytes((i * 7 + 3) % 256 for i in range(4000))
+    f = tmp_path / "big.bin"
+    f.write_bytes(payload)
+    patches = 0
+
+    def trip(method, url, headers):
+        nonlocal patches
+        if method == "PATCH":
+            patches += 1
+            if patches == 3:
+                raise OSError("simulated network drop")
+
+    def make(hook):
+        return AsyncTusClient(
+            base,
+            _transport=transport,
+            chunk_size=256,
+            store_url=True,
+            url_storage=FileURLStorage(str(tmp_path / "urls.json")),
+            max_retries=0,
+            before_request=hook,
+        )
+
+    async with make(trip) as client:
+        with pytest.raises(OSError):
+            await client.upload_file(str(f), parallel_uploads=4)
+
+    calls: list[str] = []
+
+    def record(method, url, headers):
+        if method == "POST":
+            calls.append(headers.get("Upload-Concat", ""))
+        elif method == "PATCH":
+            calls.append("PATCH")
+
+    async with make(record) as client:
+        final = await client.upload_file(str(f), parallel_uploads=4)
+        assert "partial" not in calls, calls  # every partial was reused
+        assert 0 < calls.count("PATCH") < 16  # some chunks were already on the server
+        info = await client.get_upload_info(final)
+        assert info["complete"] is True and info["length"] == len(payload)
+        calls.clear()
+        assert await client.upload_file(str(f), parallel_uploads=4) == final
+        assert calls == []

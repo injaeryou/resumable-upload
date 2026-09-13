@@ -7,7 +7,7 @@ the concrete ``TusClient.__init__``; this module only declares the shape.
 """
 
 import ssl
-from typing import IO, Callable, Optional, Union
+from typing import IO, Any, Callable, Optional, Union
 
 from resumable_upload.client.stats import UploadStats
 from resumable_upload.fingerprint import Fingerprint
@@ -58,6 +58,9 @@ class _ClientAttrs:
         raise NotImplementedError
 
     def get_file_size(self, file_source: Union[str, IO]) -> int:
+        raise NotImplementedError
+
+    def get_upload_info(self, upload_url: str) -> dict[str, Any]:
         raise NotImplementedError
 
     def _create_upload(
