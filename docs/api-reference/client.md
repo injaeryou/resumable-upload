@@ -21,7 +21,7 @@ from resumable_upload import TusClient
 | `url_storage` | URLStorage | `None` | Custom URL storage backend (auto-created as `FileURLStorage()` when `store_url=True` and unset) |
 | `fingerprinter` | Fingerprint | `None` | Custom fingerprint implementation (`Fingerprint`, `PartialMD5Fingerprint`, `CallableFingerprint`, or your own) |
 | `headers` | dict | `{}` | Custom headers added to all requests |
-| `max_retries` | int | `3` | Max retry attempts per chunk (0 = disabled) |
+| `max_retries` | int | `3` | Max retry attempts per chunk (0 = disabled); network errors, `5xx`, `408`/`423`/`429` only — other `4xx` fail immediately |
 | `retry_delay` | float | `1.0` | Base delay between retries (exponential backoff, capped at 60s) |
 | `timeout` | float | `30.0` | Per-request socket timeout in seconds |
 | `before_request` | Callable | `None` | Observability hook: `(method, url, headers) -> None`, called before every HTTP request |

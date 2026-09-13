@@ -561,3 +561,64 @@ class TestUploader:
             uploader.upload_chunk()
 
         uploader.close()
+
+    @staticmethod
+    def _create_upload(url: str, test_file: str) -> str:
+        from urllib.parse import urljoin
+        from urllib.request import Request, urlopen
+
+        headers = {"Tus-Resumable": "1.0.0", "Upload-Length": str(os.path.getsize(test_file))}
+        with urlopen(Request(url, headers=headers, method="POST")) as response:
+            location = response.headers.get("Location")
+            return urljoin(url, location) if not location.startswith("http") else location
+
+    def test_upload_chunk_does_not_retry_client_errors(self, test_file, server):
+        """A 4xx (other than 409/423/429) is deterministic; retrying only burns the backoff."""
+        import unittest.mock
+        from urllib.error import HTTPError
+
+        from resumable_upload.exceptions import TusUploadFailed
+
+        url, _ = server
+        upload_url = self._create_upload(url, test_file)
+        calls = 0
+
+        def bad_request(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            raise HTTPError(upload_url, 400, "Bad Request", {}, None)  # type: ignore[arg-type]
+
+        uploader = Uploader(url=upload_url, file_path=test_file, max_retries=3, retry_delay=0.0)
+        patched = unittest.mock.patch(
+            "resumable_upload.client.uploader.urlopen", side_effect=bad_request
+        )
+        with patched, pytest.raises(TusUploadFailed) as ei:
+            uploader.upload_chunk()
+        uploader.close()
+        assert calls == 1
+        assert ei.value.status_code == 400
+
+    def test_upload_chunk_retries_423_locked(self, test_file, server):
+        """423 Locked is transient (another writer holds the lock) and stays retriable."""
+        import unittest.mock
+        from urllib.error import HTTPError
+
+        from resumable_upload.exceptions import TusUploadFailed
+
+        url, _ = server
+        upload_url = self._create_upload(url, test_file)
+        calls = 0
+
+        def locked(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            raise HTTPError(upload_url, 423, "Locked", {}, None)  # type: ignore[arg-type]
+
+        uploader = Uploader(url=upload_url, file_path=test_file, max_retries=2, retry_delay=0.0)
+        patched = unittest.mock.patch(
+            "resumable_upload.client.uploader.urlopen", side_effect=locked
+        )
+        with patched, pytest.raises(TusUploadFailed):
+            uploader.upload_chunk()
+        uploader.close()
+        assert calls == 3

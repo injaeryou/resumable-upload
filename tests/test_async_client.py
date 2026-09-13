@@ -326,3 +326,31 @@ async def test_standalone_call_keeps_uploader_client_alive(asgi_base, tmp_path):
     await uploader.upload()
     assert (await client.get_upload_info(uploader.url))["offset"] == len(payload)
     await client.aclose()
+
+
+@pytest.mark.anyio
+async def test_async_uploader_does_not_retry_client_errors(asgi_base, tmp_path, monkeypatch):
+    """A 4xx (other than 409/423/429) is deterministic; retrying only burns the backoff."""
+    from resumable_upload.client.aio import uploader as uploader_mod
+    from resumable_upload.client.aio.client import AsyncTusClient
+    from resumable_upload.exceptions import TusUploadFailed
+
+    transport, base = asgi_base
+    f = tmp_path / "data.bin"
+    f.write_bytes(b"x" * 4096)
+    async with AsyncTusClient(
+        base, _transport=transport, chunk_size=1024, max_retries=3, retry_delay=0.0
+    ) as client:
+        up = await client.create_uploader(str(f))
+        calls = 0
+
+        async def bad_request(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return httpx.Response(400)
+
+        monkeypatch.setattr(uploader_mod._http, "request", bad_request)
+        with pytest.raises(TusUploadFailed) as ei:
+            await up.upload_chunk()
+        assert calls == 1
+        assert ei.value.status_code == 400

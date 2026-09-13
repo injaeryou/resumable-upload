@@ -178,6 +178,7 @@ class Uploader:
         except (HTTPError, URLError) as e:
             raise TusCommunicationError(
                 f"Failed to get offset: {str(e)}",
+                status_code=e.code if isinstance(e, HTTPError) else None,
             ) from e
 
     def _upload_chunk(self, data: bytes) -> None:
@@ -249,6 +250,7 @@ class Uploader:
                 ) from e
             raise TusUploadFailed(
                 f"Failed to upload chunk at offset {self.offset}: {e}",
+                status_code=e.code,
             ) from e
         except URLError as e:
             raise TusUploadFailed(
@@ -292,12 +294,17 @@ class Uploader:
             except (TusUploadFailed, OSError) as e:
                 last_error = e
                 # User-defined veto: skip the remaining retry budget entirely.
-                if self._on_should_retry is not None and not self._on_should_retry(e, attempt + 1):
+                if self._on_should_retry is not None:
+                    if not self._on_should_retry(e, attempt + 1):
+                        with self.stats_lock:
+                            self._stats.chunks_failed += 1
+                        raise TusUploadFailed(
+                            f"Retry vetoed by on_should_retry at offset {self.offset}: {e}"
+                        ) from e
+                elif not _protocol.is_retriable_status(getattr(e, "status_code", None)):
                     with self.stats_lock:
                         self._stats.chunks_failed += 1
-                    raise TusUploadFailed(
-                        f"Retry vetoed by on_should_retry at offset {self.offset}: {e}"
-                    ) from e
+                    raise
                 if attempt < self.max_retries:
                     # Exponential backoff capped at 60 seconds; interruptible via stop_event
                     delay = _protocol.retry_delay(self.retry_delay, attempt)

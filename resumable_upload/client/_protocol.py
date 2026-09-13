@@ -95,6 +95,13 @@ def maybe_add_request_id(headers: dict[str, str], enabled: bool) -> dict[str, st
     return headers
 
 
+def is_retriable_status(status: int | None) -> bool:
+    """Default retry policy, matching tus-js-client: retry network errors and
+    5xx, plus the transient 4xx (408 timeout, 423 locked, 429 throttled).
+    Any other 4xx is deterministic — retrying it only burns the backoff."""
+    return status is None or status >= 500 or status in (408, 423, 429)
+
+
 def retry_delay(base: float, attempt: int) -> float:
     """Exponential back-off capped at 60 seconds."""
     return min(base * (2**attempt), 60.0)
