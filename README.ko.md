@@ -197,6 +197,8 @@ resumable-upload upload big.bin --url http://host/files --resume
 resumable-upload upload big.bin --url http://host/files --parallel 4
 resumable-upload info http://host/files/<id>
 resumable-upload download http://host/files/<id> -o out.bin
+# 인증 헤더(반복 가능)는 upload, info, download 모두에서 쓸 수 있습니다
+resumable-upload info http://host/files/<id> --header "Authorization=Bearer $TOKEN"
 ```
 
 서버 플래그: `--host`, `--port`, `--base-path`, `--upload-dir`, `--db-path`, `--max-size`, `--max-chunk-size`, `--request-timeout`, `--upload-expiry`, `--cleanup-interval`, `--cors-origin`, `--cors-credentials`, `--cors-max-age`, `--checksum-algorithms`, `--enable-downloads`, `--behind-proxy`, `--location-base-url`, `--disable-termination`, `--disable-concatenation`, `--metrics-path`, `--lock-backend`, `--redis-url`, `--lock-ttl`, `--lock-wait`, `--log-level`. 자세한 내용은 `resumable-upload serve --help`로 확인하세요.

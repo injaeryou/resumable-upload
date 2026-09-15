@@ -7,7 +7,9 @@ import logging
 import signal
 import sys
 import threading
+import urllib.request
 from http.server import ThreadingHTTPServer
+from urllib.parse import urlsplit
 
 from resumable_upload import __version__
 from resumable_upload.checksum import _DEFAULT_ALGORITHMS
@@ -178,6 +180,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # -- client subcommands ------------------------------------------------
     upload = sub.add_parser("upload", help="Upload a file to a TUS server.")
     upload.add_argument("file", help="Path to the file to upload")
+    _add_header_flag(upload)
     upload.add_argument(
         "--url", required=True, help="TUS creation endpoint, e.g. http://host/files"
     )
@@ -215,11 +218,23 @@ def _build_parser() -> argparse.ArgumentParser:
     download = sub.add_parser("download", help="Download a completed upload (server GET endpoint).")
     download.add_argument("url", help="Upload URL to download")
     download.add_argument("-o", "--output", required=True, help="Output file path")
+    _add_header_flag(download)
 
     info = sub.add_parser("info", help="Print offset/length/metadata for an upload (HEAD).")
     info.add_argument("url", help="Upload URL to inspect")
+    _add_header_flag(info)
 
     return parser
+
+
+def _add_header_flag(sub: argparse.ArgumentParser) -> None:
+    sub.add_argument(
+        "--header",
+        action="append",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Extra request header (repeatable), e.g. Authorization=Bearer TOKEN",
+    )
 
 
 def _serve(args: argparse.Namespace) -> int:
@@ -316,14 +331,14 @@ def _serve(args: argparse.Namespace) -> int:
     return 0
 
 
-def _parse_metadata(pairs: list[str]) -> dict[str, str]:
-    metadata: dict[str, str] = {}
+def _parse_pairs(flag: str, pairs: list[str]) -> dict[str, str]:
+    out: dict[str, str] = {}
     for item in pairs:
         if "=" not in item:
-            raise SystemExit(f"--metadata must be KEY=VALUE, got: {item}")
+            raise SystemExit(f"{flag} must be KEY=VALUE, got: {item}")
         key, value = item.split("=", 1)
-        metadata[key] = value
-    return metadata
+        out[key] = value
+    return out
 
 
 def _upload(args: argparse.Namespace) -> int:
@@ -337,7 +352,7 @@ def _upload(args: argparse.Namespace) -> int:
         # flag would be a silent no-op. Refuse rather than pretend.
         raise SystemExit("--resume cannot be combined with --parallel (partials are not stored)")
     checksum: bool | str = False if args.checksum.lower() == "none" else args.checksum
-    metadata = _parse_metadata(args.metadata)
+    metadata = _parse_pairs("--metadata", args.metadata)
     metadata.setdefault("filename", os.path.basename(args.file))
 
     # Progress is a terminal affordance: keep it off stdout (which carries the
@@ -354,7 +369,11 @@ def _upload(args: argparse.Namespace) -> int:
         )
 
     client = TusClient(
-        args.url, chunk_size=args.chunk_size, checksum=checksum, store_url=args.resume
+        args.url,
+        chunk_size=args.chunk_size,
+        checksum=checksum,
+        store_url=args.resume,
+        headers=_parse_pairs("--header", args.header),
     )
     url = client.upload_file(
         args.file,
@@ -368,11 +387,25 @@ def _upload(args: argparse.Namespace) -> int:
     return 0
 
 
+class _SameHostCredentials(urllib.request.HTTPRedirectHandler):
+    """Drop credential headers when a redirect leaves the original host (as curl does)."""
+
+    _SENSITIVE = ("Authorization", "Cookie", "Proxy-Authorization")
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        new = super().redirect_request(req, fp, code, msg, headers, newurl)
+        if new is not None and urlsplit(newurl).hostname != urlsplit(req.full_url).hostname:
+            for name in self._SENSITIVE:
+                new.remove_header(name)
+        return new
+
+
 def _download(args: argparse.Namespace) -> int:
     import shutil
-    import urllib.request
 
-    with urllib.request.urlopen(args.url) as resp, open(args.output, "wb") as out:
+    req = urllib.request.Request(args.url, headers=_parse_pairs("--header", args.header))
+    opener = urllib.request.build_opener(_SameHostCredentials)
+    with opener.open(req) as resp, open(args.output, "wb") as out:
         shutil.copyfileobj(resp, out)
     print(f"Saved {args.output}")
     return 0
@@ -381,7 +414,7 @@ def _download(args: argparse.Namespace) -> int:
 def _info(args: argparse.Namespace) -> int:
     from resumable_upload.client import TusClient
 
-    client = TusClient(args.url)
+    client = TusClient(args.url, headers=_parse_pairs("--header", args.header))
     inf = client.get_upload_info(args.url)
     print(f"offset:   {inf['offset']}")
     print(f"length:   {inf['length']}")

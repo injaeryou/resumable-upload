@@ -670,3 +670,116 @@ class TestCLIClientErrorsAndResume:
                 ]
             )
         assert "resumable-upload[redis]" in str(ei.value)
+
+
+@pytest.fixture
+def auth_cli_server(tmp_path):
+    """In-process TUS server that rejects every request lacking a bearer token."""
+    import threading
+
+    from resumable_upload.cli import _ThreadingHTTPServer
+    from resumable_upload.exceptions import TusHookError
+    from resumable_upload.server import TusHTTPRequestHandler, TusServer
+    from resumable_upload.storage import SQLiteStorage
+
+    def require_token(method, path, headers):
+        if headers.get("authorization") != "Bearer s3cret":
+            raise TusHookError("missing token", status_code=401)
+
+    tus = TusServer(
+        storage=SQLiteStorage(db_path=str(tmp_path / "u.db"), upload_dir=str(tmp_path / "f")),
+        base_path="/files",
+        enable_downloads=True,
+        on_incoming_request=require_token,
+    )
+
+    class Handler(TusHTTPRequestHandler):
+        pass
+
+    Handler.tus_server = tus
+    httpd = _ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    try:
+        yield f"http://127.0.0.1:{httpd.server_address[1]}/files"
+    finally:
+        httpd.shutdown()
+        httpd.server_close()
+
+
+class TestCLIHeaders:
+    def test_header_is_sent_on_upload_info_and_download(self, auth_cli_server, tmp_path):
+        src = tmp_path / "src.bin"
+        src.write_bytes(b"H" * 3000)
+        auth = ("--header", "Authorization=Bearer s3cret")
+
+        denied = _cli("upload", str(src), "--url", auth_cli_server, "--no-progress")
+        assert denied.returncode == 1
+        assert "401" in denied.stderr
+
+        up = _cli("upload", str(src), "--url", auth_cli_server, "--no-progress", *auth)
+        assert up.returncode == 0, up.stderr
+        url = up.stdout.strip()
+
+        assert _cli("info", url).returncode == 1
+        inf = _cli("info", url, *auth)
+        assert inf.returncode == 0, inf.stderr
+        assert "complete: True" in inf.stdout
+
+        out = tmp_path / "out.bin"
+        assert _cli("download", url, "-o", str(out)).returncode == 1
+        dl = _cli("download", url, "-o", str(out), *auth)
+        assert dl.returncode == 0, dl.stderr
+        assert out.read_bytes() == b"H" * 3000
+
+    @pytest.mark.parametrize(
+        ("redirect_host", "expected_rc"),
+        [("127.0.0.1", 0), ("localhost", 1)],
+        ids=["same-host-keeps-auth", "cross-host-drops-auth"],
+    )
+    def test_download_redirect_forwards_auth_only_to_the_same_host(
+        self, auth_cli_server, tmp_path, redirect_host, expected_rc
+    ):
+        import threading
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        from urllib.parse import urlsplit
+
+        src = tmp_path / "src.bin"
+        src.write_bytes(b"H" * 100)
+        auth = ("--header", "Authorization=Bearer s3cret")
+        up = _cli("upload", str(src), "--url", auth_cli_server, "--no-progress", *auth)
+        assert up.returncode == 0, up.stderr
+        target = urlsplit(up.stdout.strip())
+        location = target._replace(netloc=f"{redirect_host}:{target.port}").geturl()
+
+        class Redirect(BaseHTTPRequestHandler):
+            def do_GET(self):  # noqa: N802
+                self.send_response(302)
+                self.send_header("Location", location)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def log_message(self, *args):  # noqa: ARG002
+                pass
+
+        hop = HTTPServer(("127.0.0.1", 0), Redirect)
+        threading.Thread(target=hop.serve_forever, daemon=True).start()
+        try:
+            out = tmp_path / "out.bin"
+            dl = _cli(
+                "download", f"http://127.0.0.1:{hop.server_address[1]}/x", "-o", str(out), *auth
+            )
+        finally:
+            hop.shutdown()
+            hop.server_close()
+        assert dl.returncode == expected_rc, dl.stderr
+        if expected_rc == 0:
+            assert out.read_bytes() == b"H" * 100
+        else:
+            assert "401" in dl.stderr
+
+    def test_header_must_be_key_value(self, cli_server, tmp_path):
+        src = tmp_path / "s.bin"
+        src.write_bytes(b"x")
+        r = _cli("upload", str(src), "--url", cli_server, "--header", "novalue")
+        assert r.returncode == 1
+        assert "--header must be KEY=VALUE" in r.stderr

@@ -87,6 +87,9 @@ resumable-upload info http://host/files/<id>
 
 # Download a completed upload (needs the server's GET endpoint)
 resumable-upload download http://host/files/<id> -o out.bin
+
+# Servers behind auth: --header (repeatable) is accepted by upload, info and download
+resumable-upload upload big.bin --url http://host/files --header "Authorization=Bearer $TOKEN"
 ```
 
 ### `upload` flags
@@ -97,6 +100,7 @@ resumable-upload download http://host/files/<id> -o out.bin
 | `--chunk-size` | `4194304` | Chunk size in bytes (4 MB) |
 | `--parallel` | `1` | Concurrent partial uploads (concatenation) |
 | `--metadata KEY=VALUE` | — | Upload metadata, repeatable |
+| `--header KEY=VALUE` | — | Extra request header, repeatable; also on `info` and `download` |
 | `--checksum` | `sha1` | One of `md5`, `sha1`, `sha256`, `sha512`, or `none` to disable |
 | `--resume` | off | Remember upload URLs in `./.tus_urls.json` (keyed by file fingerprint) so re-running on the same file resumes; a URL the server has forgotten is dropped and the upload recreated. Not combinable with `--parallel` |
 | `--no-progress` | off | Suppress the progress line (already off when stderr is not a terminal) |
