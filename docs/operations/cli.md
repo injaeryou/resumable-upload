@@ -100,10 +100,24 @@ resumable-upload upload big.bin --url http://host/files --header "Authorization=
 | `--chunk-size` | `4194304` | Chunk size in bytes (4 MB) |
 | `--parallel` | `1` | Concurrent partial uploads (concatenation) |
 | `--metadata KEY=VALUE` | — | Upload metadata, repeatable |
-| `--header KEY=VALUE` | — | Extra request header, repeatable; also on `info` and `download` |
+| `--metadata-encoding` | `utf-8` | Text encoding applied to metadata values before base64 |
+| `--max-retries` | `3` | Retry attempts per chunk (network errors, `5xx`, `408`/`423`/`429`) |
+| `--retry-delay` | `1.0` | Base retry delay in seconds, doubling each attempt (cap 60s) |
+| `--override-patch-method` | off | Send `PATCH` as `POST` + `X-HTTP-Method-Override` for proxies that block `PATCH` |
+| `--request-id` | off | Attach a fresh `X-Request-ID` to every request |
 | `--checksum` | `sha1` | One of `md5`, `sha1`, `sha256`, `sha512`, or `none` to disable |
 | `--resume` | off | Remember upload URLs in `./.tus_urls.json` (keyed by file fingerprint) so re-running on the same file resumes; a URL the server has forgotten is dropped and the upload recreated. Works with `--parallel` too (partial URLs are remembered until the merge) |
 | `--no-progress` | off | Suppress the progress line (already off when stderr is not a terminal) |
+
+### Flags shared by `upload`, `info` and `download`
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--header KEY=VALUE` | — | Extra request header, repeatable (e.g. `Authorization=Bearer TOKEN`) |
+| `--timeout` | `30` | Per-request socket timeout in seconds |
+| `--insecure` | off | Skip TLS certificate verification (self-signed or internal CAs) |
+
+Every scalar option of `TusServer` and `TusClient` has a CLI flag; `tests/test_cli.py::TestCLIParity` fails the build when a new constructor option is added without one.
 
 Progress goes to stderr, so `URL=$(resumable-upload upload …)` captures just the URL. An unsupported `--checksum` for the server fails immediately with its `400` rather than retrying.
 

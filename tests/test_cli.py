@@ -786,3 +786,114 @@ class TestCLIHeaders:
         r = _cli("upload", str(src), "--url", cli_server, "--header", "novalue")
         assert r.returncode == 1
         assert "--header must be KEY=VALUE" in r.stderr
+
+
+class TestCLIParity:
+    """Every scalar constructor option of the server and the client must be
+    reachable from the CLI (CLAUDE.md, Feature Surface Checklist). Objects and
+    callables are wired in code, not on a command line, and are listed here."""
+
+    SERVER_NOT_FOR_CLI = {
+        "storage",  # SQLiteStorage is built from --upload-dir/--db-path
+        "metrics_registry",  # created when --metrics-path is set
+        "lock_backend",  # chosen via --lock-backend/--redis-url
+        "supports_checksum_trailer",  # property of the bundled transport, always on
+        "on_incoming_request",
+        "on_upload_create",
+        "on_upload_complete",
+        "on_upload_terminate",
+        "on_chunk_received",
+        "on_before_terminate",
+    }
+    CLIENT_NOT_FOR_CLI = {
+        "url",  # positional --url
+        "url_storage",  # FileURLStorage is implied by --resume
+        "fingerprinter",
+        "before_request",
+        "after_response",
+        "on_should_retry",
+        "on_upload_url_available",
+    }
+    # constructor kwarg -> argparse dest when the names differ
+    SERVER_ALIASES = {
+        "cors_allow_origins": "cors_origin",
+        "cors_allow_credentials": "cors_credentials",
+        "lock_ttl_seconds": "lock_ttl",
+        "lock_wait_seconds": "lock_wait",
+    }
+    CLIENT_ALIASES = {
+        "store_url": "resume",
+        "headers": "header",
+        "verify_tls_cert": "insecure",
+        "add_request_id": "request_id",
+    }
+
+    @staticmethod
+    def _dests(command: str) -> set[str]:
+        import argparse
+
+        from resumable_upload.cli import _build_parser
+
+        subparsers = next(
+            a for a in _build_parser()._actions if isinstance(a, argparse._SubParsersAction)
+        )
+        return {a.dest for a in subparsers.choices[command]._actions if a.dest != "help"}
+
+    @staticmethod
+    def _params(cls) -> set[str]:
+        import inspect
+
+        return set(inspect.signature(cls.__init__).parameters) - {"self"}
+
+    def test_upload_flags_reach_the_client(self, monkeypatch, tmp_path):
+        """Each client-side flag lands on the TusClient kwarg it stands for."""
+        from resumable_upload import cli
+
+        seen: dict = {}
+
+        class FakeClient:
+            def __init__(self, url, **kwargs):
+                seen.update(kwargs)
+
+            def upload_file(self, *a, **k):
+                return "http://h/files/x"
+
+        monkeypatch.setattr("resumable_upload.client.TusClient", FakeClient)
+        src = tmp_path / "s.bin"
+        src.write_bytes(b"x")
+        argv = [
+            "upload", str(src), "--url", "http://h/files", "--no-progress",
+            "--timeout", "7.5", "--insecure", "--max-retries", "5", "--retry-delay", "0.2",
+            "--override-patch-method", "--request-id", "--metadata-encoding", "latin-1",
+            "--header", "X-A=1", "--resume",
+        ]  # fmt: skip
+        assert cli.main(argv) == 0
+        assert seen["timeout"] == 7.5
+        assert seen["verify_tls_cert"] is False
+        assert seen["max_retries"] == 5
+        assert seen["retry_delay"] == 0.2
+        assert seen["override_patch_method"] is True
+        assert seen["add_request_id"] is True
+        assert seen["metadata_encoding"] == "latin-1"
+        assert seen["headers"] == {"X-A": "1"}
+        assert seen["store_url"] is True
+
+    def test_serve_exposes_every_scalar_server_option(self):
+        from resumable_upload.server import TusServerCore
+
+        missing = {
+            p
+            for p in self._params(TusServerCore) - self.SERVER_NOT_FOR_CLI
+            if self.SERVER_ALIASES.get(p, p) not in self._dests("serve")
+        }
+        assert not missing, f"TusServer options without a `serve` flag: {sorted(missing)}"
+
+    def test_upload_exposes_every_scalar_client_option(self):
+        from resumable_upload.client import TusClient
+
+        missing = {
+            p
+            for p in self._params(TusClient) - self.CLIENT_NOT_FOR_CLI
+            if self.CLIENT_ALIASES.get(p, p) not in self._dests("upload")
+        }
+        assert not missing, f"TusClient options without an `upload` flag: {sorted(missing)}"

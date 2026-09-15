@@ -180,7 +180,7 @@ def _build_parser() -> argparse.ArgumentParser:
     # -- client subcommands ------------------------------------------------
     upload = sub.add_parser("upload", help="Upload a file to a TUS server.")
     upload.add_argument("file", help="Path to the file to upload")
-    _add_header_flag(upload)
+    _add_common_client_flags(upload)
     upload.add_argument(
         "--url", required=True, help="TUS creation endpoint, e.g. http://host/files"
     )
@@ -214,26 +214,65 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Suppress the progress line (it is already off when stderr is not a terminal)",
     )
+    upload.add_argument(
+        "--max-retries",
+        type=int,
+        default=3,
+        help="Retry attempts per chunk for network errors, 5xx and 408/423/429 (default: 3)",
+    )
+    upload.add_argument(
+        "--retry-delay",
+        type=float,
+        default=1.0,
+        help="Base delay between retries in seconds, doubling each attempt (default: 1.0)",
+    )
+    upload.add_argument(
+        "--override-patch-method",
+        action="store_true",
+        help="Send PATCH as POST with X-HTTP-Method-Override, for proxies that block PATCH",
+    )
+    upload.add_argument(
+        "--request-id",
+        action="store_true",
+        help="Attach a fresh X-Request-ID to every request for log correlation",
+    )
+    upload.add_argument(
+        "--metadata-encoding",
+        default="utf-8",
+        help="Text encoding applied to metadata values before base64 (default: utf-8)",
+    )
 
     download = sub.add_parser("download", help="Download a completed upload (server GET endpoint).")
     download.add_argument("url", help="Upload URL to download")
     download.add_argument("-o", "--output", required=True, help="Output file path")
-    _add_header_flag(download)
+    _add_common_client_flags(download)
 
     info = sub.add_parser("info", help="Print offset/length/metadata for an upload (HEAD).")
     info.add_argument("url", help="Upload URL to inspect")
-    _add_header_flag(info)
+    _add_common_client_flags(info)
 
     return parser
 
 
-def _add_header_flag(sub: argparse.ArgumentParser) -> None:
+def _add_common_client_flags(sub: argparse.ArgumentParser) -> None:
+    """Flags every client command takes: headers, timeout, TLS verification."""
     sub.add_argument(
         "--header",
         action="append",
         default=[],
         metavar="KEY=VALUE",
         help="Extra request header (repeatable), e.g. Authorization=Bearer TOKEN",
+    )
+    sub.add_argument(
+        "--timeout",
+        type=float,
+        default=30.0,
+        help="Per-request socket timeout in seconds (default: 30)",
+    )
+    sub.add_argument(
+        "--insecure",
+        action="store_true",
+        help="Skip TLS certificate verification (self-signed or internal CAs)",
     )
 
 
@@ -370,6 +409,13 @@ def _upload(args: argparse.Namespace) -> int:
         checksum=checksum,
         store_url=args.resume,
         headers=_parse_pairs("--header", args.header),
+        timeout=args.timeout,
+        verify_tls_cert=not args.insecure,
+        max_retries=args.max_retries,
+        retry_delay=args.retry_delay,
+        override_patch_method=args.override_patch_method,
+        add_request_id=args.request_id,
+        metadata_encoding=args.metadata_encoding,
     )
     url = client.upload_file(
         args.file,
@@ -400,8 +446,16 @@ def _download(args: argparse.Namespace) -> int:
     import shutil
 
     req = urllib.request.Request(args.url, headers=_parse_pairs("--header", args.header))
-    opener = urllib.request.build_opener(_SameHostCredentials)
-    with opener.open(req) as resp, open(args.output, "wb") as out:
+    handlers: list[urllib.request.BaseHandler] = [_SameHostCredentials()]
+    if args.insecure:
+        import ssl
+
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        handlers.append(urllib.request.HTTPSHandler(context=ctx))
+    opener = urllib.request.build_opener(*handlers)
+    with opener.open(req, timeout=args.timeout) as resp, open(args.output, "wb") as out:
         shutil.copyfileobj(resp, out)
     print(f"Saved {args.output}")
     return 0
@@ -410,7 +464,12 @@ def _download(args: argparse.Namespace) -> int:
 def _info(args: argparse.Namespace) -> int:
     from resumable_upload.client import TusClient
 
-    client = TusClient(args.url, headers=_parse_pairs("--header", args.header))
+    client = TusClient(
+        args.url,
+        headers=_parse_pairs("--header", args.header),
+        timeout=args.timeout,
+        verify_tls_cert=not args.insecure,
+    )
     inf = client.get_upload_info(args.url)
     print(f"offset:   {inf['offset']}")
     print(f"length:   {inf['length']}")

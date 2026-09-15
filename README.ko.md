@@ -197,7 +197,7 @@ resumable-upload upload big.bin --url http://host/files --resume
 resumable-upload upload big.bin --url http://host/files --parallel 4
 resumable-upload info http://host/files/<id>
 resumable-upload download http://host/files/<id> -o out.bin
-# 인증 헤더(반복 가능)는 upload, info, download 모두에서 쓸 수 있습니다
+# 인증 헤더(반복 가능), --timeout, --insecure 는 upload, info, download 모두에서 쓸 수 있습니다
 resumable-upload info http://host/files/<id> --header "Authorization=Bearer $TOKEN"
 ```
 

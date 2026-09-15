@@ -212,7 +212,7 @@ resumable-upload upload big.bin --url http://host/files --resume
 resumable-upload upload big.bin --url http://host/files --parallel 4
 resumable-upload info http://host/files/<id>
 resumable-upload download http://host/files/<id> -o out.bin
-# Auth headers (repeatable) work on upload, info and download
+# Auth headers (repeatable), --timeout and --insecure work on upload, info and download
 resumable-upload info http://host/files/<id> --header "Authorization=Bearer $TOKEN"
 ```
 
