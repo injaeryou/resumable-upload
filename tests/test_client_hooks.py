@@ -90,7 +90,9 @@ class TestClientHooks:
                 return head_response
             raise URLError("mocked PATCH failure")
 
-        with patch("resumable_upload.client.uploader.urlopen", side_effect=urlopen_side_effect):
+        with patch(
+            "resumable_upload.client.uploader.Uploader._send", side_effect=urlopen_side_effect
+        ):
             uploader = Uploader(
                 url="http://mocked.example/files/test",
                 file_path=str(f),

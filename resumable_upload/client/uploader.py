@@ -1,12 +1,15 @@
 """TUS protocol uploader for fine-grained upload control."""
 
+import io
 import os
 import ssl
 import threading
+from http.client import HTTPConnection, HTTPException, HTTPSConnection
 from threading import Lock
 from typing import IO, Callable, Optional, Union
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.parse import urlsplit, urlunsplit
+from urllib.request import Request, getproxies, proxy_bypass, urlopen
 
 from resumable_upload.client import _protocol
 from resumable_upload.client.stats import UploadStats
@@ -132,12 +135,24 @@ class Uploader:
         # committing PATCH must then carry Upload-Length (set in _get_offset).
         self._length_deferred = False
 
+        # One persistent connection for the HEAD + PATCH sequence. A server
+        # that answers HTTP/1.0 or ``Connection: close`` simply makes every
+        # request reconnect, so nothing here assumes keep-alive. Proxies from
+        # the environment keep going through urlopen, which knows how to use
+        # them.
+        parts = urlsplit(url)
+        self._conn_target = (parts.scheme, parts.hostname or "", parts.port)
+        self._conn_path = urlunsplit(("", "", parts.path or "/", parts.query, ""))
+        self._via_proxy = parts.scheme in getproxies() and not proxy_bypass(parts.hostname or "")
+        self._conn: Optional[HTTPConnection] = None
+
         # Get current offset from server; close file handle on failure
         try:
             self.offset = self._get_offset()
         except Exception:
             if self._owns_file:
                 self._file_handle.close()
+            self._drop_conn()
             raise
         self._file_handle.seek(self.offset)
 
@@ -153,9 +168,72 @@ class Uploader:
         self.close()
 
     def close(self) -> None:
-        """Close the file handle if we own it."""
+        """Close the file handle if we own it, and the server connection."""
         if self._owns_file and self._file_handle and not self._file_handle.closed:
             self._file_handle.close()
+        self._drop_conn()
+
+    def _drop_conn(self) -> None:
+        if self._conn is not None:
+            self._conn.close()
+            self._conn = None
+
+    def _connect(self) -> HTTPConnection:
+        scheme, host, port = self._conn_target
+        if scheme == "https":
+            # context=None gives the stdlib default (verifying) context, the
+            # same one urlopen would build.
+            self._conn = HTTPSConnection(host, port, timeout=self.timeout, context=self.ssl_context)
+        else:
+            self._conn = HTTPConnection(host, port, timeout=self.timeout)
+        return self._conn
+
+    def _roundtrip(self, req: Request):
+        conn = self._conn or self._connect()
+        conn.request(req.get_method(), self._conn_path, body=req.data, headers=req.headers)
+        resp = conn.getresponse()
+        # Drain now: TUS responses carry no body beyond an error message, and
+        # the connection cannot be reused until the body is consumed.
+        body = resp.read()
+        if resp.will_close:  # HTTP/1.0 peer or Connection: close
+            self._drop_conn()
+        # Anything but 2xx is an error here: this transport never follows
+        # redirects (urlopen refused to redirect PATCH too), and treating a
+        # 3xx as success would advance the offset for bytes the server never
+        # applied.
+        if not 200 <= resp.status < 300:
+            raise HTTPError(self.url, resp.status, resp.reason, resp.headers, io.BytesIO(body))
+        return resp
+
+    def _send(self, req: Request):
+        """Issue ``req``; returns a response with ``.status`` / ``.headers``.
+
+        Same contract as ``urlopen`` on a non-redirected request: ``HTTPError``
+        for any non-2xx status, ``URLError`` for transport failures — callers
+        don't care which path ran.
+        """
+        if self._via_proxy:
+            return urlopen(req, context=self.ssl_context, timeout=self.timeout)
+        reused = self._conn is not None
+        try:
+            return self._roundtrip(req)
+        except HTTPError:
+            raise
+        except (OSError, HTTPException) as e:
+            self._drop_conn()
+            if not reused:
+                raise URLError(e) from e
+        # The kept-alive socket was already closed on the server side (idle
+        # timeout, restart). Nothing reached the server, so one fresh attempt
+        # is safe; a PATCH the server did apply would surface as 409 and go
+        # through the offset re-sync like any other mismatch.
+        try:
+            return self._roundtrip(req)
+        except HTTPError:
+            raise
+        except (OSError, HTTPException) as e:
+            self._drop_conn()
+            raise URLError(e) from e
 
     def _get_offset(self) -> int:
         """Get the current upload offset from server."""
@@ -169,7 +247,7 @@ class Uploader:
             self._before_request("HEAD", self.url, headers)
         try:
             req = Request(self.url, headers=headers, method="HEAD")
-            with urlopen(req, context=self.ssl_context, timeout=self.timeout) as response:
+            with self._send(req) as response:
                 if self._after_response is not None:
                     self._after_response("HEAD", self.url, response.status)
                 offset = response.headers.get("Upload-Offset")
@@ -236,7 +314,7 @@ class Uploader:
             self._before_request(method, self.url, headers)
         try:
             req = Request(self.url, data=data, headers=headers, method=method)
-            with urlopen(req, context=self.ssl_context, timeout=self.timeout) as response:
+            with self._send(req) as response:
                 if self._after_response is not None:
                     self._after_response(method, self.url, response.status)
                 # Update offset from server response

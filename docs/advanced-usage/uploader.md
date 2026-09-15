@@ -39,6 +39,17 @@ stop.set()  # Interrupts the retry wait and raises TusUploadFailed("cancelled")
 
 The event is checked during retry waits, so cancellation is responsive even on slow connections.
 
+## Connection Reuse
+
+An `Uploader` keeps one HTTP connection for its `HEAD` and every `PATCH`, so a chunked upload pays the TCP (and TLS) handshake once instead of per chunk. This needs nothing from you and degrades safely:
+
+- an HTTP/1.0 server, or one answering `Connection: close`, simply makes every request reconnect;
+- a kept-alive socket the server has since dropped (idle timeout, restart) is reopened once, transparently; a chunk the server had already applied surfaces as `409` and goes through the offset re-sync below;
+- an environment proxy (`HTTP_PROXY` / `HTTPS_PROXY`, honouring `NO_PROXY`) keeps going through `urllib`, which knows how to use it;
+- a `3xx` on `PATCH` is an error (`TusUploadFailed`), never a silent success — the uploader does not follow redirects.
+
+`close()` releases the connection along with the file handle.
+
 ## 409 Conflict Auto-Recovery
 
 When the server returns `409 Conflict` (offset mismatch), the uploader automatically:

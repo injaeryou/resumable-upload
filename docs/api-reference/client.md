@@ -197,7 +197,7 @@ Low-level upload controller for chunk-by-chunk control.
 from resumable_upload.client.uploader import Uploader
 ```
 
-Typically obtained via `TusClient.create_uploader()`.
+Typically obtained via `TusClient.create_uploader()`. Keeps one connection for the `HEAD` + `PATCH` sequence (reconnects per request against HTTP/1.0 or `Connection: close` peers); see [Connection Reuse](../advanced-usage/uploader.md#connection-reuse).
 
 ### Parameters
 
