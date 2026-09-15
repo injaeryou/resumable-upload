@@ -18,7 +18,7 @@ from resumable_upload.exceptions import TusCommunicationError, TusUploadFailed, 
 Both exceptions expose:
 
 - `message` (str): Human-readable error description
-- `status_code` (int | None): HTTP status code, if available
+- `status_code` (int | None): HTTP status code, if available. For a failed chunk this is the status of the `PATCH`; a `4xx` other than `408`/`423`/`429` is raised on the first attempt without retrying (see [Retry & Error Handling](../advanced-usage/retry.md))
 - `response_content` (bytes | None): Raw response body, if available
 
 ### Server Exceptions

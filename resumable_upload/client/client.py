@@ -221,7 +221,41 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
             assert fingerprint is not None
             upload_url = self.url_storage.get_url(fingerprint)
 
-        # Create upload if no stored URL
+        def _open(url: str) -> Uploader:
+            return Uploader(
+                url=url,
+                file_path=file_path,
+                file_stream=file_stream,
+                chunk_size=self.chunk_size,
+                checksum=self.checksum,
+                metadata_encoding=self.metadata_encoding,
+                headers=self.headers.copy(),
+                max_retries=self.max_retries,
+                retry_delay=self.retry_delay,
+                ssl_context=self.ssl_context,
+                timeout=self.timeout,
+                before_request=self.before_request,
+                after_response=self.after_response,
+                on_should_retry=self.on_should_retry,
+                override_patch_method=self.override_patch_method,
+                add_request_id=self.add_request_id,
+            )
+
+        uploader: Optional[Uploader] = None
+        if upload_url:
+            # A stored URL the server has since expired/deleted: forget it and
+            # start over, the way tus-js-client does.
+            try:
+                uploader = _open(upload_url)
+            except TusCommunicationError as e:
+                if e.status_code not in (404, 410):
+                    raise
+                assert self.url_storage is not None
+                assert fingerprint is not None
+                self.url_storage.remove_url(fingerprint)
+                upload_url = None
+
+        # Create upload if no (usable) stored URL
         if not upload_url:
             upload_url = self._create_upload(file_size, metadata)
             if self.store_url:
@@ -232,24 +266,8 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
         if self.on_upload_url_available is not None:
             self.on_upload_url_available(upload_url)
 
-        uploader = Uploader(
-            url=upload_url,
-            file_path=file_path,
-            file_stream=file_stream,
-            chunk_size=self.chunk_size,
-            checksum=self.checksum,
-            metadata_encoding=self.metadata_encoding,
-            headers=self.headers.copy(),
-            max_retries=self.max_retries,
-            retry_delay=self.retry_delay,
-            ssl_context=self.ssl_context,
-            timeout=self.timeout,
-            before_request=self.before_request,
-            after_response=self.after_response,
-            on_should_retry=self.on_should_retry,
-            override_patch_method=self.override_patch_method,
-            add_request_id=self.add_request_id,
-        )
+        if uploader is None:
+            uploader = _open(upload_url)
 
         try:
             uploader.upload(progress_callback=progress_callback, stop_at=stop_at)

@@ -561,3 +561,19 @@ class TestTusClient:
 
         for fh in open_handles:
             assert fh.closed, "File handle was not closed after exception"
+
+    def test_store_url_stale_entry_is_replaced(self, test_file, server, temp_dir):
+        """A stored URL the server no longer knows is dropped and the upload recreated."""
+        url, _ = server
+        client = TusClient(
+            url,
+            store_url=True,
+            url_storage=FileURLStorage(os.path.join(temp_dir, "urls.json")),
+            chunk_size=1024,
+        )
+        first = client.upload_file(test_file)
+        client.delete_upload(first)
+        second = client.upload_file(test_file)
+        assert second != first
+        fingerprint = client.fingerprinter.get_fingerprint(test_file)
+        assert client.url_storage.get_url(fingerprint) == second

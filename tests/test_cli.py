@@ -280,12 +280,13 @@ def cli_server(tmp_path):
         httpd.server_close()
 
 
-def _cli(*args: str):
+def _cli(*args: str, cwd=None):
     return subprocess.run(
         [sys.executable, "-m", "resumable_upload", *args],
         capture_output=True,
         text=True,
         timeout=30,
+        cwd=cwd,
     )
 
 
@@ -505,3 +506,167 @@ class TestServeTuningFlags:
         assert kwargs["cleanup_interval"] == 5
         assert kwargs["lock_ttl_seconds"] == 12.5
         assert kwargs["lock_wait_seconds"] == 0.25
+
+
+class TestCLIClientErrorsAndResume:
+    def test_version(self):
+        from resumable_upload import __version__
+
+        r = _cli("--version")
+        assert r.returncode == 0, r.stderr
+        assert __version__ in r.stdout
+
+    def test_upload_resume_reuses_upload_url(self, cli_server, tmp_path):
+        src = tmp_path / "src.bin"
+        src.write_bytes(b"R" * 5000)
+        args = ("upload", str(src), "--url", cli_server, "--resume", "--no-progress")
+        first = _cli(*args, cwd=tmp_path)
+        assert first.returncode == 0, first.stderr
+        second = _cli(*args, cwd=tmp_path)
+        assert second.returncode == 0, second.stderr
+        assert first.stdout.strip() == second.stdout.strip()
+        assert (tmp_path / ".tus_urls.json").exists()
+
+    def test_upload_resume_recreates_when_server_forgot_upload(self, cli_server, tmp_path):
+        src = tmp_path / "src.bin"
+        src.write_bytes(b"R" * 5000)
+        args = ("upload", str(src), "--url", cli_server, "--resume", "--no-progress")
+        first = _cli(*args, cwd=tmp_path)
+        assert first.returncode == 0, first.stderr
+        url = first.stdout.strip()
+        req = urllib.request.Request(url, headers={"Tus-Resumable": "1.0.0"}, method="DELETE")
+        with urllib.request.urlopen(req) as resp:
+            assert resp.status == 204
+        second = _cli(*args, cwd=tmp_path)
+        assert second.returncode == 0, second.stderr
+        assert second.stdout.strip().startswith(cli_server + "/")
+        assert second.stdout.strip() != url
+
+    def test_upload_resume_rejects_parallel(self, cli_server, tmp_path):
+        src = tmp_path / "src.bin"
+        src.write_bytes(b"x")
+        r = _cli("upload", str(src), "--url", cli_server, "--resume", "--parallel", "2")
+        assert r.returncode == 1
+        assert "--resume cannot be combined with --parallel" in r.stderr
+
+    def test_upload_missing_file_is_a_one_line_error(self, cli_server, tmp_path):
+        r = _cli("upload", str(tmp_path / "nope.bin"), "--url", cli_server, "--no-progress")
+        assert r.returncode == 1
+        assert "Traceback" not in r.stderr
+        assert "nope.bin" in r.stderr
+
+    def test_upload_connection_refused_is_a_one_line_error(self, tmp_path):
+        src = tmp_path / "s.bin"
+        src.write_bytes(b"x")
+        url = f"http://127.0.0.1:{_find_free_port()}/files"
+        r = _cli("upload", str(src), "--url", url, "--no-progress")
+        assert r.returncode == 1
+        assert "Traceback" not in r.stderr
+        assert "Failed to create upload" in r.stderr
+
+    def test_info_and_download_missing_upload_are_one_line_errors(self, cli_server, tmp_path):
+        url = cli_server + "/00000000-0000-4000-8000-000000000000"
+        inf = _cli("info", url)
+        assert inf.returncode == 1
+        assert "Traceback" not in inf.stderr
+        assert "404" in inf.stderr
+
+        out = tmp_path / "x.bin"
+        dl = _cli("download", url, "-o", str(out))
+        assert dl.returncode == 1
+        assert "Traceback" not in dl.stderr
+        assert "404" in dl.stderr
+        assert not out.exists()
+
+    def test_upload_rejects_unknown_checksum_up_front(self, cli_server, tmp_path):
+        src = tmp_path / "s.bin"
+        src.write_bytes(b"x")
+        r = _cli("upload", str(src), "--url", cli_server, "--checksum", "bogus")
+        assert r.returncode == 2
+        assert "invalid choice" in r.stderr
+
+    def test_upload_unsupported_checksum_fails_fast(self, cli_server, tmp_path):
+        """The server accepts sha1 only; its 400 is deterministic and must not be retried."""
+        src = tmp_path / "s.bin"
+        src.write_bytes(b"x" * 100)
+        start = time.time()
+        r = _cli("upload", str(src), "--url", cli_server, "--checksum", "sha256", "--no-progress")
+        assert r.returncode == 1
+        assert "Traceback" not in r.stderr
+        assert "400" in r.stderr
+        assert time.time() - start < 5  # retry backoff would be 1s + 2s + 4s
+
+    def test_progress_is_silent_when_stderr_is_not_a_tty(self, cli_server, tmp_path):
+        src = tmp_path / "s.bin"
+        src.write_bytes(b"x" * 5000)
+        r = _cli("upload", str(src), "--url", cli_server, "--chunk-size", "1024")
+        assert r.returncode == 0, r.stderr
+        assert r.stdout.strip().startswith(cli_server + "/")
+        assert "%" not in r.stdout
+        assert "%" not in r.stderr
+
+    def test_progress_goes_to_stderr_on_a_tty(self, cli_server, tmp_path, capsys, monkeypatch):
+        import io
+
+        from resumable_upload import cli
+
+        class Tty(io.StringIO):
+            def isatty(self) -> bool:
+                return True
+
+        err = Tty()
+        monkeypatch.setattr(sys, "stderr", err)
+        src = tmp_path / "s.bin"
+        src.write_bytes(b"x" * 5000)
+        rc = cli.main(["upload", str(src), "--url", cli_server, "--chunk-size", "1024"])
+        assert rc == 0
+        assert "%" in err.getvalue()
+        assert capsys.readouterr().out.strip().startswith(cli_server + "/")
+
+    def test_serve_port_in_use_is_a_one_line_error(self, tmp_path):
+        with socket.socket() as taken:
+            taken.bind(("127.0.0.1", 0))
+            taken.listen()
+            port = taken.getsockname()[1]
+            r = subprocess.run(
+                [
+                    sys.executable,
+                    "-m",
+                    "resumable_upload",
+                    "serve",
+                    "--host",
+                    "127.0.0.1",
+                    "--port",
+                    str(port),
+                    "--upload-dir",
+                    str(tmp_path / "uploads"),
+                    "--db-path",
+                    str(tmp_path / "u.db"),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        assert r.returncode == 1
+        assert "Traceback" not in r.stderr
+        assert "Address already in use" in r.stderr
+
+    def test_serve_redis_without_extra_points_at_the_extra(self, tmp_path, monkeypatch):
+        from resumable_upload import cli
+
+        monkeypatch.setitem(sys.modules, "redis", None)  # simulate: extra not installed
+        with pytest.raises(SystemExit) as ei:
+            cli.main(
+                [
+                    "serve",
+                    "--lock-backend",
+                    "redis",
+                    "--redis-url",
+                    "redis://localhost:6379/0",
+                    "--upload-dir",
+                    str(tmp_path / "uploads"),
+                    "--db-path",
+                    str(tmp_path / "u.db"),
+                ]
+            )
+        assert "resumable-upload[redis]" in str(ei.value)

@@ -331,6 +331,42 @@ class AsyncTusClient:
             assert fingerprint is not None
             upload_url = self.url_storage.get_url(fingerprint)
 
+        client = await self._ensure_client()
+
+        async def _open(url: str) -> AsyncUploader:
+            return await AsyncUploader.open(
+                client,
+                url,
+                file_path=file_path,
+                file_stream=file_stream,
+                chunk_size=self.chunk_size,
+                checksum=self.checksum,
+                metadata_encoding=self.metadata_encoding,
+                headers=self.headers.copy(),
+                max_retries=self.max_retries,
+                retry_delay=self.retry_delay,
+                timeout=self.timeout,
+                before_request=self.before_request,
+                after_response=self.after_response,
+                on_should_retry=self.on_should_retry,
+                override_patch_method=self.override_patch_method,
+                add_request_id=self.add_request_id,
+            )
+
+        up: AsyncUploader | None = None
+        if upload_url:
+            # A stored URL the server has since expired/deleted: forget it and
+            # start over, the way tus-js-client does.
+            try:
+                up = await _open(upload_url)
+            except TusCommunicationError as e:
+                if e.status_code not in (404, 410):
+                    raise
+                assert self.url_storage is not None
+                assert fingerprint is not None
+                self.url_storage.remove_url(fingerprint)
+                upload_url = None
+
         if not upload_url:
             upload_url = await self._create_upload(file_size, metadata)
             if self.store_url:
@@ -341,25 +377,8 @@ class AsyncTusClient:
         if self.on_upload_url_available is not None:
             self.on_upload_url_available(upload_url)
 
-        client = await self._ensure_client()
-        up = await AsyncUploader.open(
-            client,
-            upload_url,
-            file_path=file_path,
-            file_stream=file_stream,
-            chunk_size=self.chunk_size,
-            checksum=self.checksum,
-            metadata_encoding=self.metadata_encoding,
-            headers=self.headers.copy(),
-            max_retries=self.max_retries,
-            retry_delay=self.retry_delay,
-            timeout=self.timeout,
-            before_request=self.before_request,
-            after_response=self.after_response,
-            on_should_retry=self.on_should_retry,
-            override_patch_method=self.override_patch_method,
-            add_request_id=self.add_request_id,
-        )
+        if up is None:
+            up = await _open(upload_url)
         try:
             await up.upload(progress_callback=progress_callback, stop_at=stop_at)
         finally:

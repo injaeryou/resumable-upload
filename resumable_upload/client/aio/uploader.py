@@ -164,7 +164,10 @@ class AsyncUploader:
             self._client, "HEAD", self.url, headers=headers, timeout=self.timeout
         )
         if resp.status_code >= 400:
-            raise TusCommunicationError(f"Failed to get offset: server returned {resp.status_code}")
+            raise TusCommunicationError(
+                f"Failed to get offset: server returned {resp.status_code}",
+                status_code=resp.status_code,
+            )
         offset = resp.headers.get("Upload-Offset")
         if offset is None:
             raise TusCommunicationError("Server did not return Upload-Offset header")
@@ -224,7 +227,8 @@ class AsyncUploader:
             )
         if resp.status_code >= 400:
             raise TusUploadFailed(
-                f"Failed to upload chunk at offset {self.offset}: {resp.status_code}"
+                f"Failed to upload chunk at offset {self.offset}: {resp.status_code}",
+                status_code=resp.status_code,
             )
 
         if self._after_response is not None:
@@ -263,12 +267,17 @@ class AsyncUploader:
                 raise  # Don't retry 409; caller must re-sync offset via HEAD
             except (TusUploadFailed, OSError) as e:
                 last_error = e
-                if self._on_should_retry is not None and not self._on_should_retry(e, attempt + 1):
+                if self._on_should_retry is not None:
+                    if not self._on_should_retry(e, attempt + 1):
+                        with self.stats_lock:
+                            self._stats.chunks_failed += 1
+                        raise TusUploadFailed(
+                            f"Retry vetoed by on_should_retry at offset {self.offset}: {e}"
+                        ) from e
+                elif not _protocol.is_retriable_status(getattr(e, "status_code", None)):
                     with self.stats_lock:
                         self._stats.chunks_failed += 1
-                    raise TusUploadFailed(
-                        f"Retry vetoed by on_should_retry at offset {self.offset}: {e}"
-                    ) from e
+                    raise
                 if attempt < self.max_retries:
                     delay = _protocol.retry_delay(self.retry_delay, attempt)
                     try:

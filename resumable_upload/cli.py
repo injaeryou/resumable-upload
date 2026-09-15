@@ -9,6 +9,9 @@ import sys
 import threading
 from http.server import ThreadingHTTPServer
 
+from resumable_upload import __version__
+from resumable_upload.checksum import _DEFAULT_ALGORITHMS
+from resumable_upload.exceptions import TusCommunicationError
 from resumable_upload.server import TusHTTPRequestHandler, TusServer
 from resumable_upload.storage import SQLiteStorage
 
@@ -33,6 +36,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="resumable-upload",
         description="TUS resumable upload server and utilities.",
     )
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
     sub = parser.add_subparsers(dest="command", required=True)
 
     serve = sub.add_parser("serve", help="Run a TUS server on the given address.")
@@ -193,9 +197,20 @@ def _build_parser() -> argparse.ArgumentParser:
     upload.add_argument(
         "--checksum",
         default="sha1",
+        choices=(*sorted(_DEFAULT_ALGORITHMS), "none"),
         help="Checksum algorithm, or 'none' to disable (default: sha1)",
     )
-    upload.add_argument("--no-progress", action="store_true", help="Suppress the progress line")
+    upload.add_argument(
+        "--resume",
+        action="store_true",
+        help="Remember upload URLs in ./.tus_urls.json so re-running on the same "
+        "file resumes where it stopped instead of starting over",
+    )
+    upload.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Suppress the progress line (it is already off when stderr is not a terminal)",
+    )
 
     download = sub.add_parser("download", help="Download a completed upload (server GET endpoint).")
     download.add_argument("url", help="Upload URL to download")
@@ -229,7 +244,13 @@ def _serve(args: argparse.Namespace) -> int:
     elif args.lock_backend == "redis":
         if not args.redis_url:
             raise SystemExit("--redis-url is required when --lock-backend=redis")
-        import redis
+        try:
+            import redis
+        except ImportError:
+            raise SystemExit(
+                "--lock-backend=redis needs the redis client: "
+                "pip install 'resumable-upload[redis]' (or uvx --with redis resumable-upload)"
+            ) from None
 
         from resumable_upload.locks.redis_lock import RedisLockBackend
 
@@ -311,27 +332,38 @@ def _upload(args: argparse.Namespace) -> int:
     from resumable_upload.client import TusClient
     from resumable_upload.client.stats import UploadStats
 
+    if args.resume and args.parallel > 1:
+        # The parallel (concatenation) path never consults URL storage, so the
+        # flag would be a silent no-op. Refuse rather than pretend.
+        raise SystemExit("--resume cannot be combined with --parallel (partials are not stored)")
     checksum: bool | str = False if args.checksum.lower() == "none" else args.checksum
     metadata = _parse_metadata(args.metadata)
     metadata.setdefault("filename", os.path.basename(args.file))
+
+    # Progress is a terminal affordance: keep it off stdout (which carries the
+    # URL) and skip it entirely when stderr is a pipe or a log file.
+    show_progress = not args.no_progress and sys.stderr.isatty()
 
     def _progress(stats: UploadStats) -> None:
         pct = (stats.uploaded_bytes / stats.total_bytes * 100) if stats.total_bytes else 100.0
         print(
             f"\r  {pct:5.1f}%  {stats.uploaded_bytes}/{stats.total_bytes} bytes",
             end="",
+            file=sys.stderr,
             flush=True,
         )
 
-    client = TusClient(args.url, chunk_size=args.chunk_size, checksum=checksum)
+    client = TusClient(
+        args.url, chunk_size=args.chunk_size, checksum=checksum, store_url=args.resume
+    )
     url = client.upload_file(
         args.file,
         metadata=metadata,
         parallel_uploads=args.parallel,
-        progress_callback=None if args.no_progress else _progress,
+        progress_callback=_progress if show_progress else None,
     )
-    if not args.no_progress:
-        print()  # end the progress line
+    if show_progress:
+        print(file=sys.stderr)  # end the progress line
     print(url)
     return 0
 
@@ -365,11 +397,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
     handlers = {"serve": _serve, "upload": _upload, "download": _download, "info": _info}
-    handler = handlers.get(args.command)
-    if handler is not None:
-        return handler(args)
-    parser.print_help()
-    return 1
+    try:
+        return handlers[args.command](args)
+    except (TusCommunicationError, OSError) as e:
+        # OSError covers the stdlib failures a user can act on: missing file,
+        # port in use, connection refused, urllib's HTTPError on download.
+        print(f"error: {e}", file=sys.stderr)
+        return 1
+    except KeyboardInterrupt:
+        print("\ninterrupted", file=sys.stderr)
+        return 130
 
 
 if __name__ == "__main__":

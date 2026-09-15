@@ -207,7 +207,8 @@ Run a TUS server, or upload/download/inspect against one, from the shell — no 
 # Server
 resumable-upload serve --host 0.0.0.0 --port 8080 --upload-dir ./uploads
 
-# Client: upload (resumable, progress line), inspect, download
+# Client: upload (--resume to continue an interrupted one), inspect, download
+resumable-upload upload big.bin --url http://host/files --resume
 resumable-upload upload big.bin --url http://host/files --parallel 4
 resumable-upload info http://host/files/<id>
 resumable-upload download http://host/files/<id> -o out.bin
