@@ -6,7 +6,7 @@ A Python implementation of the [TUS resumable upload protocol](https://tus.io/) 
 
 - **Zero Dependencies (core)** — server, client, and SQLite storage use only the Python standard library
 - **Server & Client** — full TUS 1.0.0 implementation of both sides
-- **Resume Capability** — automatic in-session and cross-session resume
+- **Resume Capability** — automatic in-session and cross-session resume, parallel uploads included
 - **Data Integrity** — `Upload-Checksum` extension with `sha1` / `sha256` / `sha512` / `md5` (configurable per server, client picks one)
 - **Retry Logic** — exponential backoff with configurable cap and a custom `on_should_retry` hook; retries network errors, `5xx` and `408`/`423`/`429` only, other `4xx` fail fast
 - **Progress Tracking** — detailed `UploadStats` callback

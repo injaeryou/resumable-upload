@@ -212,3 +212,112 @@ class TestParallelUploads:
         stored = storage.get_upload(upload_id)
         assert stored["is_partial"] is False
         assert storage.read_file(upload_id) == b"regular-upload"
+
+
+class TestParallelResume:
+    """store_url=True remembers the partial URLs, so an interrupted parallel
+    upload continues instead of starting over (tus-js-client's
+    parallelUploadUrls)."""
+
+    PAYLOAD = bytes((i * 7 + 3) % 256 for i in range(4000))
+
+    def _client(self, base_url, tmp_path, **kw):
+        from resumable_upload.url_storage import FileURLStorage
+
+        return TusClient(
+            base_url,
+            chunk_size=256,
+            store_url=True,
+            url_storage=FileURLStorage(str(tmp_path / "urls.json")),
+            max_retries=0,
+            **kw,
+        )
+
+    def _interrupt_once(self, base_url, tmp_path, f, parallel_uploads=4):
+        """Run a parallel upload that dies on its third PATCH; return the client."""
+        patches = 0
+
+        def trip(method, url, headers):
+            nonlocal patches
+            if method == "PATCH":
+                patches += 1
+                if patches == 3:
+                    raise OSError("simulated network drop")
+
+        client = self._client(base_url, tmp_path, before_request=trip)
+        with pytest.raises(OSError):
+            client.upload_file(str(f), parallel_uploads=parallel_uploads)
+        return client
+
+    @staticmethod
+    def _recording_hook(calls):
+        """Record partial creations ("partial"), the merge ("final;…") and chunk writes."""
+
+        def record(method, url, headers):
+            if method == "POST":
+                calls.append(headers.get("Upload-Concat", ""))
+            elif method == "PATCH":
+                calls.append("PATCH")
+
+        return record
+
+    def test_interrupted_parallel_upload_resumes(self, live_server, tmp_path):
+        base_url, storage = live_server
+        f = tmp_path / "big.bin"
+        f.write_bytes(self.PAYLOAD)
+        self._interrupt_once(base_url, tmp_path, f)
+
+        calls: list[str] = []
+        client = self._client(base_url, tmp_path, before_request=self._recording_hook(calls))
+        final = client.upload_file(str(f), parallel_uploads=4)
+        assert "partial" not in calls, calls  # every partial was reused
+        assert 0 < calls.count("PATCH") < 16  # 4000 B / 256 B: some chunks were already there
+        assert storage.read_file(final.rsplit("/", 1)[1]) == self.PAYLOAD
+
+        # A third run finds the merged upload and does not talk to the server
+        # beyond a HEAD.
+        calls.clear()
+        assert client.upload_file(str(f), parallel_uploads=4) == final
+        assert calls == []
+
+    def test_stale_partial_is_recreated(self, live_server, tmp_path):
+        import json
+
+        base_url, storage = live_server
+        f = tmp_path / "big.bin"
+        f.write_bytes(self.PAYLOAD)
+        client = self._interrupt_once(base_url, tmp_path, f)
+
+        stored = json.loads((tmp_path / "urls.json").read_text())
+        partials = next(json.loads(v) for k, v in stored.items() if k.endswith("#partials"))
+        assert len(partials) == 4
+        client.delete_upload(partials[1])
+
+        calls: list[str] = []
+        client = self._client(base_url, tmp_path, before_request=self._recording_hook(calls))
+        final = client.upload_file(str(f), parallel_uploads=4)
+        assert calls.count("partial") == 1, calls  # only the deleted slice was recreated
+        assert storage.read_file(final.rsplit("/", 1)[1]) == self.PAYLOAD
+
+    def test_stale_final_is_recreated(self, live_server, tmp_path):
+        base_url, storage = live_server
+        f = tmp_path / "big.bin"
+        f.write_bytes(self.PAYLOAD)
+        client = self._client(base_url, tmp_path)
+        first = client.upload_file(str(f), parallel_uploads=4)
+        client.delete_upload(first)
+        second = client.upload_file(str(f), parallel_uploads=4)
+        assert second != first
+        assert storage.read_file(second.rsplit("/", 1)[1]) == self.PAYLOAD
+
+    def test_partial_count_mismatch_starts_over(self, live_server, tmp_path):
+        base_url, storage = live_server
+        f = tmp_path / "big.bin"
+        f.write_bytes(self.PAYLOAD)
+        self._interrupt_once(base_url, tmp_path, f, parallel_uploads=4)
+
+        calls: list[str] = []
+        client = self._client(base_url, tmp_path, before_request=self._recording_hook(calls))
+        final = client.upload_file(str(f), parallel_uploads=2)
+        assert calls.count("partial") == 2, calls
+        assert storage.read_file(final.rsplit("/", 1)[1]) == self.PAYLOAD

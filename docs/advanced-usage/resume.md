@@ -35,6 +35,8 @@ If the stored URL no longer exists on the server (`404`/`410`: expired or delete
 
 From the shell, `resumable-upload upload FILE --url … --resume` does the same with `./.tus_urls.json`; see [CLI](../operations/cli.md).
 
+Parallel uploads (`parallel_uploads=N`, CLI `--parallel N`) resume as well: the partial URLs are remembered until the merge, so an interrupted run continues each slice from its server offset. Details in [Concatenation & Parallel Uploads](concatenation.md).
+
 ## Using File Streams
 
 Upload from a file-like object instead of a path:

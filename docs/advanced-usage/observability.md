@@ -20,7 +20,7 @@ client = TusClient(
 )
 ```
 
-`before_request` fires before each HTTP request the client issues (POST, HEAD, PATCH, DELETE). `after_response` fires after each response, with the final status code. They run on the calling thread, synchronously — keep them cheap (logging, metrics, span creation) and avoid blocking I/O.
+`before_request` fires before every HTTP request the client issues: the creation `POST` (plain, partial and final), every `HEAD` (offset checks, `get_upload_info`, `get_metadata`), every `PATCH`, `OPTIONS` (`get_server_info`) and `DELETE`. `after_response` fires after each response with its status code. For uploader-routed requests (the offset `HEAD` and every `PATCH`) it fires only on success, in both the sync and the async client; for client-level calls (create, final, info, metadata, server info, delete) the sync client also reaches it only for non-error responses, since `urlopen` raises on `4xx`/`5xx`, while the async client reports every status. They run on the calling thread, synchronously — keep them cheap (logging, metrics, span creation) and avoid blocking I/O.
 
 The hooks are forwarded to any `Uploader` you obtain from `TusClient.create_uploader()`, so chunk PATCHes are observed too.
 

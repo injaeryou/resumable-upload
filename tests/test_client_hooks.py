@@ -146,3 +146,35 @@ class TestClientHooks:
         f = tmp_path / "never-uploaded.bin"
         f.write_bytes(b"hi")
         assert client.find_previous_uploads(str(f)) == []
+
+
+class TestHooksCoverEveryRequest:
+    """The docs promise ``before_request`` / ``after_response`` on every request:
+    creation, partials, the final merge, HEAD, OPTIONS and DELETE — not only
+    the creation POST and the PATCHes."""
+
+    def test_sync_hooks_fire_on_every_request(self, live_server, tmp_path):
+        base_url, _ = live_server
+        befores: list[str] = []
+        afters: list[str] = []
+        client = TusClient(
+            base_url,
+            chunk_size=1024,
+            before_request=lambda m, u, h: befores.append(m),
+            after_response=lambda m, u, s: afters.append(m),
+        )
+        f = tmp_path / "x.bin"
+        f.write_bytes(b"x" * 3000)
+
+        url = client.upload_file(str(f), parallel_uploads=2)
+        client.get_upload_info(url)
+        client.get_metadata(url)
+        client.get_server_info()
+        client.delete_upload(url)
+
+        assert befores.count("POST") == 3  # two partials + the final merge
+        assert befores.count("HEAD") == 4  # offset check per partial + info + metadata
+        assert befores.count("PATCH") == 4  # 1500 B per slice, 1024 B chunks
+        assert befores.count("OPTIONS") == 1
+        assert befores.count("DELETE") == 1
+        assert sorted(afters) == sorted(befores)

@@ -176,6 +176,25 @@ class AsyncTusClient:
             self._client = httpx.AsyncClient(verify=self.verify_tls_cert)
         return self._client
 
+    async def _request(
+        self, method: str, url: str, headers: dict[str, str], content: bytes = b""
+    ) -> Any:
+        """``_http.request`` with the observability hooks around it.
+
+        ``before_request`` sees the mutable header dict before the request goes
+        out; ``after_response`` sees every response status. Every request the
+        client makes goes through here.
+        """
+        if self.before_request is not None:
+            self.before_request(method, url, headers)
+        client = await self._ensure_client()
+        resp = await _http.request(
+            client, method, url, headers=headers, content=content, timeout=self.timeout
+        )
+        if self.after_response is not None:
+            self.after_response(method, url, resp.status_code)
+        return resp
+
     async def _create_upload(
         self,
         file_size: int,
@@ -210,16 +229,7 @@ class AsyncTusClient:
             headers["Content-Length"] = str(len(initial_data))
 
         _protocol.maybe_add_request_id(headers, self.add_request_id)
-        if self.before_request is not None:
-            self.before_request("POST", self.url, headers)
-
-        client = await self._ensure_client()
-        resp = await _http.request(
-            client, "POST", self.url, headers=headers, content=content, timeout=self.timeout
-        )
-
-        if self.after_response is not None:
-            self.after_response("POST", self.url, resp.status_code)
+        resp = await self._request("POST", self.url, headers, content)
 
         if resp.status_code >= 400:
             raise TusCommunicationError(
@@ -415,20 +425,39 @@ class AsyncTusClient:
         if "filename" not in metadata:
             metadata = {**metadata, "filename": os.path.basename(file_path)}
 
-        sem = asyncio.Semaphore(parallel_uploads)
+        # Cross-session resume (tus-js-client's parallelUploadUrls): the
+        # partial URLs are remembered under a side key until the merge, after
+        # which the final URL takes the plain fingerprint slot.
+        fingerprint = (
+            await asyncio.to_thread(self.fingerprinter.get_fingerprint, file_path)
+            if self.store_url
+            else None
+        )
+        stored: list[str] | None = None
+        if fingerprint is not None:
+            assert self.url_storage is not None
+            final_url = self.url_storage.get_url(fingerprint)
+            if final_url:
+                try:
+                    await self.get_upload_info(final_url)
+                    return final_url
+                except TusCommunicationError as e:
+                    if e.status_code not in (404, 410):
+                        raise
+                    self.url_storage.remove_url(fingerprint)
+            stored = _protocol.decode_partials(
+                self.url_storage.get_url(_protocol.partials_key(fingerprint))
+            )
+            if stored is not None and len(stored) != len(boundaries):
+                stored = None  # split changed; the old partials are useless
 
-        async def upload_slice(lo: int, hi: int) -> str:
-            async with sem:
-                length = hi - lo
-                url = await self._create_upload(
-                    length,
-                    metadata_for_partial_uploads or {},
-                    extra_headers={"Upload-Concat": "partial"},
-                )
-                # Stream the slice from disk on demand instead of reading it all
-                # into memory; opening the fd is blocking, so do it off-loop.
-                file_slice = await asyncio.to_thread(FileSlice, file_path, lo, length)
-                client = await self._ensure_client()
+        client = await self._ensure_client()
+
+        async def _open(url: str, lo: int, hi: int) -> tuple[AsyncUploader, FileSlice]:
+            # Stream the slice from disk on demand instead of reading it all
+            # into memory; opening the fd is blocking, so do it off-loop.
+            file_slice = await asyncio.to_thread(FileSlice, file_path, lo, hi - lo)
+            try:
                 up = await AsyncUploader.open(
                     client,
                     url,
@@ -446,22 +475,69 @@ class AsyncTusClient:
                     override_patch_method=self.override_patch_method,
                     add_request_id=self.add_request_id,
                 )
-                try:
-                    await up.upload()
-                    return url
-                finally:
-                    await up.aclose()
-                    # Uploader does not own the injected stream — close it here.
-                    await asyncio.to_thread(file_slice.close)
+            except BaseException:
+                await asyncio.to_thread(file_slice.close)
+                raise
+            return up, file_slice
 
-        partial_urls = await asyncio.gather(*(upload_slice(lo, hi) for lo, hi in boundaries))
+        async def _close(opened: list[tuple[AsyncUploader, FileSlice]]) -> None:
+            for up, file_slice in opened:
+                await up.aclose()
+                # Uploader does not own the injected stream — close it here.
+                await asyncio.to_thread(file_slice.close)
+
+        # Open every slice up front, sequentially: a stale partial is recreated
+        # here, and the URL list is persisted before any payload byte moves.
+        partial_urls: list[str] = []
+        opened: list[tuple[AsyncUploader, FileSlice]] = []
+        try:
+            for i, (lo, hi) in enumerate(boundaries):
+                url = stored[i] if stored else None
+                pair = None
+                if url:
+                    try:
+                        pair = await _open(url, lo, hi)
+                    except TusCommunicationError as e:
+                        if e.status_code not in (404, 410):
+                            raise
+                if pair is None:
+                    url = await self._create_upload(
+                        hi - lo,
+                        metadata_for_partial_uploads or {},
+                        extra_headers={"Upload-Concat": "partial"},
+                    )
+                    pair = await _open(url, lo, hi)
+                assert url is not None
+                partial_urls.append(url)
+                opened.append(pair)
+            if fingerprint is not None:
+                assert self.url_storage is not None
+                self.url_storage.set_url(
+                    _protocol.partials_key(fingerprint), _protocol.encode_partials(partial_urls)
+                )
+            # return_exceptions=True: wait for every slice to stop before the
+            # finally below closes the streams they read from (a bare gather
+            # re-raises on the first failure while siblings are still running).
+            results = await asyncio.gather(
+                *(up.upload() for up, _ in opened), return_exceptions=True
+            )
+            for result in results:
+                if isinstance(result, BaseException):
+                    raise result
+        finally:
+            await _close(opened)
 
         if progress_callback:
             stats = UploadStats(total_bytes=file_size)
             stats.uploaded_bytes = file_size
             progress_callback(stats)
 
-        return await self.create_final_upload(list(partial_urls), metadata=metadata)
+        final_url = await self.create_final_upload(partial_urls, metadata=metadata)
+        if fingerprint is not None:
+            assert self.url_storage is not None
+            self.url_storage.set_url(fingerprint, final_url)
+            self.url_storage.remove_url(_protocol.partials_key(fingerprint))
+        return final_url
 
     @_managed
     async def resume_upload(
@@ -534,11 +610,7 @@ class AsyncTusClient:
             **self.headers,
         }
         _protocol.maybe_add_request_id(headers, self.add_request_id)
-
-        client = await self._ensure_client()
-        resp = await _http.request(
-            client, "DELETE", upload_url, headers=headers, timeout=self.timeout
-        )
+        resp = await self._request("DELETE", upload_url, headers)
 
         if resp.status_code == 404:
             return  # Already deleted — tolerated per spec
@@ -658,9 +730,7 @@ class AsyncTusClient:
         _protocol.maybe_add_request_id(headers, self.add_request_id)
         if encoded:
             headers["Upload-Metadata"] = ",".join(encoded)
-
-        client = await self._ensure_client()
-        resp = await _http.request(client, "POST", self.url, headers=headers, timeout=self.timeout)
+        resp = await self._request("POST", self.url, headers)
 
         if resp.status_code >= 400:
             raise TusCommunicationError(
@@ -763,10 +833,7 @@ class AsyncTusClient:
             "Tus-Resumable": self.TUS_VERSION,
             **self.headers,
         }
-        client = await self._ensure_client()
-        resp = await _http.request(
-            client, "HEAD", upload_url, headers=headers, timeout=self.timeout
-        )
+        resp = await self._request("HEAD", upload_url, headers)
         if resp.status_code >= 400:
             raise TusCommunicationError(
                 f"Failed to get metadata: server returned {resp.status_code}"
@@ -788,8 +855,7 @@ class AsyncTusClient:
         Raises:
             TusCommunicationError: If the OPTIONS request fails.
         """
-        client = await self._ensure_client()
-        resp = await _http.request(client, "OPTIONS", self.url, headers={}, timeout=self.timeout)
+        resp = await self._request("OPTIONS", self.url, {})
         if resp.status_code >= 400:
             raise TusCommunicationError(
                 f"Failed to get server info: server returned {resp.status_code}"
@@ -818,13 +884,11 @@ class AsyncTusClient:
             "Tus-Resumable": self.TUS_VERSION,
             **self.headers,
         }
-        client = await self._ensure_client()
-        resp = await _http.request(
-            client, "HEAD", upload_url, headers=headers, timeout=self.timeout
-        )
+        resp = await self._request("HEAD", upload_url, headers)
         if resp.status_code >= 400:
             raise TusCommunicationError(
-                f"Failed to get upload info: server returned {resp.status_code}"
+                f"Failed to get upload info: server returned {resp.status_code}",
+                status_code=resp.status_code,
             )
         return _protocol.parse_upload_info(
             resp.headers.get("Upload-Offset"),

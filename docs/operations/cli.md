@@ -102,7 +102,7 @@ resumable-upload upload big.bin --url http://host/files --header "Authorization=
 | `--metadata KEY=VALUE` | — | Upload metadata, repeatable |
 | `--header KEY=VALUE` | — | Extra request header, repeatable; also on `info` and `download` |
 | `--checksum` | `sha1` | One of `md5`, `sha1`, `sha256`, `sha512`, or `none` to disable |
-| `--resume` | off | Remember upload URLs in `./.tus_urls.json` (keyed by file fingerprint) so re-running on the same file resumes; a URL the server has forgotten is dropped and the upload recreated. Not combinable with `--parallel` |
+| `--resume` | off | Remember upload URLs in `./.tus_urls.json` (keyed by file fingerprint) so re-running on the same file resumes; a URL the server has forgotten is dropped and the upload recreated. Works with `--parallel` too (partial URLs are remembered until the merge) |
 | `--no-progress` | off | Suppress the progress line (already off when stderr is not a terminal) |
 
 Progress goes to stderr, so `URL=$(resumable-upload upload …)` captures just the URL. An unsupported `--checksum` for the server fails immediately with its `400` rather than retrying.

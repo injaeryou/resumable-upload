@@ -7,7 +7,8 @@ the concrete ``TusClient.__init__``; this module only declares the shape.
 """
 
 import ssl
-from typing import IO, Callable, Optional, Union
+from typing import IO, Any, Callable, Optional, Union
+from urllib.request import Request, urlopen
 
 from resumable_upload.client.stats import UploadStats
 from resumable_upload.fingerprint import Fingerprint
@@ -58,6 +59,27 @@ class _ClientAttrs:
         raise NotImplementedError
 
     def get_file_size(self, file_source: Union[str, IO]) -> int:
+        raise NotImplementedError
+
+    def _open(
+        self, method: str, url: str, headers: dict[str, str], data: Optional[bytes] = None
+    ) -> Any:
+        """``urlopen`` with the observability hooks around it.
+
+        ``before_request`` sees the mutable header dict before the request is
+        built, so it can add or rewrite headers; ``after_response`` sees the
+        status of a successful response. Errors propagate exactly as from
+        ``urlopen``. Every request the client makes goes through here.
+        """
+        if self.before_request is not None:
+            self.before_request(method, url, headers)
+        req = Request(url, data=data, headers=headers, method=method)
+        response = urlopen(req, context=self.ssl_context, timeout=self.timeout)
+        if self.after_response is not None:
+            self.after_response(method, url, response.status)
+        return response
+
+    def get_upload_info(self, upload_url: str) -> dict[str, Any]:
         raise NotImplementedError
 
     def _create_upload(

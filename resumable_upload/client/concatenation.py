@@ -7,7 +7,6 @@ helpers that implement the concatenation extension on the client side.
 from typing import IO, Callable, Optional
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
-from urllib.request import Request, urlopen
 
 from resumable_upload.client import _protocol
 from resumable_upload.client._mixin_base import _ClientAttrs
@@ -113,8 +112,7 @@ class ConcatenationMixin(_ClientAttrs):
             headers["Upload-Metadata"] = ",".join(encoded_metadata)
 
         try:
-            req = Request(self.url, headers=headers, method="POST")
-            with urlopen(req, context=self.ssl_context, timeout=self.timeout) as response:
+            with self._open("POST", self.url, headers) as response:
                 location: Optional[str] = response.headers.get("Location")
                 if not location:
                     raise TusCommunicationError("Server did not return Location header")

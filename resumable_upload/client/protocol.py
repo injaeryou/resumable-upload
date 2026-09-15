@@ -6,7 +6,6 @@ file stays focused on upload orchestration.
 
 from typing import Any, Optional, Union
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
 
 from resumable_upload.client import _protocol
 from resumable_upload.client._mixin_base import _ClientAttrs
@@ -55,8 +54,7 @@ class ProtocolMixin(_ClientAttrs):
         _protocol.maybe_add_request_id(headers, self.add_request_id)
 
         try:
-            req = Request(upload_url, headers=headers, method="HEAD")
-            with urlopen(req, context=self.ssl_context, timeout=self.timeout) as response:
+            with self._open("HEAD", upload_url, headers) as response:
                 return _protocol.parse_upload_metadata(
                     response.headers.get("Upload-Metadata"), self.metadata_encoding
                 )
@@ -94,8 +92,7 @@ class ProtocolMixin(_ClientAttrs):
         _protocol.maybe_add_request_id(headers, self.add_request_id)
 
         try:
-            req = Request(upload_url, headers=headers, method="HEAD")
-            with urlopen(req, context=self.ssl_context, timeout=self.timeout) as response:
+            with self._open("HEAD", upload_url, headers) as response:
                 return _protocol.parse_upload_info(
                     response.headers.get("Upload-Offset"),
                     response.headers.get("Upload-Length"),
@@ -105,6 +102,7 @@ class ProtocolMixin(_ClientAttrs):
         except (HTTPError, URLError) as e:
             raise TusCommunicationError(
                 f"Failed to get upload info: {str(e)}",
+                status_code=e.code if isinstance(e, HTTPError) else None,
             ) from e
 
     def get_server_info(self) -> dict[str, Union[str, list[str], Optional[int]]]:
@@ -127,8 +125,7 @@ class ProtocolMixin(_ClientAttrs):
             >>> print(f"Max Size: {info['max_size']}")
         """
         try:
-            req = Request(self.url, method="OPTIONS")
-            with urlopen(req, context=self.ssl_context, timeout=self.timeout) as response:
+            with self._open("OPTIONS", self.url, {}) as response:
                 return _protocol.parse_server_info(
                     response.headers.get("Tus-Version"),
                     response.headers.get("Tus-Extension"),

@@ -542,12 +542,15 @@ class TestCLIClientErrorsAndResume:
         assert second.stdout.strip().startswith(cli_server + "/")
         assert second.stdout.strip() != url
 
-    def test_upload_resume_rejects_parallel(self, cli_server, tmp_path):
+    def test_upload_resume_with_parallel_reuses_final_url(self, cli_server, tmp_path):
         src = tmp_path / "src.bin"
-        src.write_bytes(b"x")
-        r = _cli("upload", str(src), "--url", cli_server, "--resume", "--parallel", "2")
-        assert r.returncode == 1
-        assert "--resume cannot be combined with --parallel" in r.stderr
+        src.write_bytes(b"P" * 5000)
+        args = ("upload", str(src), "--url", cli_server, "--resume", "--parallel", "2")
+        first = _cli(*args, "--no-progress", cwd=tmp_path)
+        assert first.returncode == 0, first.stderr
+        second = _cli(*args, "--no-progress", cwd=tmp_path)
+        assert second.returncode == 0, second.stderr
+        assert first.stdout.strip() == second.stdout.strip()
 
     def test_upload_missing_file_is_a_one_line_error(self, cli_server, tmp_path):
         r = _cli("upload", str(tmp_path / "nope.bin"), "--url", cli_server, "--no-progress")

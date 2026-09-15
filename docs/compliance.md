@@ -143,7 +143,7 @@ Summary: ahead of tusd on **protocol surface** (checksum, expiration, unfinished
 | **Retry** | ✅ `retryDelays` array `[0,1s,3s,5s]` · ✅ `onShouldRetry` override | ✅ `max_retries` + exponential backoff (cap 60s) · ✅ same default policy (no retry on 4xx except 408/423/429) · ✅ `on_should_retry` override · ✅ `stop_event` interrupts waits |
 | **Resume across sessions** | ✅ fingerprint → urlStorage (localStorage, default **on**) · ✅ `findPreviousUploads()` / `resumeFromPreviousUpload()` | ✅ fingerprint → URL storage (File/SQLite/Memory backends, default **off** via `store_url`) · ✅ `find_previous_uploads()` / `resume_upload()` |
 | **Fingerprint strength** | ✅ pluggable · ❌ weak default (name/size-based) | ✅ full-file SHA-256 default (collision-proof, costlier) · ✅ partial-MD5 and callable alternatives |
-| **Parallel upload (concatenation)** | ✅ `parallelUploads=N` · ✅ custom `parallelUploadBoundaries` · ✅ `metadataForPartialUploads` | ✅ `parallel_uploads=N` · ✅ `metadata_for_partial_uploads` · ❌ custom boundaries (even split only, deliberately skipped) |
+| **Parallel upload (concatenation)** | ✅ `parallelUploads=N` · ✅ custom `parallelUploadBoundaries` · ✅ `metadataForPartialUploads` · ✅ resume via stored `parallelUploadUrls` | ✅ `parallel_uploads=N` · ✅ `metadata_for_partial_uploads` · ✅ resume via stored partial URLs (`store_url=True`) · ❌ custom boundaries (even split only, deliberately skipped) |
 | **creation-with-upload** | ✅ `uploadDataDuringCreation` | ❌ no public option (the *server* implements the extension; the client always sends an empty creation POST) |
 | **defer-length** | ✅ `uploadLengthDeferred` | ✅ `create_deferred_upload()` |
 | **Termination** | ✅ `abort(true)` / static `terminate()` | ✅ `delete_upload()` |
