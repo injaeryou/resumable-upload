@@ -159,3 +159,5 @@ server = HTTPServer(("0.0.0.0", 8080), Handler)
 ```
 
 The socket read timeout is automatically applied via `setup()` using `tus_server.request_timeout`.
+
+The handler speaks HTTP/1.1 with keep-alive when hosted by a threading server (`http.server.ThreadingHTTPServer`, which is what `resumable-upload serve` uses). On a plain single-threaded `HTTPServer` like the example above it falls back to HTTP/1.0 and closes after each response, because a parked keep-alive socket would block every other client for `request_timeout`.

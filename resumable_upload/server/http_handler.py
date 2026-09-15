@@ -9,6 +9,7 @@ and call :meth:`TusServer.handle_request` directly.
 from __future__ import annotations
 
 import shutil
+import socketserver
 from http.server import BaseHTTPRequestHandler
 from typing import Any
 
@@ -23,6 +24,10 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
     """HTTP request handler for TUS server."""
 
     tus_server: TusServer | None = None
+    # Keep-alive: a chunked upload is many PATCHes, each one a fresh TCP (and
+    # TLS) handshake under HTTP/1.0. Every response below is framed with
+    # Content-Length so the next request can start on the same socket.
+    protocol_version = "HTTP/1.1"
 
     def do_OPTIONS(self) -> None:
         """Handle OPTIONS request."""
@@ -69,11 +74,53 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
         super().setup()
         if self.tus_server and self.tus_server.request_timeout > 0:
             self.connection.settimeout(self.tus_server.request_timeout)
+        # Keep-alive needs one thread per connection: a plain single-threaded
+        # HTTPServer (the README's minimal example) would sit in readline() on
+        # a parked socket and starve every other client until request_timeout.
+        if not isinstance(self.server, socketserver.ThreadingMixIn):
+            self.protocol_version = "HTTP/1.0"
+
+    # A kept-alive socket parks in readline() between requests. A server that
+    # exposes ``idle_connections`` (the CLI's does) can cut those on shutdown
+    # instead of waiting ``request_timeout`` for each; in-flight requests are
+    # not in the set, so they still drain. Once the server is ``closing``, a
+    # connection that just finished a request must not park again — it
+    # registers as idle first, then checks the flag, so it is either cut by
+    # the shutdown sweep or sees the flag; there is no window in between.
+    def handle_one_request(self) -> None:
+        idle = getattr(self.server, "idle_connections", None)
+        if idle is not None:
+            idle.add(self.connection)
+            if getattr(self.server, "closing", False):
+                idle.discard(self.connection)
+                self.close_connection = True
+                return
+        try:
+            super().handle_one_request()
+        finally:
+            if idle is not None:
+                idle.discard(self.connection)
+
+    def parse_request(self) -> bool:
+        # Runs right after the request line arrived: no longer idle.
+        idle = getattr(self.server, "idle_connections", None)
+        if idle is not None:
+            idle.discard(self.connection)
+        return super().parse_request()
 
     def _send_error(self, status: int, message: bytes) -> None:
+        """Reject a request whose body has not been (fully) read.
+
+        Every caller short-circuits before consuming the body, so the unread
+        bytes would be parsed as the next request on a kept-alive socket.
+        Close instead; ``send_header("Connection", "close")`` also flips
+        ``close_connection`` so the handler loop exits after this response.
+        """
         assert self.tus_server is not None
         self.send_response(status)
         self.send_header("Tus-Resumable", self.tus_server.TUS_VERSION)
+        self.send_header("Content-Length", str(len(message)))
+        self.send_header("Connection", "close")
         # Transport-level rejections short-circuit before the core, so add CORS
         # here too — otherwise a browser can't read the status of a 400/413 that
         # the body parser or the Content-Length size gates produced: the
@@ -157,7 +204,10 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
     def _handle_request(self, method: str) -> None:
         """Handle incoming request."""
         if self.tus_server is None:
+            # Misconfigured handler: no body is read, so don't keep the socket.
             self.send_response(500)
+            self.send_header("Content-Length", "0")
+            self.send_header("Connection", "close")
             self.end_headers()
             return
         # Read body for POST/PATCH
@@ -206,10 +256,14 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
             method, self.path, headers, body
         )
 
-        # Send response
+        # Send response. The core sets Content-Length whenever there is a body;
+        # a bodiless 200/201 still needs an explicit 0 or a keep-alive client
+        # waits for EOF. 204 must not carry one (RFC 9110 §8.6).
         self.send_response(status)
         for key, value in response_headers.items():
             self.send_header(key, value)
+        if status != 204 and not any(k.lower() == "content-length" for k in response_headers):
+            self.send_header("Content-Length", "0")
         self.end_headers()
         if isinstance(response_body, (bytes, bytearray)):
             if response_body:

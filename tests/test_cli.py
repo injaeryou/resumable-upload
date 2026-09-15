@@ -897,3 +897,179 @@ class TestCLIParity:
             if self.CLIENT_ALIASES.get(p, p) not in self._dests("upload")
         }
         assert not missing, f"TusClient options without an `upload` flag: {sorted(missing)}"
+
+
+class TestCLIServeKeepAlive:
+    def test_bind_failure_surfaces_the_oserror(self):
+        """server_close() runs from TCPServer.__init__ when bind() fails; it must
+        not trip over attributes that are only set after binding."""
+        from resumable_upload.cli import _ThreadingHTTPServer
+        from resumable_upload.server import TusHTTPRequestHandler
+
+        with socket.socket() as taken:
+            taken.bind(("127.0.0.1", 0))
+            taken.listen()
+            with pytest.raises(OSError, match="Address already in use"):
+                _ThreadingHTTPServer(("127.0.0.1", taken.getsockname()[1]), TusHTTPRequestHandler)
+
+    def test_one_connection_carries_the_whole_flow(self, cli_server):
+        """The bundled server speaks HTTP/1.1 and keeps the socket open across requests."""
+        import http.client
+        from urllib.parse import urlsplit
+
+        u = urlsplit(cli_server)
+        conn = http.client.HTTPConnection(u.hostname, u.port, timeout=5)
+
+        def do(method, path, body=None, **extra):
+            conn.request(method, path, body=body, headers={"Tus-Resumable": "1.0.0", **extra})
+            resp = conn.getresponse()
+            data = resp.read()
+            assert resp.version == 11, (method, resp.version)
+            assert resp.will_close is False, (method, resp.getheader("Connection"))
+            return resp, data
+
+        try:
+            do("OPTIONS", u.path)
+            sock = conn.sock
+            assert sock is not None
+            resp, _ = do("POST", u.path, **{"Upload-Length": "10"})
+            assert resp.status == 201
+            loc = resp.getheader("Location")
+            patch = {"Content-Type": "application/offset+octet-stream"}
+            resp, _ = do("PATCH", loc, b"12345", **{"Upload-Offset": "0", **patch})
+            assert resp.status == 204
+            resp, _ = do("PATCH", loc, b"67890", **{"Upload-Offset": "5", **patch})
+            assert resp.status == 204
+            resp, _ = do("HEAD", loc)
+            assert resp.getheader("Upload-Offset") == "10"
+            resp, data = do("GET", loc)
+            assert resp.status == 200
+            assert data == b"1234567890"
+            # http.client silently reconnects when the server closed on it.
+            assert conn.sock is sock
+        finally:
+            conn.close()
+
+    def test_early_rejection_closes_the_connection(self, tmp_path):
+        """A 413 sent before the body was read must not leave that body queued
+        as the next request on a kept-alive socket."""
+        port = _find_free_port()
+        proc = _spawn_serve(tmp_path, port, "--max-size", "10")
+        s = socket.socket()
+        try:
+            _wait_until_serving(proc, port)
+            s.settimeout(5)
+            s.connect(("127.0.0.1", port))
+            s.sendall(
+                b"POST /files HTTP/1.1\r\nHost: x\r\nTus-Resumable: 1.0.0\r\n"
+                b"Upload-Length: 100\r\nContent-Length: 100\r\n\r\n"
+            )  # body deliberately never sent
+            raw = b""
+            while b"\r\n\r\n" not in raw:
+                raw += s.recv(4096)
+            head = raw.split(b"\r\n\r\n", 1)[0].decode()
+            assert head.startswith("HTTP/1.1 413")
+            assert "connection: close" in head.lower()
+            # The server hangs up: recv drains the error body and then returns b"".
+            while s.recv(4096):
+                pass
+            # A fresh connection is served normally.
+            req = urllib.request.Request(f"http://127.0.0.1:{port}/files", method="OPTIONS")
+            with urllib.request.urlopen(req, timeout=3) as resp:
+                assert resp.status == 204
+        finally:
+            s.close()
+            _stop(proc)
+
+    def test_shutdown_does_not_wait_for_idle_keepalive_connections(self, tmp_path):
+        """An idle kept-alive socket is blocked in readline() for up to
+        ``request_timeout``; shutdown must cut it loose instead of waiting."""
+        port = _find_free_port()
+        proc = _spawn_serve(tmp_path, port, "--request-timeout", "20")
+        idle = socket.socket()
+        try:
+            _wait_until_serving(proc, port)
+            idle.settimeout(5)
+            idle.connect(("127.0.0.1", port))
+            idle.sendall(b"OPTIONS /files HTTP/1.1\r\nHost: x\r\n\r\n")
+            raw = b""
+            while b"\r\n\r\n" not in raw:
+                raw += idle.recv(4096)
+            assert raw.startswith(b"HTTP/1.1 204")
+            # Now parked in keep-alive, waiting for a request line that never comes.
+            started = time.time()
+            proc.terminate()
+            assert proc.wait(timeout=15) is not None
+            assert time.time() - started < 5
+        finally:
+            idle.close()
+            _stop(proc)
+
+    def test_shutdown_does_not_wait_for_a_request_that_finishes_late(self, tmp_path):
+        """A request in flight when shutdown starts is served, and its connection
+        must then exit rather than park in keep-alive for ``request_timeout``."""
+        port = _find_free_port()
+        proc = _spawn_serve(tmp_path, port, "--request-timeout", "20")
+        s = socket.socket()
+        try:
+            _wait_until_serving(proc, port)
+            s.settimeout(5)
+            s.connect(("127.0.0.1", port))
+            s.sendall(
+                b"POST /files HTTP/1.1\r\nHost: x\r\nTus-Resumable: 1.0.0\r\n"
+                b"Upload-Length: 5\r\nContent-Type: application/offset+octet-stream\r\n"
+                b"Content-Length: 5\r\n\r\n12"
+            )  # server is now blocked reading the last 3 body bytes
+            time.sleep(0.5)
+            started = time.time()
+            proc.terminate()
+            time.sleep(0.5)  # let the shutdown sweep run while we are in flight
+            s.sendall(b"345")
+            raw = b""
+            while b"\r\n\r\n" not in raw:
+                raw += s.recv(4096)
+            assert raw.startswith(b"HTTP/1.1 201")
+            assert proc.wait(timeout=15) is not None
+            assert time.time() - started < 5
+        finally:
+            s.close()
+            _stop(proc)
+
+    def test_single_threaded_server_falls_back_to_closing_connections(self, tmp_path):
+        """A plain HTTPServer serves one socket at a time; keeping it alive would
+        block every other client, so the handler answers HTTP/1.0 there."""
+        import http.client
+        import threading
+        from http.server import HTTPServer
+
+        from resumable_upload.server import TusHTTPRequestHandler, TusServer
+        from resumable_upload.storage import SQLiteStorage
+
+        tus = TusServer(
+            storage=SQLiteStorage(db_path=str(tmp_path / "u.db"), upload_dir=str(tmp_path / "f")),
+            base_path="/files",
+        )
+
+        class Handler(TusHTTPRequestHandler):
+            pass
+
+        Handler.tus_server = tus
+        httpd = HTTPServer(("127.0.0.1", 0), Handler)
+        port = httpd.server_address[1]
+        threading.Thread(target=httpd.serve_forever, daemon=True).start()
+        a = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+        b = http.client.HTTPConnection("127.0.0.1", port, timeout=3)
+        try:
+            a.request("OPTIONS", "/files")
+            resp = a.getresponse()
+            resp.read()
+            assert resp.version == 10
+            assert resp.will_close is True
+            # With `a` still open, a second client must not be starved.
+            b.request("OPTIONS", "/files")
+            assert b.getresponse().status == 204
+        finally:
+            a.close()
+            b.close()
+            httpd.shutdown()
+            httpd.server_close()
