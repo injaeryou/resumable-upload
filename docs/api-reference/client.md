@@ -8,6 +8,8 @@ Main client class for uploading files via TUS protocol.
 from resumable_upload import TusClient
 ```
 
+The old `resumable_upload.client.base` module path (deprecated since 0.0.6) has been removed; import from `resumable_upload` or `resumable_upload.client`.
+
 ### Parameters
 
 | Parameter | Type | Default | Description |

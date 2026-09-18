@@ -52,6 +52,8 @@ server = TusServer(
 )
 ```
 
+The old `resumable_upload.locks_redis` path (deprecated since 0.0.6) has been removed.
+
 Implementation: `SET key token NX PX <ttl>` for atomic acquire; a Lua script ("delete only if I'm still the holder") for atomic release. Works against any Redis deployment, including Cluster (the script operates on a single key).
 
 The Redis client is yours to bring — the backend does not configure connection pooling or retry policy. `RedisLockBackend.release()` is idempotent and swallows transient errors, by contract.

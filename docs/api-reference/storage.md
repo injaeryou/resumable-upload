@@ -88,6 +88,8 @@ A complete, runnable native-async backend lives in `examples/server/async_storag
 
 AWS S3 backend using multipart uploads. Requires `pip install resumable-upload[s3]`.
 
+The cloud backends live under `resumable_upload.storage`; the old `resumable_upload.storage_s3` / `storage_gcs` / `storage_azure` paths (deprecated since 0.0.6) have been removed.
+
 ```python
 from resumable_upload.storage.s3_storage import S3Storage
 
