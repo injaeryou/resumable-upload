@@ -18,7 +18,7 @@ Backoff schedule for `retry_delay=1.0`: 1s → 2s → 4s → … (max 60s)
 
 To disable retry entirely, set `max_retries=0`.
 
-What gets retried (same policy as tus-js-client): network errors, `5xx`, and the transient `4xx` — `408`, `423 Locked`, `429`. Any other `4xx` is deterministic (bad checksum algorithm, oversized chunk, …) and fails on the first attempt with `TusUploadFailed.status_code` set. A `409` is not a retry: the client re-syncs the offset with `HEAD` and continues. Passing `on_should_retry` replaces this default policy entirely.
+What gets retried: network errors, `5xx` and `423 Locked` (as in tus-js-client), plus `408` and `429`, which tus-js-client does not retry but are transient by definition. Any other `4xx` is deterministic (bad checksum algorithm, oversized chunk, …) and fails on the first attempt with `TusUploadFailed.status_code` set — that includes `460` checksum mismatch; retry it through `on_should_retry` if your network corrupts bodies in transit. A `409` is not a retry: the client re-syncs the offset with `HEAD` and continues. Passing `on_should_retry` replaces this default policy entirely.
 
 ## Progress Tracking
 
