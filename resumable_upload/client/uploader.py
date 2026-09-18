@@ -3,8 +3,9 @@
 import io
 import os
 import ssl
+import sys
 import threading
-from http.client import HTTPConnection, HTTPException, HTTPSConnection
+from http.client import BadStatusLine, HTTPConnection, HTTPException, HTTPSConnection
 from threading import Lock
 from typing import IO, Callable, Optional, Union
 from urllib.error import HTTPError, URLError
@@ -14,6 +15,21 @@ from urllib.request import Request, getproxies, proxy_bypass, urlopen
 from resumable_upload.client import _protocol
 from resumable_upload.client.stats import UploadStats
 from resumable_upload.exceptions import TusCommunicationError, TusUploadFailed
+
+# What urlopen's default opener sends; HEAD/PATCH bypass the opener, and a
+# request with no User-Agent at all trips common WAF rules.
+_USER_AGENT = "Python-urllib/{}.{}".format(*sys.version_info[:2])
+
+# Errors a kept-alive socket the server already closed produces on reuse.
+# A timeout or any other failure is not retried: the server may still be
+# working on the request.
+_STALE_SOCKET_ERRORS = (
+    BadStatusLine,
+    ConnectionResetError,
+    BrokenPipeError,
+    ConnectionAbortedError,
+    ssl.SSLEOFError,  # the same, under TLS
+)
 
 
 class _OffsetMismatch(Exception):
@@ -141,7 +157,9 @@ class Uploader:
         # the environment keep going through urlopen, which knows how to use
         # them.
         parts = urlsplit(url)
-        self._conn_target = (parts.scheme, parts.hostname or "", parts.port)
+        # An explicit port: HTTPConnection re-parses a bare "::1" as host ":" port 1.
+        default_port = 443 if parts.scheme == "https" else 80
+        self._conn_target = (parts.scheme, parts.hostname or "", parts.port or default_port)
         self._conn_path = urlunsplit(("", "", parts.path or "/", parts.query, ""))
         self._via_proxy = parts.scheme in getproxies() and not proxy_bypass(parts.hostname or "")
         self._conn: Optional[HTTPConnection] = None
@@ -190,7 +208,10 @@ class Uploader:
 
     def _roundtrip(self, req: Request):
         conn = self._conn or self._connect()
-        conn.request(req.get_method(), self._conn_path, body=req.data, headers=req.headers)
+        headers = dict(req.headers)
+        if not req.has_header("User-agent"):
+            headers["User-Agent"] = _USER_AGENT
+        conn.request(req.get_method(), self._conn_path, body=req.data, headers=headers)
         resp = conn.getresponse()
         # Drain now: TUS responses carry no body beyond an error message, and
         # the connection cannot be reused until the body is consumed.
@@ -200,7 +221,8 @@ class Uploader:
         # Anything but 2xx is an error here: this transport never follows
         # redirects (urlopen refused to redirect PATCH too), and treating a
         # 3xx as success would advance the offset for bytes the server never
-        # applied.
+        # applied. A followed HEAD would also read the offset from one URL
+        # while PATCH keeps writing to another.
         if not 200 <= resp.status < 300:
             raise HTTPError(self.url, resp.status, resp.reason, resp.headers, io.BytesIO(body))
         return resp
@@ -221,12 +243,12 @@ class Uploader:
             raise
         except (OSError, HTTPException) as e:
             self._drop_conn()
-            if not reused:
+            if not reused or not isinstance(e, _STALE_SOCKET_ERRORS):
                 raise URLError(e) from e
         # The kept-alive socket was already closed on the server side (idle
-        # timeout, restart). Nothing reached the server, so one fresh attempt
-        # is safe; a PATCH the server did apply would surface as 409 and go
-        # through the offset re-sync like any other mismatch.
+        # timeout, restart), so one fresh attempt is safe; a PATCH the server
+        # did apply before the socket died surfaces as 409 and goes through
+        # the offset re-sync like any other mismatch.
         try:
             return self._roundtrip(req)
         except HTTPError:

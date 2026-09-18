@@ -44,9 +44,10 @@ The event is checked during retry waits, so cancellation is responsive even on s
 An `Uploader` keeps one HTTP connection for its `HEAD` and every `PATCH`, so a chunked upload pays the TCP (and TLS) handshake once instead of per chunk. This needs nothing from you and degrades safely:
 
 - an HTTP/1.0 server, or one answering `Connection: close`, simply makes every request reconnect;
-- a kept-alive socket the server has since dropped (idle timeout, restart) is reopened once, transparently; a chunk the server had already applied surfaces as `409` and goes through the offset re-sync below;
+- a kept-alive socket the server has since dropped (idle timeout, restart) is reopened once, transparently; a chunk the server had already applied surfaces as `409` and goes through the offset re-sync below; a timeout is not resent that way — it fails the attempt and goes through `max_retries` like any other error;
 - an environment proxy (`HTTP_PROXY` / `HTTPS_PROXY`, honouring `NO_PROXY`) keeps going through `urllib`, which knows how to use it;
-- a `3xx` on `PATCH` is an error (`TusUploadFailed`), never a silent success — the uploader does not follow redirects.
+- a `3xx` is an error (`TusCommunicationError` on the offset `HEAD`, `TusUploadFailed` on `PATCH`), never a silent success — the uploader does not follow redirects, so pass the final URL;
+- requests carry `urllib`'s default `User-Agent` (`Python-urllib/3.x`) unless `headers` sets one.
 
 `close()` releases the connection along with the file handle.
 

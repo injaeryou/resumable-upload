@@ -764,3 +764,141 @@ class TestUploaderKeepAlive:
                 uploader.close()
             httpd.shutdown()
             httpd.server_close()
+
+
+def _stub_server(handler_cls):
+    """Threaded HTTP/1.1 stub; returns ``(base_url, httpd)``."""
+    import threading
+    from http.server import ThreadingHTTPServer
+
+    handler_cls.protocol_version = "HTTP/1.1"
+    handler_cls.log_message = lambda *args: None  # type: ignore[method-assign]
+    httpd = ThreadingHTTPServer(("127.0.0.1", 0), handler_cls)
+    threading.Thread(target=httpd.serve_forever, daemon=True).start()
+    return f"http://127.0.0.1:{httpd.server_address[1]}", httpd
+
+
+class TestUploaderConnectionDetails:
+    """What the persistent connection sends must match what urlopen sent."""
+
+    @staticmethod
+    def _file(tmp_path):
+        f = tmp_path / "data.bin"
+        f.write_bytes(b"k" * 2048)
+        return str(f)
+
+    def _recording_handler(self, seen, patch_delay=0.0):
+        import time
+        from http.server import BaseHTTPRequestHandler
+
+        class Recording(BaseHTTPRequestHandler):
+            def do_HEAD(self):  # noqa: N802
+                seen.append(("HEAD", self.headers.get("User-Agent")))
+                self.send_response(200)
+                self.send_header("Upload-Offset", "0")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+            def do_PATCH(self):  # noqa: N802
+                seen.append(("PATCH", self.headers.get("User-Agent")))
+                self.rfile.read(int(self.headers["Content-Length"]))
+                time.sleep(patch_delay)
+                self.send_response(204)
+                self.send_header("Upload-Offset", self.headers["Upload-Offset"])
+                self.end_headers()
+
+        return Recording
+
+    def test_default_user_agent_matches_urlopen(self, tmp_path):
+        import sys
+
+        seen: list = []
+        base, httpd = _stub_server(self._recording_handler(seen))
+        try:
+            with Uploader(url=f"{base}/files/x", file_path=self._file(tmp_path)) as up:
+                up.upload_chunk()
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+        ua = "Python-urllib/{}.{}".format(*sys.version_info[:2])
+        assert seen == [("HEAD", ua), ("PATCH", ua)]
+
+    def test_custom_user_agent_wins(self, tmp_path):
+        seen: list = []
+        base, httpd = _stub_server(self._recording_handler(seen))
+        try:
+            with Uploader(
+                url=f"{base}/files/x",
+                file_path=self._file(tmp_path),
+                headers={"user-agent": "mine/1"},
+            ) as up:
+                up.upload_chunk()
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+        assert seen == [("HEAD", "mine/1"), ("PATCH", "mine/1")]
+
+    @pytest.mark.parametrize(
+        ("url", "expected"),
+        [
+            ("http://[::1]/files/x", ("::1", 80)),
+            ("https://[::1]/files/x", ("::1", 443)),
+            ("http://[::1]:8080/files/x", ("::1", 8080)),
+        ],
+    )
+    def test_ipv6_literal_host_and_default_port(self, tmp_path, url, expected):
+        from unittest.mock import patch
+
+        from resumable_upload.exceptions import TusCommunicationError
+
+        calls = []
+
+        def refuse(host, port, **kwargs):
+            calls.append((host, port))
+            raise ConnectionRefusedError
+
+        name = "HTTPSConnection" if url.startswith("https") else "HTTPConnection"
+        refused = patch(f"resumable_upload.client.uploader.{name}", side_effect=refuse)
+        with refused, pytest.raises(TusCommunicationError):
+            Uploader(url=url, file_path=self._file(tmp_path))
+        assert calls == [expected]
+
+    def test_timeout_is_not_silently_resent(self, tmp_path):
+        from resumable_upload.exceptions import TusUploadFailed
+
+        seen: list = []
+        base, httpd = _stub_server(self._recording_handler(seen, patch_delay=3.0))
+        try:
+            with Uploader(url=f"{base}/files/x", file_path=self._file(tmp_path), timeout=1.0) as up:
+                with pytest.raises(TusUploadFailed):
+                    up.upload_chunk()
+                assert [m for m, _ in seen] == ["HEAD", "PATCH"]
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+
+    def test_redirected_head_is_an_error(self, tmp_path):
+        """Following it would read the offset from one URL and PATCH another."""
+        from http.server import BaseHTTPRequestHandler
+
+        from resumable_upload.exceptions import TusCommunicationError
+
+        seen: list = []
+
+        class Moved(BaseHTTPRequestHandler):
+            def do_HEAD(self):  # noqa: N802
+                seen.append(self.path)
+                self.send_response(307)
+                self.send_header("Location", "/new")
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+
+        base, httpd = _stub_server(Moved)
+        try:
+            with pytest.raises(TusCommunicationError) as ei:
+                Uploader(url=f"{base}/old", file_path=self._file(tmp_path))
+        finally:
+            httpd.shutdown()
+            httpd.server_close()
+        assert ei.value.status_code == 307
+        assert seen == ["/old"]
