@@ -44,10 +44,15 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
             and self.tus_server.metrics is not None
             and self.path == self.tus_server.metrics_path
         ):
+            framing = self._request_framing("GET")
+            if framing is None:
+                return
             body = self.tus_server.metrics.render().encode("utf-8")
             self.send_response(200)
             self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
             self.send_header("Content-Length", str(len(body)))
+            if framing[2]:
+                self.send_header("Connection", "close")
             self.end_headers()
             self.wfile.write(body)
             return
@@ -129,7 +134,8 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
         for key, value in self.tus_server._add_cors_headers({}, origin=origin).items():
             self.send_header(key, value)
         self.end_headers()
-        self.wfile.write(message)
+        if self.command != "HEAD":  # RFC 9110 §9.3.2; the header still describes it
+            self.wfile.write(message)
 
     def _read_chunked_body(self, method: str) -> tuple[bytes, dict[str, str]] | None:
         """Parse a chunked request body plus its trailer section.
@@ -201,6 +207,51 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
                 trailers[name.decode("latin-1").strip()] = value.decode("latin-1").strip()
         return bytes(body), trailers
 
+    def _request_framing(self, method: str) -> tuple[str, str | None, bool] | None:
+        """Decide how this request's body is delimited, before anything reads it.
+
+        Returns ``(transfer_encoding, content_length, close)`` or ``None``
+        after sending an error response. Anything whose end we can't find
+        must not stay on a kept-alive socket, or its bytes are parsed as the
+        next request (request smuggling). Repeated fields are read in full:
+        a proxy in front may honour the one we would have skipped.
+        """
+        transfer_encoding = (
+            ", ".join(self.headers.get_all("Transfer-Encoding") or []).lower().strip()
+        )
+        lengths = {v.strip() for v in self.headers.get_all("Content-Length") or []}
+        if len(lengths) > 1:
+            # RFC 9112 §6.3: differing Content-Length values are unrecoverable.
+            self._send_error(400, b"Conflicting Content-Length headers")
+            return None
+        content_length = next(iter(lengths), None)
+        if content_length is not None and not (
+            content_length.isascii() and content_length.isdigit()
+        ):
+            # 1*DIGIT only: int() would take "+5" and "5_0", and "" would read
+            # as "no body" — each one a different frame than a proxy sees.
+            self._send_error(400, b"Invalid Content-Length header")
+            return None
+        if transfer_encoding and transfer_encoding != "chunked":
+            # RFC 9112 §6.1/§6.3: chunked not last means the body has no known
+            # end (400); any other coding stacked on chunked we can't decode (501).
+            if transfer_encoding.rsplit(",", 1)[-1].strip() != "chunked":
+                self._send_error(400, b"Transfer-Encoding must end with chunked")
+            else:
+                self._send_error(501, b"Unsupported Transfer-Encoding")
+            return None
+        close = False
+        if transfer_encoding and content_length is not None:
+            # Both framings present: chunked wins, but the peer and any proxy in
+            # between may disagree on where the message ends (RFC 9112 §6.1).
+            close = True
+        if method not in ("POST", "PATCH") and (
+            transfer_encoding or (content_length or "0") != "0"
+        ):
+            # Nothing reads a body for these methods.
+            close = True
+        return transfer_encoding, content_length, close
+
     def _handle_request(self, method: str) -> None:
         """Handle incoming request."""
         if self.tus_server is None:
@@ -213,15 +264,18 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
         # Read body for POST/PATCH
         body = b""
         trailers: dict[str, str] = {}
-        transfer_encoding = (self.headers.get("Transfer-Encoding") or "").lower()
-        if method in ("POST", "PATCH") and "chunked" in transfer_encoding:
+        framing = self._request_framing(method)
+        if framing is None:
+            return
+        transfer_encoding, content_length_header, close = framing
+        if method in ("POST", "PATCH") and transfer_encoding:
             parsed = self._read_chunked_body(method)
             if parsed is None:
                 return
             body, trailers = parsed
         elif method in ("POST", "PATCH"):
             try:
-                content_length = int(self.headers.get("Content-Length", 0))
+                content_length = int(content_length_header or 0)
             except (ValueError, TypeError):
                 self._send_error(400, b"Invalid Content-Length header")
                 return
@@ -256,18 +310,26 @@ class TusHTTPRequestHandler(BaseHTTPRequestHandler):
             method, self.path, headers, body
         )
 
-        # Send response. The core sets Content-Length whenever there is a body;
-        # a bodiless 200/201 still needs an explicit 0 or a keep-alive client
-        # waits for EOF. 204 must not carry one (RFC 9110 §8.6).
+        # Send response. Every non-204 response is framed with Content-Length
+        # or a keep-alive client either waits for EOF or reads the leftover
+        # bytes as the next status line; streamed downloads set their own.
+        # 204 must not carry one (RFC 9110 §8.6).
+        is_bytes = isinstance(response_body, (bytes, bytearray))
         self.send_response(status)
         for key, value in response_headers.items():
             self.send_header(key, value)
         if status != 204 and not any(k.lower() == "content-length" for k in response_headers):
-            self.send_header("Content-Length", "0")
+            self.send_header("Content-Length", str(len(response_body)) if is_bytes else "0")
+        if close:
+            self.send_header("Connection", "close")
         self.end_headers()
-        if isinstance(response_body, (bytes, bytearray)):
-            if response_body:
+        # A HEAD response ends at the blank line whatever its headers say
+        # (RFC 9110 §9.3.2), so any body written here would lead the next one.
+        if is_bytes:
+            if response_body and method != "HEAD":
                 self.wfile.write(response_body)
+        elif method == "HEAD":
+            response_body.close()
         else:
             # GET download: stream the body instead of buffering it in RAM.
             try:
