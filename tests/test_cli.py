@@ -734,13 +734,11 @@ class TestCLIHeaders:
         assert dl.returncode == 0, dl.stderr
         assert out.read_bytes() == b"H" * 3000
 
-    @pytest.mark.parametrize(
-        ("redirect_host", "expected_rc"),
-        [("127.0.0.1", 0), ("localhost", 1)],
-        ids=["same-host-keeps-auth", "cross-host-drops-auth"],
-    )
-    def test_download_redirect_forwards_auth_only_to_the_same_host(
-        self, auth_cli_server, tmp_path, redirect_host, expected_rc
+    # The hop listens on its own port, so even 127.0.0.1 is another origin;
+    # the same-origin case is covered without sockets below.
+    @pytest.mark.parametrize("redirect_host", ["127.0.0.1", "localhost"])
+    def test_download_redirect_drops_auth_across_origins(
+        self, auth_cli_server, tmp_path, redirect_host
     ):
         import threading
         from http.server import BaseHTTPRequestHandler, HTTPServer
@@ -774,11 +772,40 @@ class TestCLIHeaders:
         finally:
             hop.shutdown()
             hop.server_close()
-        assert dl.returncode == expected_rc, dl.stderr
-        if expected_rc == 0:
-            assert out.read_bytes() == b"H" * 100
-        else:
-            assert "401" in dl.stderr
+        assert dl.returncode == 1, dl.stderr
+        assert "401" in dl.stderr
+
+    @pytest.mark.parametrize(
+        ("newurl", "kept"),
+        [
+            ("https://api.example/b", True),
+            ("https://api.example:443/b", True),
+            ("http://api.example/b", False),  # https -> http downgrade
+            ("https://api.example:8443/b", False),
+            ("https://other.example/b", False),
+            ("https://api.example:99999/b", False),  # unparsable port: not our origin
+        ],
+    )
+    def test_redirect_keeps_credentials_only_for_the_same_origin(self, newurl, kept):
+        """Like curl (CVE-2022-27776): a change of scheme or port counts as a new origin."""
+        import urllib.request
+
+        from resumable_upload.cli import _SameHostCredentials
+
+        req = urllib.request.Request(
+            "https://api.example/a",
+            headers={
+                "Authorization": "Bearer s3cret",
+                "Cookie": "c=1",
+                "Proxy-Authorization": "Basic cDpw",
+            },
+        )
+        new = _SameHostCredentials().redirect_request(req, None, 302, "Found", {}, newurl)
+        assert new is not None
+        assert new.has_header("Authorization") is kept
+        assert new.has_header("Cookie") is kept
+        # Request stores keys capitalize()d, so this one is "Proxy-authorization".
+        assert new.has_header("Proxy-authorization") is kept
 
     def test_header_must_be_key_value(self, cli_server, tmp_path):
         src = tmp_path / "s.bin"

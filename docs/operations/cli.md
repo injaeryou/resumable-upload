@@ -113,7 +113,7 @@ resumable-upload upload big.bin --url http://host/files --header "Authorization=
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--header KEY=VALUE` | — | Extra request header, repeatable (e.g. `Authorization=Bearer TOKEN`) |
+| `--header KEY=VALUE` | — | Extra request header, repeatable (e.g. `Authorization=Bearer TOKEN`). `download` drops `Authorization`/`Cookie`/`Proxy-Authorization` when a redirect changes host, scheme or port |
 | `--timeout` | `30` | Per-request socket timeout in seconds |
 | `--insecure` | off | Skip TLS certificate verification (self-signed or internal CAs) |
 
