@@ -71,3 +71,24 @@ def test_split_boundaries_last_slice_absorbs_remainder():
     assert P.split_boundaries(10, 3) == [(0, 3), (3, 6), (6, 10)]
     assert P.split_boundaries(2, 5) == [(0, 2)]  # skip empty slices
     assert P.split_boundaries(0, 3) == []
+
+
+@pytest.mark.parametrize(
+    ("status", "retried"),
+    [
+        (None, True),  # network error
+        (500, True),
+        (503, True),
+        (408, True),
+        (423, True),
+        (429, True),
+        (400, False),
+        (403, False),
+        (404, False),
+        (409, False),  # offset re-sync, not a retry
+        (413, False),
+        (460, False),  # checksum mismatch
+    ],
+)
+def test_is_retriable_status(status, retried):
+    assert P.is_retriable_status(status) is retried

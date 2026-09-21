@@ -97,9 +97,10 @@ def maybe_add_request_id(headers: dict[str, str], enabled: bool) -> dict[str, st
 
 
 def is_retriable_status(status: int | None) -> bool:
-    """Default retry policy, matching tus-js-client: retry network errors and
-    5xx, plus the transient 4xx (408 timeout, 423 locked, 429 throttled).
-    Any other 4xx is deterministic — retrying it only burns the backoff."""
+    """Default retry policy: network errors, 5xx and 423 Locked as in
+    tus-js-client, plus 408 and 429, which are transient by definition.
+    Any other 4xx is deterministic — retrying it only burns the backoff.
+    (409 never gets here: the uploader re-syncs the offset instead.)"""
     return status is None or status >= 500 or status in (408, 423, 429)
 
 
