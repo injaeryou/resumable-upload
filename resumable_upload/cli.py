@@ -455,15 +455,30 @@ def _upload(args: argparse.Namespace) -> int:
 
 
 class _SameHostCredentials(urllib.request.HTTPRedirectHandler):
-    """Drop credential headers when a redirect leaves the original host (as curl does)."""
+    """Drop credential headers when a redirect leaves the original origin (as curl
+    does): another host, scheme or port — https -> http must not carry a token."""
 
     _SENSITIVE = ("Authorization", "Cookie", "Proxy-Authorization")
 
+    @staticmethod
+    def _origin(url: str) -> tuple[str, str | None, int | None] | None:
+        parts = urlsplit(url)
+        try:
+            port = parts.port
+        except ValueError:
+            # A Location with a bogus port (server-controlled) is no origin of
+            # ours: drop the credentials and let urlopen report the bad URL.
+            return None
+        return (parts.scheme, parts.hostname, port or {"http": 80, "https": 443}.get(parts.scheme))
+
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         new = super().redirect_request(req, fp, code, msg, headers, newurl)
-        if new is not None and urlsplit(newurl).hostname != urlsplit(req.full_url).hostname:
+        target = self._origin(newurl)
+        if new is not None and (target is None or target != self._origin(req.full_url)):
             for name in self._SENSITIVE:
-                new.remove_header(name)
+                # Request stores keys capitalize()d and remove_header() does
+                # not normalise, so "Proxy-Authorization" would never match.
+                new.remove_header(name.capitalize())
         return new
 
 
