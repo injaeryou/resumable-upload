@@ -72,14 +72,6 @@ docs/                      — user-facing mkdocs site (do not repurpose)
 .docs/                     — AI-only artifacts (gitignored) — see below
 ```
 
-Legacy import paths are kept alive but emit ``DeprecationWarning`` on
-first use, **deprecated in 0.0.6, scheduled for removal after 0.1.2**:
-``resumable_upload.storage_s3``, ``storage_gcs``, ``storage_azure``,
-``locks_redis``, and ``client.base`` are ``sys.modules`` aliases for the
-new submodules. New code (and the project's own tests / examples / docs)
-should import directly from the new packages; the aliases exist only to
-give downstream users one release cycle to migrate.
-
 ## Tech Stack & Constraints
 
 - Runtime: **stdlib only** for `resumable_upload.server`, `resumable_upload.client`, `resumable_upload.storage` (SQLite is stdlib).

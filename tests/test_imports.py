@@ -22,17 +22,6 @@ def _attr(module_name: str, attr: str):
     return getattr(_import(module_name), attr)
 
 
-def _import_legacy(module_name: str):
-    """Import a deprecated path, asserting it emits ``DeprecationWarning``.
-
-    Removes the cached module beforehand so the deprecation warning fires on
-    re-import (Python only runs the module body once otherwise).
-    """
-    sys.modules.pop(module_name, None)
-    with pytest.warns(DeprecationWarning, match=module_name):
-        return importlib.import_module(module_name)
-
-
 # ---- Storage ---------------------------------------------------------------
 
 
@@ -53,36 +42,6 @@ def test_sqlite_storage_lives_in_sqlite_storage_submodule():
     new = _attr("resumable_upload.storage.sqlite_storage", "SQLiteStorage")
     legacy = _attr("resumable_upload.storage", "SQLiteStorage")
     assert new is legacy
-
-
-@pytest.mark.parametrize(
-    ("legacy_module", "new_module", "attr", "sdk_module"),
-    [
-        (
-            "resumable_upload.storage_s3",
-            "resumable_upload.storage.s3_storage",
-            "S3Storage",
-            "boto3",
-        ),
-        (
-            "resumable_upload.storage_gcs",
-            "resumable_upload.storage.gcs_storage",
-            "GCSStorage",
-            "google.cloud.storage",
-        ),
-        (
-            "resumable_upload.storage_azure",
-            "resumable_upload.storage.azure_storage",
-            "AzureBlobStorage",
-            "azure.storage.blob",
-        ),
-    ],
-)
-def test_cloud_storage_legacy_paths_warn_and_alias(legacy_module, new_module, attr, sdk_module):
-    pytest.importorskip(sdk_module)
-    new_cls = _attr(new_module, attr)
-    legacy_mod = _import_legacy(legacy_module)
-    assert getattr(legacy_mod, attr) is new_cls
 
 
 # ---- URL storage ----------------------------------------------------------
@@ -130,16 +89,21 @@ def test_locks_classes_live_in_dedicated_submodules(submodule, attr):
     assert new_cls is legacy_cls
 
 
-def test_locks_redis_legacy_path_warns_and_aliases():
-    new_cls = _attr("resumable_upload.locks.redis_lock", "RedisLockBackend")
-    legacy_mod = _import_legacy("resumable_upload.locks_redis")
-    assert legacy_mod.RedisLockBackend is new_cls
-
-
-def test_client_base_legacy_path_warns_and_aliases():
-    new_mod = _import("resumable_upload.client.client")
-    legacy_mod = _import_legacy("resumable_upload.client.base")
-    assert legacy_mod is new_mod
+@pytest.mark.parametrize(
+    "legacy_module",
+    [
+        "resumable_upload.storage_s3",
+        "resumable_upload.storage_gcs",
+        "resumable_upload.storage_azure",
+        "resumable_upload.locks_redis",
+        "resumable_upload.client.base",
+    ],
+)
+def test_legacy_aliases_are_removed(legacy_module):
+    """Deprecated in 0.0.6; import from the ``storage`` / ``locks`` / ``client`` packages."""
+    sys.modules.pop(legacy_module, None)
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module(legacy_module)
 
 
 # ---- Server ---------------------------------------------------------------
