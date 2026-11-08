@@ -7,7 +7,7 @@ This file describes how Claude Code (and other AI coding agents) should work in 
 `resumable-upload` is a Python implementation of the [TUS resumable upload protocol v1.0.0](https://tus.io/protocols/resumable-upload.html). It ships both server and client components with **zero runtime dependencies** for the core path. Cloud storage backends (S3 / GCS / Azure) are opt-in via extras.
 
 - **Status**: published on PyPI — `pip install resumable-upload`
-- **Python**: 3.9 through 3.14 (keep 3.9 floor)
+- **Python**: 3.11 through 3.15 (keep 3.11 floor; drop a version once it reaches EOL)
 - **License**: MIT
 - **Compliance matrix**: see `TUS_COMPLIANCE.md`
 

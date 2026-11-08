@@ -2,7 +2,7 @@
 Test script to verify Python version compatibility.
 
 This script tests the resumable-upload library on the current Python version
-to ensure it works correctly across Python 3.9, 3.10, 3.11, 3.12, 3.13, and 3.14.
+to ensure it works correctly across Python 3.11, 3.12, 3.13, 3.14, and 3.15.
 """
 
 import os

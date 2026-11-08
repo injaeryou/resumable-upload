@@ -18,7 +18,7 @@ A Python implementation of the [TUS resumable upload protocol](https://tus.io/) 
 - 🔁 **Retry Logic**: Built-in automatic retry with exponential backoff
 - 📊 **Progress Tracking**: Detailed upload progress callbacks with stats
 - 🌐 **Web Framework Support**: Integration examples for Flask, FastAPI, and Django
-- 🐍 **Python 3.9+**: Supports Python 3.9 through 3.14
+- 🐍 **Python 3.11+**: Supports Python 3.11 through 3.15
 - 🏪 **Storage Backends**: SQLite by default; S3, Google Cloud Storage and Azure Blob Storage via optional extras (and extensible to your own)
 - 🔐 **TLS Support**: Certificate verification control and mTLS authentication
 - 📝 **URL Storage**: Persist upload URLs across sessions
@@ -337,7 +337,7 @@ make lint              # Run linting
 make format            # Format code
 make test-minimal      # Run minimal tests
 make test              # Run all tests
-make test-all-versions # Test on all Python versions (3.9-3.14) - requires tox
+make test-all-versions # Test on all Python versions (3.11-3.15) - requires tox
 make ci                # Run full CI checks (lint + format + test)
 make interop           # Cross-implementation interop tests (see below)
 ```

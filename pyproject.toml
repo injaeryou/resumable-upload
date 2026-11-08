@@ -7,7 +7,7 @@ name = "resumable-upload"
 dynamic = ["version"]
 description = "A Python implementation of the `TUS resumable upload protocol` for server and client, with zero runtime dependencies."
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 license = {text = "MIT"}
 authors = [
     {name = "Injae Ryou", email = "injaeryou@gmail.com"}
@@ -20,12 +20,11 @@ classifiers = [
     "Topic :: Internet :: WWW/HTTP :: HTTP Servers",
     "Topic :: System :: Networking",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Programming Language :: Python :: 3 :: Only",
 ]
 
@@ -145,7 +144,7 @@ ignore = [
 docstring-code-format = true
 
 [tool.ty.environment]
-python-version = "3.9"
+python-version = "3.11"
 
 [tool.ty.src]
 include = ["resumable_upload"]
