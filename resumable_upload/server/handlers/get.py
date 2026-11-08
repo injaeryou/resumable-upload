@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, BinaryIO
 from urllib.parse import quote
 
@@ -55,7 +55,7 @@ def _plan_get(
         return server._error_response(404, "Upload not found")
 
     expires_at = upload.get("expires_at")
-    if expires_at and expires_at < datetime.now(timezone.utc):
+    if expires_at and expires_at < datetime.now(UTC):
         return server._error_response(410, "Upload has expired")
 
     if not upload.get("completed"):

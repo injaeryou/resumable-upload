@@ -1,37 +1,37 @@
 """The [all] extra must cover every optional runtime feature."""
 
 import re
+import tomllib
 from pathlib import Path
 
-_PYPROJECT = (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text()
-
-# Text-based (no tomllib — must pass on the 3.9/3.10 tox envs too).
-_OPTIONAL_DEPS = re.search(r"(?ms)^\[project\.optional-dependencies\]\n(.*?)^\[", _PYPROJECT).group(
-    1
-)
+_PYPROJECT = tomllib.loads((Path(__file__).resolve().parent.parent / "pyproject.toml").read_text())
+_OPTIONAL_DEPS: dict[str, list[str]] = _PYPROJECT["project"]["optional-dependencies"]
 
 # Extras that exist for tooling or that aggregate other extras, not features.
 _NOT_A_FEATURE = {"dev", "test", "docs", "all", "all-storage"}
 
 
-def _extra(name):
-    m = re.search(rf"(?ms)^{re.escape(name)}\s*=\s*\[(.*?)^\]", _OPTIONAL_DEPS)
-    assert m, f"no [project.optional-dependencies] {name} = [...] block"
-    return m.group(1)
+def _referenced_extras(name):
+    """Extras named by ``resumable-upload[a,b]`` entries of extra ``name``."""
+    assert name in _OPTIONAL_DEPS, f"no [project.optional-dependencies] {name}"
+    refs = set()
+    for req in _OPTIONAL_DEPS[name]:
+        m = re.fullmatch(r"resumable-upload\[([^\]]*)\]", req.replace(" ", ""))
+        if m:
+            refs.update(m.group(1).split(","))
+    return refs
 
 
 def test_all_extra_is_self_referential():
     # Referencing the extras (rather than restating their pins) is what keeps
     # [all] from drifting when one of them bumps a version.
-    assert "resumable-upload[" in _extra("all")
+    assert _referenced_extras("all"), "[all] must reference extras as resumable-upload[...]"
 
 
 def test_all_extra_covers_every_feature_extra():
-    names = re.findall(r"(?m)^([a-z][a-z0-9-]*)\s*=\s*\[", _OPTIONAL_DEPS)
-    features = [n for n in names if n not in _NOT_A_FEATURE]
-    assert features, "no feature extras found — regex out of date?"
-    referenced = _extra("all")
-    missing = [n for n in features if not re.search(rf"[\[,]{n}[,\]]", referenced)]
+    features = [n for n in _OPTIONAL_DEPS if n not in _NOT_A_FEATURE]
+    assert features, "no feature extras found"
+    missing = [n for n in features if n not in _referenced_extras("all")]
     assert not missing, f"[all] does not cover: {', '.join(missing)}"
 
 
@@ -44,7 +44,12 @@ _BOTO3_IF_MATCH_FLOOR = (1, 35, 69)
 
 
 def _boto3_pins():
-    pins = re.findall(r'"boto3>=([0-9.]+)"', _OPTIONAL_DEPS)
+    pins = [
+        m.group(1)
+        for reqs in _OPTIONAL_DEPS.values()
+        for req in reqs
+        if (m := re.fullmatch(r"boto3>=([0-9.]+)", req.replace(" ", "")))
+    ]
     assert pins, "no boto3 pin found in [project.optional-dependencies]"
     return pins
 

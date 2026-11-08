@@ -6,7 +6,7 @@ import base64
 import binascii
 import logging
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from resumable_upload.exceptions import TusHookError
@@ -47,7 +47,7 @@ def _plan_patch(
     error response tuple if any rule is violated.
     """
     expires_at = upload.get("expires_at")
-    if expires_at and expires_at < datetime.now(timezone.utc):
+    if expires_at and expires_at < datetime.now(UTC):
         logger.warning("Upload expired: %s", upload_id)
         return server._error_response(410, "Upload has expired")
 

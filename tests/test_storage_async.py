@@ -17,7 +17,7 @@ specific `*_async` methods; this contract exercises only the default
 from __future__ import annotations
 
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
 import pytest
@@ -149,7 +149,7 @@ async def test_get_expired_uploads_async_returns_list(storage):
         expired_id,
         3,
         {},
-        expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+        expires_at=datetime.now(UTC) - timedelta(seconds=1),
     )
     with patch.object(storage, "get_expired_uploads", wraps=storage.get_expired_uploads) as spy:
         result = await storage.get_expired_uploads_async()
@@ -164,7 +164,7 @@ async def test_cleanup_expired_uploads_async_returns_count(storage):
         expired_id,
         3,
         {},
-        expires_at=datetime.now(timezone.utc) - timedelta(seconds=1),
+        expires_at=datetime.now(UTC) - timedelta(seconds=1),
     )
     with patch.object(
         storage,

@@ -1,6 +1,6 @@
 """Tests for AzureBlobStorage backend using mock Azure client."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -229,11 +229,11 @@ class TestAzureStorageCreate:
         assert upload["completed"] is False
 
     def test_create_upload_with_expiry(self, storage):
-        expires = datetime.now(timezone.utc) + timedelta(hours=1)
+        expires = datetime.now(UTC) + timedelta(hours=1)
         storage.create_upload("exp-id", 100, {}, expires_at=expires)
         upload = storage.get_upload("exp-id")
         assert upload["expires_at"] is not None
-        assert upload["expires_at"] > datetime.now(timezone.utc)
+        assert upload["expires_at"] > datetime.now(UTC)
 
     def test_get_nonexistent_upload(self, storage):
         assert storage.get_upload("nonexistent") is None
@@ -389,8 +389,8 @@ class TestAzureStorageFileInfo:
 
 class TestAzureStorageExpiration:
     def test_get_expired_uploads(self, storage):
-        past = datetime.now(timezone.utc) - timedelta(hours=1)
-        future = datetime.now(timezone.utc) + timedelta(hours=1)
+        past = datetime.now(UTC) - timedelta(hours=1)
+        future = datetime.now(UTC) + timedelta(hours=1)
 
         storage.create_upload("expired", 100, {}, expires_at=past)
         storage.create_upload("valid", 100, {}, expires_at=future)
@@ -402,7 +402,7 @@ class TestAzureStorageExpiration:
         assert "no-expiry" not in expired
 
     def test_cleanup_expired_uploads(self, storage):
-        past = datetime.now(timezone.utc) - timedelta(hours=1)
+        past = datetime.now(UTC) - timedelta(hours=1)
         storage.create_upload("exp1", 100, {}, expires_at=past)
         storage.create_upload("exp2", 100, {}, expires_at=past)
         storage.create_upload("keep", 100, {})

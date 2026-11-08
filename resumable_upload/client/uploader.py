@@ -5,9 +5,10 @@ import os
 import ssl
 import sys
 import threading
+from collections.abc import Callable
 from http.client import BadStatusLine, HTTPConnection, HTTPException, HTTPSConnection
 from threading import Lock
-from typing import IO, Callable, Optional, Union
+from typing import IO
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, getproxies, proxy_bypass, urlopen
@@ -65,20 +66,20 @@ class Uploader:
     def __init__(
         self,
         url: str,
-        file_path: Optional[str] = None,
-        file_stream: Optional[IO] = None,
-        chunk_size: Union[int, float] = 1024 * 1024,
-        checksum: Union[bool, str] = True,
+        file_path: str | None = None,
+        file_stream: IO | None = None,
+        chunk_size: int | float = 1024 * 1024,
+        checksum: bool | str = True,
         metadata_encoding: str = "utf-8",
-        headers: Optional[dict[str, str]] = None,
+        headers: dict[str, str] | None = None,
         max_retries: int = 0,
         retry_delay: float = 1.0,
-        ssl_context: Optional[ssl.SSLContext] = None,
+        ssl_context: ssl.SSLContext | None = None,
         timeout: float = 30.0,
-        stop_event: Optional[threading.Event] = None,
-        before_request: Optional[Callable[[str, str, dict[str, str]], None]] = None,
-        after_response: Optional[Callable[[str, str, int], None]] = None,
-        on_should_retry: Optional[Callable[[Exception, int], bool]] = None,
+        stop_event: threading.Event | None = None,
+        before_request: Callable[[str, str, dict[str, str]], None] | None = None,
+        after_response: Callable[[str, str, int], None] | None = None,
+        on_should_retry: Callable[[Exception, int], bool] | None = None,
         override_patch_method: bool = False,
         add_request_id: bool = False,
     ):
@@ -162,7 +163,7 @@ class Uploader:
         self._conn_target = (parts.scheme, parts.hostname or "", parts.port or default_port)
         self._conn_path = urlunsplit(("", "", parts.path or "/", parts.query, ""))
         self._via_proxy = parts.scheme in getproxies() and not proxy_bypass(parts.hostname or "")
-        self._conn: Optional[HTTPConnection] = None
+        self._conn: HTTPConnection | None = None
 
         # Get current offset from server; close file handle on failure
         try:
@@ -298,7 +299,7 @@ class Uploader:
             # Update stats after successful upload
             self._update_stats_after_chunk()
 
-    def _resolve_checksum_algorithm(self) -> Optional[str]:
+    def _resolve_checksum_algorithm(self) -> str | None:
         """Normalize ``self.checksum`` to a hashlib algorithm name or None."""
         return _protocol.resolve_checksum_algorithm(self.checksum)
 
@@ -381,7 +382,7 @@ class Uploader:
 
     def _upload_chunk_with_retry(self, data: bytes) -> None:
         """Upload a chunk of data with retry logic."""
-        last_error: Optional[Exception] = None
+        last_error: Exception | None = None
 
         for attempt in range(self.max_retries + 1):  # +1 for initial attempt
             try:
@@ -463,8 +464,8 @@ class Uploader:
 
     def upload(
         self,
-        progress_callback: Optional[Callable[[UploadStats], None]] = None,
-        stop_at: Optional[int] = None,
+        progress_callback: Callable[[UploadStats], None] | None = None,
+        stop_at: int | None = None,
     ) -> str:
         """Upload the entire file or remaining chunks.
 

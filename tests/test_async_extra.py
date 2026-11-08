@@ -1,18 +1,17 @@
 """The [async] extra declares httpx; core import must not require it."""
 
-import re
 import subprocess
 import sys
+import tomllib
 from pathlib import Path
 
-_PYPROJECT = (Path(__file__).resolve().parent.parent / "pyproject.toml").read_text()
+_PYPROJECT = tomllib.loads((Path(__file__).resolve().parent.parent / "pyproject.toml").read_text())
 
 
 def test_async_extra_declares_httpx():
-    # Text-based (no tomllib — must pass on the 3.9/3.10 tox envs too).
-    m = re.search(r"(?ms)^async\s*=\s*\[(.*?)\]", _PYPROJECT)
-    assert m, "no [project.optional-dependencies] async = [...] block"
-    assert "httpx" in m.group(1)
+    extras = _PYPROJECT["project"]["optional-dependencies"]
+    assert "async" in extras, "no [project.optional-dependencies] async"
+    assert any(req.startswith("httpx") for req in extras["async"])
 
 
 def test_core_import_does_not_require_httpx():

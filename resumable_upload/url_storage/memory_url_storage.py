@@ -1,7 +1,6 @@
 """Process-local in-memory URL storage."""
 
 import threading
-from typing import Optional
 
 from resumable_upload.url_storage.base import URLStorage
 
@@ -18,7 +17,7 @@ class InMemoryURLStorage(URLStorage):
         self._data: dict[str, str] = {}
         self._lock = threading.Lock()
 
-    def get_url(self, fingerprint: str) -> Optional[str]:
+    def get_url(self, fingerprint: str) -> str | None:
         with self._lock:
             return self._data.get(fingerprint)
 

@@ -6,7 +6,7 @@ single final-creation request.
 """
 
 import os
-from typing import Callable, Optional
+from collections.abc import Callable
 
 from resumable_upload.client import _protocol
 from resumable_upload.client._fileslice import FileSlice
@@ -24,8 +24,8 @@ class ParallelUploadMixin(_ClientAttrs):
         file_path: str,
         metadata: dict[str, str],
         parallel_uploads: int,
-        progress_callback: Optional[Callable[[UploadStats], None]],
-        metadata_for_partial_uploads: Optional[dict[str, str]] = None,
+        progress_callback: Callable[[UploadStats], None] | None,
+        metadata_for_partial_uploads: dict[str, str] | None = None,
     ) -> str:
         """Split a file into N ranges, upload concurrently, and merge server-side."""
         from concurrent.futures import ThreadPoolExecutor
@@ -51,7 +51,7 @@ class ParallelUploadMixin(_ClientAttrs):
         # partial URLs are remembered under a side key until the merge, after
         # which the final URL takes the plain fingerprint slot.
         fingerprint = self.fingerprinter.get_fingerprint(file_path) if self.store_url else None
-        stored: Optional[list[str]] = None
+        stored: list[str] | None = None
         if fingerprint is not None:
             assert self.url_storage is not None
             final_url = self.url_storage.get_url(fingerprint)

@@ -9,8 +9,8 @@ Requires boto3: pip install resumable-upload[s3]
 import contextlib
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from resumable_upload.storage.base import Storage
 
@@ -78,7 +78,7 @@ class S3Storage(Storage):
 
     # -- Info persistence ----------------------------------------------------
 
-    def _read_info(self, upload_id: str) -> Optional[dict]:
+    def _read_info(self, upload_id: str) -> dict | None:
         try:
             resp = self.s3.get_object(Bucket=self.bucket, Key=self._info_key(upload_id))
             result: dict = json.loads(resp["Body"].read())
@@ -101,9 +101,9 @@ class S3Storage(Storage):
     def create_upload(
         self,
         upload_id: str,
-        upload_length: Optional[int],
+        upload_length: int | None,
         metadata: dict[str, str],
-        expires_at: Optional[datetime] = None,
+        expires_at: datetime | None = None,
         is_partial: bool = False,
     ) -> None:
         # Start S3 multipart upload
@@ -118,7 +118,7 @@ class S3Storage(Storage):
             "upload_length": upload_length,
             "offset": 0,
             "metadata": metadata,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "expires_at": expires_at.isoformat() if expires_at else None,
             "completed": False,
             "is_partial": is_partial,
@@ -128,7 +128,7 @@ class S3Storage(Storage):
         }
         self._write_info(upload_id, info)
 
-    def get_upload(self, upload_id: str) -> Optional[dict[str, Any]]:
+    def get_upload(self, upload_id: str) -> dict[str, Any] | None:
         info = self._read_info(upload_id)
         if info is None:
             return None
@@ -138,7 +138,7 @@ class S3Storage(Storage):
             try:
                 dt = datetime.fromisoformat(info["expires_at"])
                 if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
+                    dt = dt.replace(tzinfo=UTC)
                 expires_at = dt
             except (ValueError, AttributeError):
                 pass
@@ -381,7 +381,7 @@ class S3Storage(Storage):
         }
 
     def get_expired_uploads(self) -> list[str]:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         expired = []
 
         # List all .info objects under prefix
@@ -398,7 +398,7 @@ class S3Storage(Storage):
                     if info.get("expires_at"):
                         dt = datetime.fromisoformat(info["expires_at"])
                         if dt.tzinfo is None:
-                            dt = dt.replace(tzinfo=timezone.utc)
+                            dt = dt.replace(tzinfo=UTC)
                         if dt < now:
                             expired.append(info["upload_id"])
                 except (ClientError, json.JSONDecodeError, KeyError):
@@ -418,7 +418,7 @@ class S3Storage(Storage):
         partial_ids: list[str],
         metadata: dict[str, str],
         *,
-        expires_at: Optional[datetime] = None,
+        expires_at: datetime | None = None,
     ) -> int:
         """Merge partial uploads into a final S3 object via UploadPartCopy.
 
@@ -485,7 +485,7 @@ class S3Storage(Storage):
                 "upload_length": total_length,
                 "offset": total_length,
                 "metadata": metadata,
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
                 "expires_at": expires_at.isoformat() if expires_at else None,
                 "completed": True,
                 "is_partial": False,

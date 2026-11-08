@@ -2,9 +2,9 @@
 
 import logging
 import threading
-from collections.abc import Awaitable
-from datetime import datetime, timezone
-from typing import Any, BinaryIO, Callable, Optional, Union
+from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
+from typing import Any, BinaryIO
 
 from resumable_upload.checksum import ChecksumAlgorithms
 from resumable_upload.exceptions import TusHookError
@@ -80,32 +80,32 @@ class TusServerCore:
 
     def __init__(
         self,
-        storage: Optional[Storage] = None,
+        storage: Storage | None = None,
         base_path: str = "/files",
         max_size: int = 0,
         max_chunk_size: int = 0,
-        upload_expiry: Optional[int] = None,
-        cors_allow_origins: Optional[Union[str, list[str]]] = None,
+        upload_expiry: int | None = None,
+        cors_allow_origins: str | list[str] | None = None,
         cors_allow_credentials: bool = False,
-        cors_max_age: Optional[int] = None,
+        cors_max_age: int | None = None,
         cleanup_interval: int = 60,
         request_timeout: int = 30,
-        on_incoming_request: Optional[Callable[..., None]] = None,
-        on_upload_create: Optional[Callable[..., Optional[dict]]] = None,
-        on_upload_complete: Optional[Callable[..., Optional[dict]]] = None,
-        on_upload_terminate: Optional[Callable[..., None]] = None,
-        on_chunk_received: Optional[Callable[..., None]] = None,
-        on_before_terminate: Optional[Callable[..., None]] = None,
-        metrics_registry: Optional[MetricsRegistry] = None,
+        on_incoming_request: Callable[..., None] | None = None,
+        on_upload_create: Callable[..., dict | None] | None = None,
+        on_upload_complete: Callable[..., dict | None] | None = None,
+        on_upload_terminate: Callable[..., None] | None = None,
+        on_chunk_received: Callable[..., None] | None = None,
+        on_before_terminate: Callable[..., None] | None = None,
+        metrics_registry: MetricsRegistry | None = None,
         metrics_path: str = "/metrics",
-        lock_backend: Optional[LockBackend] = None,
+        lock_backend: LockBackend | None = None,
         lock_ttl_seconds: float = 60.0,
         lock_wait_seconds: float = 5.0,
         checksum_algorithms: tuple[str, ...] = ("sha1",),
         supports_checksum_trailer: bool = False,
         enable_downloads: bool = False,
         behind_proxy: bool = False,
-        location_base_url: Optional[str] = None,
+        location_base_url: str | None = None,
         disable_termination: bool = False,
         disable_concatenation: bool = False,
     ):
@@ -189,7 +189,7 @@ class TusServerCore:
         self.cors_max_age = cors_max_age
         self.cleanup_interval = cleanup_interval
         self.request_timeout = request_timeout
-        self._last_cleanup: Optional[datetime] = None
+        self._last_cleanup: datetime | None = None
         self._cleanup_lock = threading.Lock()
         # Async path uses a non-blocking flag instead of the lock above: holding
         # a threading.Lock across an await would block the event loop (deadlock
@@ -227,7 +227,7 @@ class TusServerCore:
             )
 
     @property
-    def metrics(self) -> Optional[MetricsRegistry]:
+    def metrics(self) -> MetricsRegistry | None:
         return self._metrics
 
     @property
@@ -371,7 +371,7 @@ class TusServerCore:
             await self._locks.release_async(upload_id, token)
 
     def _add_cors_headers(
-        self, headers: dict, origin: Optional[str] = None, preflight: bool = False
+        self, headers: dict, origin: str | None = None, preflight: bool = False
     ) -> dict:
         """Add CORS headers if cors_allow_origins is configured."""
         return add_cors_headers(
@@ -387,7 +387,7 @@ class TusServerCore:
         """Format expiry datetime as RFC 7231 date string."""
         return format_expiry(expires_at)
 
-    def _parse_metadata(self, upload_metadata: str) -> tuple[Optional[dict[str, str]], str]:
+    def _parse_metadata(self, upload_metadata: str) -> tuple[dict[str, str] | None, str]:
         """Parse the Upload-Metadata header value."""
         return parse_metadata(upload_metadata, self._MAX_METADATA_SIZE)
 
@@ -532,7 +532,7 @@ class TusServerCore:
         # Periodically clean up expired uploads after the current request is handled,
         # so the current request still gets 410 for an expired upload before it's deleted
         if self.upload_expiry is not None:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             if (
                 self._last_cleanup is None
                 or (now - self._last_cleanup).total_seconds() >= self.cleanup_interval
@@ -684,7 +684,7 @@ class TusServerCore:
         status, resp_headers, resp_body = result
 
         if self.upload_expiry is not None:
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             if not self._cleanup_running and (
                 self._last_cleanup is None
                 or (now - self._last_cleanup).total_seconds() >= self.cleanup_interval

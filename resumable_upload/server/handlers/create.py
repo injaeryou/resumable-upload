@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 from urllib.parse import urlparse
 
@@ -109,7 +109,7 @@ def _plan_create(
 
     expires_at = None
     if server.upload_expiry is not None:
-        expires_at = datetime.now(timezone.utc) + timedelta(seconds=server.upload_expiry)
+        expires_at = datetime.now(UTC) + timedelta(seconds=server.upload_expiry)
 
     content_type = headers.get("content-type", "")
     write_body = bool(body) and content_type == "application/offset+octet-stream"
@@ -171,7 +171,7 @@ def _plan_create_final(
 
     expires_at = None
     if server.upload_expiry is not None:
-        expires_at = datetime.now(timezone.utc) + timedelta(seconds=server.upload_expiry)
+        expires_at = datetime.now(UTC) + timedelta(seconds=server.upload_expiry)
 
     return _CreateFinalPlan(
         final_id=final_id,

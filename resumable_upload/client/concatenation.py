@@ -4,7 +4,8 @@ Mixed into :class:`TusClient`. Holds the partial-upload + final-creation
 helpers that implement the concatenation extension on the client side.
 """
 
-from typing import IO, Callable, Optional
+from collections.abc import Callable
+from typing import IO
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 
@@ -20,10 +21,10 @@ class ConcatenationMixin(_ClientAttrs):
 
     def create_partial_upload(
         self,
-        file_path: Optional[str] = None,
-        file_stream: Optional[IO] = None,
-        metadata: Optional[dict[str, str]] = None,
-        progress_callback: Optional[Callable[[UploadStats], None]] = None,
+        file_path: str | None = None,
+        file_stream: IO | None = None,
+        metadata: dict[str, str] | None = None,
+        progress_callback: Callable[[UploadStats], None] | None = None,
     ) -> str:
         """Create and fully upload a partial upload (TUS concatenation extension).
 
@@ -77,7 +78,7 @@ class ConcatenationMixin(_ClientAttrs):
     def create_final_upload(
         self,
         partial_urls: list[str],
-        metadata: Optional[dict[str, str]] = None,
+        metadata: dict[str, str] | None = None,
     ) -> str:
         """Create a final upload that concatenates the given partial upload URLs.
 
@@ -113,7 +114,7 @@ class ConcatenationMixin(_ClientAttrs):
 
         try:
             with self._open("POST", self.url, headers) as response:
-                location: Optional[str] = response.headers.get("Location")
+                location: str | None = response.headers.get("Location")
                 if not location:
                     raise TusCommunicationError("Server did not return Location header")
                 if not location.startswith("http"):

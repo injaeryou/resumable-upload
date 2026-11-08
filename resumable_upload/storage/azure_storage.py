@@ -10,8 +10,8 @@ import base64
 import contextlib
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from resumable_upload.storage.base import Storage
 
@@ -45,7 +45,7 @@ class AzureBlobStorage(Storage):
     def __init__(
         self,
         container: str,
-        connection_string: Optional[str] = None,
+        connection_string: str | None = None,
         container_client: Any = None,
         prefix: str = "",
         part_size: int = 8 * 1024 * 1024,
@@ -100,7 +100,7 @@ class AzureBlobStorage(Storage):
     def _get_blob_client(self, key: str):
         return self.container_client.get_blob_client(key)
 
-    def _upload_blob(self, key: str, data: bytes, content_type: Optional[str] = None) -> None:
+    def _upload_blob(self, key: str, data: bytes, content_type: str | None = None) -> None:
         blob = self._get_blob_client(key)
         kwargs: dict[str, Any] = {"overwrite": True}
         if content_type:
@@ -120,7 +120,7 @@ class AzureBlobStorage(Storage):
 
     # -- Info persistence ----------------------------------------------------
 
-    def _read_info(self, upload_id: str) -> Optional[dict]:
+    def _read_info(self, upload_id: str) -> dict | None:
         try:
             raw = self._download_blob(self._info_key(upload_id))
             result: dict = json.loads(raw)
@@ -140,9 +140,9 @@ class AzureBlobStorage(Storage):
     def create_upload(
         self,
         upload_id: str,
-        upload_length: Optional[int],
+        upload_length: int | None,
         metadata: dict[str, str],
-        expires_at: Optional[datetime] = None,
+        expires_at: datetime | None = None,
         is_partial: bool = False,
     ) -> None:
         info = {
@@ -150,7 +150,7 @@ class AzureBlobStorage(Storage):
             "upload_length": upload_length,
             "offset": 0,
             "metadata": metadata,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "expires_at": expires_at.isoformat() if expires_at else None,
             "completed": False,
             "is_partial": is_partial,
@@ -159,7 +159,7 @@ class AzureBlobStorage(Storage):
         }
         self._write_info(upload_id, info)
 
-    def get_upload(self, upload_id: str) -> Optional[dict[str, Any]]:
+    def get_upload(self, upload_id: str) -> dict[str, Any] | None:
         info = self._read_info(upload_id)
         if info is None:
             return None
@@ -169,7 +169,7 @@ class AzureBlobStorage(Storage):
             try:
                 dt = datetime.fromisoformat(info["expires_at"])
                 if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
+                    dt = dt.replace(tzinfo=UTC)
                 expires_at = dt
             except (ValueError, AttributeError):
                 pass
@@ -363,7 +363,7 @@ class AzureBlobStorage(Storage):
         }
 
     def get_expired_uploads(self) -> list[str]:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         expired = []
 
         prefix = f"{self.prefix}/" if self.prefix else ""
@@ -377,7 +377,7 @@ class AzureBlobStorage(Storage):
                 if info.get("expires_at"):
                     dt = datetime.fromisoformat(info["expires_at"])
                     if dt.tzinfo is None:
-                        dt = dt.replace(tzinfo=timezone.utc)
+                        dt = dt.replace(tzinfo=UTC)
                     if dt < now:
                         expired.append(info["upload_id"])
             except (ResourceNotFoundError, json.JSONDecodeError, KeyError):
@@ -397,7 +397,7 @@ class AzureBlobStorage(Storage):
         partial_ids: list[str],
         metadata: dict[str, str],
         *,
-        expires_at: Optional[datetime] = None,
+        expires_at: datetime | None = None,
     ) -> int:
         """Merge partial uploads into a final Azure blob via block staging.
 
@@ -438,7 +438,7 @@ class AzureBlobStorage(Storage):
                 "upload_length": total_length,
                 "offset": total_length,
                 "metadata": metadata,
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
                 "expires_at": expires_at.isoformat() if expires_at else None,
                 "completed": True,
                 "is_partial": False,

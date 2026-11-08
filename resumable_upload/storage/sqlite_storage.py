@@ -6,8 +6,8 @@ import logging
 import os
 import sqlite3
 import threading
-from datetime import datetime, timezone
-from typing import Any, BinaryIO, Optional
+from datetime import UTC, datetime
+from typing import Any, BinaryIO
 
 from resumable_upload.storage.base import Storage
 
@@ -116,16 +116,16 @@ class SQLiteStorage(Storage):
     def create_upload(
         self,
         upload_id: str,
-        upload_length: Optional[int],
+        upload_length: int | None,
         metadata: dict[str, str],
-        expires_at: Optional[datetime] = None,
+        expires_at: datetime | None = None,
         is_partial: bool = False,
     ) -> None:
         """Create a new upload entry. ``upload_length=None`` enables defer-length."""
         stored_length = self._DEFERRED_LENGTH_SENTINEL if upload_length is None else upload_length
         conn = sqlite3.connect(self.db_path, timeout=self.timeout)
         try:
-            expires_at_str = expires_at.astimezone(timezone.utc).isoformat() if expires_at else None
+            expires_at_str = expires_at.astimezone(UTC).isoformat() if expires_at else None
             conn.execute(
                 """
                 INSERT INTO uploads (
@@ -154,7 +154,7 @@ class SQLiteStorage(Storage):
             self.delete_upload(upload_id)
             raise
 
-    def get_upload(self, upload_id: str) -> Optional[dict[str, Any]]:
+    def get_upload(self, upload_id: str) -> dict[str, Any] | None:
         """Get upload information."""
         conn = sqlite3.connect(self.db_path, timeout=self.timeout)
         try:
@@ -173,7 +173,7 @@ class SQLiteStorage(Storage):
             try:
                 dt = datetime.fromisoformat(raw_expires)
                 if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
+                    dt = dt.replace(tzinfo=UTC)
                 expires_at = dt
             except (ValueError, AttributeError):
                 pass
@@ -326,9 +326,9 @@ class SQLiteStorage(Storage):
     def _create_final_row(
         self,
         final_id: str,
-        upload_length: Optional[int],
+        upload_length: int | None,
         metadata: dict[str, str],
-        expires_at: Optional[datetime],
+        expires_at: datetime | None,
         partial_ids: list[str],
     ) -> None:
         """Create a final upload's row atomically, source partials included.
@@ -337,7 +337,7 @@ class SQLiteStorage(Storage):
         concat_partial_ids (which HEAD echo and later assembly both need).
         """
         stored_length = self._DEFERRED_LENGTH_SENTINEL if upload_length is None else upload_length
-        expires_at_str = expires_at.astimezone(timezone.utc).isoformat() if expires_at else None
+        expires_at_str = expires_at.astimezone(UTC).isoformat() if expires_at else None
         conn = sqlite3.connect(self.db_path, timeout=self.timeout)
         try:
             conn.execute(
@@ -391,9 +391,9 @@ class SQLiteStorage(Storage):
         partial_ids: list[str],
         metadata: dict[str, str],
         *,
-        expires_at: Optional[datetime] = None,
+        expires_at: datetime | None = None,
         allow_unfinished: bool = False,
-    ) -> Optional[int]:
+    ) -> int | None:
         """Concatenate partial uploads into a single final upload.
 
         Validates every partial up front (exists, is_partial) before creating
@@ -444,9 +444,7 @@ class SQLiteStorage(Storage):
             conn.close()
         return [row[0] for row in rows]
 
-    def try_assemble_final(
-        self, final_id: str, *, max_total: Optional[int] = None
-    ) -> Optional[int]:
+    def try_assemble_final(self, final_id: str, *, max_total: int | None = None) -> int | None:
         final = self.get_upload(final_id)
         if not final or final["completed"] or not final.get("concat_partial_ids"):
             return None
@@ -518,7 +516,7 @@ class SQLiteStorage(Storage):
         """Get list of expired upload IDs."""
         conn = sqlite3.connect(self.db_path, timeout=self.timeout)
         try:
-            now = datetime.now(timezone.utc).isoformat()
+            now = datetime.now(UTC).isoformat()
             cursor = conn.execute(
                 "SELECT upload_id FROM uploads WHERE expires_at IS NOT NULL AND expires_at < ?",
                 (now,),

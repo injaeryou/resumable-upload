@@ -3,7 +3,7 @@
 import os
 import shutil
 import tempfile
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -175,7 +175,7 @@ class TestConcatenation:
         _fill(storage, p1, b"foo", is_partial=True)
         _fill(storage, p2, b"bar", is_partial=True)
 
-        expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+        expires_at = datetime.now(UTC) + timedelta(hours=1)
         final_id = "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
         storage.concatenate_uploads(
             final_id=final_id,
