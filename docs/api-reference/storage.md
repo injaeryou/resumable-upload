@@ -32,7 +32,7 @@ The cloud backends (`S3Storage`, `GCSStorage`, `AzureBlobStorage`) implement the
 
 ### Deferred Length
 
-The default implementation of `set_upload_length(upload_id, upload_length)` raises `NotImplementedError`. `SQLiteStorage` (and the cloud backends) override it to commit the final length when the client sends `Upload-Defer-Length: 1` at creation and follows up with `Upload-Length: N` on the first PATCH.
+The default implementation of `set_upload_length(upload_id, upload_length)` raises `NotImplementedError`. `SQLiteStorage` (and the cloud backends) override it to commit the final length when the client sends `Upload-Defer-Length: 1` at creation and later sends `Upload-Length: N` on a PATCH — the first one, or a later one after data PATCHes that carried no length.
 
 ### Custom Storage Backends
 

@@ -99,13 +99,13 @@ class TestDeferLengthServer:
         assert h["Upload-Length"] == "5"
         assert "Upload-Defer-Length" not in h
 
-    def test_patch_without_length_on_deferred_upload_fails(self, server):
-        """Deferred upload requires Upload-Length on the first PATCH."""
+    def test_patch_without_length_on_deferred_upload_is_accepted(self, server):
+        """The length may arrive on a later PATCH; until then HEAD still defers."""
         status, headers, _ = server.handle_request(
             "POST", "/files", _h(**{"Upload-Defer-Length": "1"}), b""
         )
         location = headers["Location"]
-        status, _, body = server.handle_request(
+        status, h, _ = server.handle_request(
             "PATCH",
             location,
             _h(
@@ -116,8 +116,13 @@ class TestDeferLengthServer:
             ),
             b"hello",
         )
-        assert status == 400
-        assert b"Upload-Length" in body
+        assert status == 204
+        assert h["Upload-Offset"] == "5"
+
+        status, h, _ = server.handle_request("HEAD", location, _h(), b"")
+        assert h["Upload-Offset"] == "5"
+        assert h["Upload-Defer-Length"] == "1"
+        assert "Upload-Length" not in h
 
     def test_cannot_change_length_after_commit(self, server):
         status, headers, _ = server.handle_request(
