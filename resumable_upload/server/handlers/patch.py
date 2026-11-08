@@ -29,7 +29,7 @@ class _PatchPlan:
 
     expected_offset: int
     new_offset: int
-    effective_length: int
+    effective_length: int | None  # None: deferred length not committed yet
     commit_length: int | None
     expires_at: datetime | None
 
@@ -67,15 +67,13 @@ def _plan_patch(
         logger.error("Invalid Content-Type: %s", content_type)
         return server._error_response(415, "Invalid Content-Type")
 
-    # Upload-Defer-Length: commit the final length on the first PATCH.
+    # Upload-Defer-Length: the client sends Upload-Length on whichever PATCH
+    # comes once it knows the length (tus-js-client: the last one); until
+    # then data PATCHes carry no length.
     commit_length: int | None = None
-    effective_length = upload["upload_length"]
+    effective_length: int | None = upload["upload_length"]
     patch_upload_length = headers.get("upload-length")
-    if effective_length is None:
-        if not patch_upload_length:
-            return server._error_response(
-                400, "Upload-Length header required for deferred-length PATCH"
-            )
+    if effective_length is None and patch_upload_length is not None:
         try:
             commit_length = int(patch_upload_length)
         except ValueError:
@@ -84,6 +82,8 @@ def _plan_patch(
             return server._error_response(400, "Upload-Length must not be negative")
         if server.max_size > 0 and commit_length > server.max_size:
             return server._error_response(413, "Upload exceeds maximum size")
+        if commit_length < upload["offset"]:
+            return server._error_response(400, "Upload-Length smaller than current offset")
         effective_length = commit_length
     elif patch_upload_length is not None:
         # Length already committed: reject attempts to change it.
@@ -139,7 +139,11 @@ def _plan_patch(
             return server._error_response(460, "Checksum mismatch")
 
     new_offset = upload_offset + len(body)
-    if new_offset > effective_length:
+    if effective_length is None:
+        # Length still unknown: Tus-Max-Size caps the bytes received so far.
+        if server.max_size > 0 and new_offset > server.max_size:
+            return server._error_response(413, "Upload exceeds maximum size")
+    elif new_offset > effective_length:
         logger.error(
             "Chunk exceeds upload length: %s > %s",
             new_offset,
@@ -314,14 +318,15 @@ def handle_patch(
     if not isinstance(plan, _PatchPlan):
         return plan
 
-    if plan.commit_length is not None:
-        server.storage.set_upload_length(upload_id, plan.commit_length)
-
     # Write chunk then atomically advance offset. If another concurrent request
     # already advanced the offset, return 409.
     server.storage.write_chunk(upload_id, plan.expected_offset, body)
     if not server.storage.update_offset_atomic(upload_id, plan.expected_offset, plan.new_offset):
         return server._error_response(409, "Concurrent write conflict; use HEAD to re-sync")
+    # Commit a deferred length only after winning the offset swap: a losing
+    # PATCH must not leave its length behind for the winner's bytes.
+    if plan.commit_length is not None:
+        server.storage.set_upload_length(upload_id, plan.commit_length)
 
     if server._metrics is not None:
         server._metrics.inc("tusd_bytes_received_total", value=len(body))
@@ -339,7 +344,11 @@ def handle_patch(
     )
 
     completion_result = None
-    if plan.new_offset >= plan.effective_length and server.storage.complete_upload(upload_id):
+    if (
+        plan.effective_length is not None
+        and plan.new_offset >= plan.effective_length
+        and server.storage.complete_upload(upload_id)
+    ):
         if server._metrics is not None:
             server._metrics.inc("tusd_uploads_finished_total")
         # Concatenation partials never fire on_upload_complete individually;
@@ -378,14 +387,13 @@ async def handle_patch_async(
     if not isinstance(plan, _PatchPlan):
         return plan
 
-    if plan.commit_length is not None:
-        await server.storage.set_upload_length_async(upload_id, plan.commit_length)
-
     await server.storage.write_chunk_async(upload_id, plan.expected_offset, body)
     if not await server.storage.update_offset_atomic_async(
         upload_id, plan.expected_offset, plan.new_offset
     ):
         return server._error_response(409, "Concurrent write conflict; use HEAD to re-sync")
+    if plan.commit_length is not None:
+        await server.storage.set_upload_length_async(upload_id, plan.commit_length)
 
     if server._metrics is not None:
         server._metrics.inc("tusd_bytes_received_total", value=len(body))
@@ -403,8 +411,10 @@ async def handle_patch_async(
     )
 
     completion_result = None
-    if plan.new_offset >= plan.effective_length and await server.storage.complete_upload_async(
-        upload_id
+    if (
+        plan.effective_length is not None
+        and plan.new_offset >= plan.effective_length
+        and await server.storage.complete_upload_async(upload_id)
     ):
         if server._metrics is not None:
             server._metrics.inc("tusd_uploads_finished_total")

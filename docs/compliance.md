@@ -9,7 +9,7 @@ Compliance status against the [TUS resumable upload protocol v1.0.0](https://tus
 | **core** | ✅ Implemented | POST / HEAD / PATCH, offset tracking, version negotiation |
 | **creation** | ✅ Implemented | Upload creation via POST with `Upload-Length` |
 | **creation-with-upload** | ✅ Implemented | Initial data in POST body (`Content-Type: application/offset+octet-stream`) |
-| **creation-defer-length** | ✅ Implemented | `Upload-Defer-Length: 1` on POST; final length committed on the first PATCH via `Upload-Length` |
+| **creation-defer-length** | ✅ Implemented | `Upload-Defer-Length: 1` on POST; PATCHes may carry data without `Upload-Length` until one commits it (e.g. tus-js-client sends it on the last chunk); `Tus-Max-Size` caps the bytes received while the length is unknown (`413`) |
 | **termination** | ✅ Implemented | Upload deletion via DELETE |
 | **checksum** | ✅ Implemented | Configurable algorithms (`sha1`, `sha256`, `sha512`, `md5`); server advertises every enabled algorithm in `Tus-Checksum-Algorithm` |
 | **checksum-trailer** | ✅ Implemented (bundled transport) | `Upload-Checksum` accepted as an HTTP trailer on chunked requests. Trailer parsing is transport-level: the bundled `TusHTTPRequestHandler` (and the `resumable-upload serve` CLI) does it and merges the trailer into the headers before dispatch. Advertised only when `TusServer(supports_checksum_trailer=True)` — set it if your own transport does the same; ASGI/framework adapters don't yet. |

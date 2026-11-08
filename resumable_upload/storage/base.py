@@ -40,8 +40,8 @@ class Storage(ABC):
         Args:
             upload_length: Total byte size. ``None`` marks the upload as
                 deferred-length (Upload-Defer-Length extension); the final
-                length is committed on the first PATCH via
-                :meth:`set_upload_length`.
+                length is committed by the PATCH that carries Upload-Length
+                via :meth:`set_upload_length`.
             is_partial: If True, this upload is a partial upload that will be
                 consumed by a final concatenation request. Partial uploads are
                 never delivered to the on_upload_complete hook individually.

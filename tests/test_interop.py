@@ -455,6 +455,14 @@ class TestServerAgainstTusJs:
         assert result.returncode == 0, result.stderr
         assert result.stdout.startswith("OK resume ")
 
+    def test_js_deferred_length(self, ours_server):
+        # uploadLengthDeferred sends data PATCHes without Upload-Length and
+        # commits the length only on the last one.
+        base_url, _ = ours_server
+        result = self._run_lane3(base_url, "deferred")
+        assert result.returncode == 0, result.stderr
+        assert result.stdout.startswith("OK deferred ")
+
 
 @pytest.mark.skipif(
     not HAS_TUS_PY,

@@ -6,7 +6,9 @@
 //   metadata:  upload with metadata, verify HEAD echoes Upload-Metadata
 //   smallchunk: upload with a tiny chunkSize (many PATCHes)
 //   resume:    upload one chunk, abort, resume via uploadUrl, verify bytes
+//   deferred:  stream with uploadLengthDeferred (length sent on the last PATCH)
 import crypto from "node:crypto";
+import { Readable } from "node:stream";
 import * as tus from "tus-js-client";
 
 const [endpoint, sizeStr, mode = "roundtrip"] = process.argv.slice(2);
@@ -89,6 +91,26 @@ if (mode === "terminate") {
   });
   if ((await downloadSha(url)) !== sha) throw new Error("resume sha mismatch");
   console.log("OK resume " + url);
+} else if (mode === "deferred") {
+  // A stream of unknown size: tus-js-client PATCHes without Upload-Length
+  // and only declares the length on the PATCH that carries the last byte.
+  // Feed it in pieces — one big buffer would end the stream on the first
+  // read, letting the client send the length up front in a single PATCH.
+  const pieces = [];
+  for (let i = 0; i < data.length; i += 64 * 1024) pieces.push(data.subarray(i, i + 64 * 1024));
+  const url = await new Promise((resolve, reject) => {
+    const up = new tus.Upload(Readable.from(pieces), {
+      endpoint,
+      chunkSize: 256 * 1024,
+      uploadLengthDeferred: true,
+      retryDelays: [],
+      onSuccess: () => resolve(up.url),
+      onError: reject,
+    });
+    up.start();
+  });
+  if ((await downloadSha(url)) !== sha) throw new Error("deferred sha mismatch");
+  console.log("OK deferred " + url);
 } else {
   const upload = await makeUpload();
   const head = await fetch(upload.url, { method: "HEAD", headers: HEAD_HEADERS });

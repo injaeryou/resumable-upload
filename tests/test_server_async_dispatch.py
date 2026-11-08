@@ -17,6 +17,7 @@ from typing import Any
 import pytest
 
 from resumable_upload.server import TusServer
+from resumable_upload.server.handlers.patch import handle_patch
 from resumable_upload.storage import SQLiteStorage
 
 
@@ -193,6 +194,97 @@ def test_defer_length_commits_on_first_patch(server, dispatch):
         b"abc",
     )
     assert status == 204
+    assert headers["Upload-Offset"] == "3"
+
+
+def _deferred_patch(server, dispatch, location, offset, body, length=None):
+    headers = {"Upload-Offset": str(offset), "Content-Type": "application/offset+octet-stream"}
+    if length is not None:
+        headers["Upload-Length"] = str(length)
+    return dispatch(server, "PATCH", location, _h(**headers), body)
+
+
+def test_defer_length_commits_on_a_later_patch(server, dispatch):
+    # tus-js-client uploadLengthDeferred: data first, length on the last PATCH.
+    _, post_headers, _ = dispatch(server, "POST", "/files", _h(**{"Upload-Defer-Length": "1"}), b"")
+    location = post_headers["Location"]
+    upload_id = location.rsplit("/", 1)[1]
+
+    status, headers, _ = _deferred_patch(server, dispatch, location, 0, b"abc")
+    assert status == 204
+    assert headers["Upload-Offset"] == "3"
+    assert server.storage.get_upload(upload_id)["completed"] is False
+
+    status, headers, _ = _deferred_patch(server, dispatch, location, 3, b"de", length=5)
+    assert status == 204
+    assert headers["Upload-Offset"] == "5"
+    stored = server.storage.get_upload(upload_id)
+    assert stored["upload_length"] == 5
+    assert stored["completed"] is True
+
+
+def test_defer_length_rejects_length_below_received_bytes(server, dispatch):
+    _, post_headers, _ = dispatch(server, "POST", "/files", _h(**{"Upload-Defer-Length": "1"}), b"")
+    location = post_headers["Location"]
+    upload_id = location.rsplit("/", 1)[1]
+    _deferred_patch(server, dispatch, location, 0, b"abcd")
+
+    status, _, body = _deferred_patch(server, dispatch, location, 4, b"", length=2)
+    assert status == 400
+    assert b"smaller than" in body
+    assert server.storage.get_upload(upload_id)["upload_length"] is None
+
+
+def test_defer_length_not_committed_by_a_patch_that_loses_the_offset_race(server, dispatch):
+    # B (commits Upload-Length) and A (no length) PATCH at the same offset; A's
+    # compare-and-swap lands first. B must 409 without committing its length,
+    # else the upload sits at offset == length but never completes.
+    _, post_headers, _ = dispatch(server, "POST", "/files", _h(**{"Upload-Defer-Length": "1"}), b"")
+    location = post_headers["Location"]
+    upload_id = location.rsplit("/", 1)[1]
+    storage = server.storage
+    real_cas = storage.update_offset_atomic
+
+    def cas_after_a_wins(uid, expected, new):
+        storage.update_offset_atomic = real_cas
+        # A runs on another worker: call the handler directly, past the
+        # per-process upload lock that would otherwise serialize the two.
+        status, _, _ = handle_patch(
+            server,
+            uid,
+            {"upload-offset": "0", "content-type": "application/offset+octet-stream"},
+            b"abc",
+        )
+        assert status == 204
+        return real_cas(uid, expected, new)
+
+    storage.update_offset_atomic = cas_after_a_wins
+    status, _, _ = _deferred_patch(server, dispatch, location, 0, b"abc", length=3)
+    assert status == 409
+    stored = storage.get_upload(upload_id)
+    assert stored["upload_length"] is None
+    assert stored["offset"] == 3
+
+    # The client re-syncs via HEAD and commits the length with an empty PATCH.
+    status, headers, _ = dispatch(server, "HEAD", location, _h(), b"")
+    assert headers["Upload-Defer-Length"] == "1"
+    status, _, _ = _deferred_patch(server, dispatch, location, 3, b"", length=3)
+    assert status == 204
+    assert storage.get_upload(upload_id)["completed"] is True
+
+
+def test_defer_length_enforces_max_size_before_length_is_known(server, dispatch):
+    # Mirrors tusd v2.10.1: an uncommitted length must not let bytes pile up
+    # past Tus-Max-Size.
+    server.max_size = 4
+    _, post_headers, _ = dispatch(server, "POST", "/files", _h(**{"Upload-Defer-Length": "1"}), b"")
+    location = post_headers["Location"]
+
+    status, headers, _ = _deferred_patch(server, dispatch, location, 0, b"abc")
+    assert status == 204
+    status, _, _ = _deferred_patch(server, dispatch, location, 3, b"de")
+    assert status == 413
+    status, headers, _ = dispatch(server, "HEAD", location, _h(), b"")
     assert headers["Upload-Offset"] == "3"
 
 
