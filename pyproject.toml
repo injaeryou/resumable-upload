@@ -48,7 +48,9 @@ dev = [
     "ruff>=0.1.0",
     "pre-commit>=3.0.0",
     "tox>=4.0.0",
-    "ty>=0.0.28",
+    # pre-1.0: rule names change between releases; bump on purpose. Past 0.0.91,
+    # rename [tool.ty.rules] unresolved-import -> import-not-found in the same change.
+    "ty==0.0.91",
     "moto[s3]>=5.0",
     "fakeredis>=2.0",
     "lupa>=2.0",
