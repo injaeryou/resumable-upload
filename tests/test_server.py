@@ -4,7 +4,7 @@ import os
 import shutil
 import tempfile
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -336,7 +336,7 @@ class TestTusServer:
         server = TusServer(storage=storage, upload_expiry=3600)
         upload_id = str(uuid.uuid4())
         # Create with a past expiry
-        past = datetime.now(timezone.utc) - timedelta(seconds=1)
+        past = datetime.now(UTC) - timedelta(seconds=1)
         storage.create_upload(upload_id, 100, {}, expires_at=past)
 
         headers = {
@@ -454,7 +454,7 @@ class TestTusServer:
         server = TusServer(storage=storage, upload_expiry=1, cleanup_interval=0)
 
         upload_id = str(uuid.uuid4())
-        past = datetime.now(timezone.utc) - timedelta(seconds=2)
+        past = datetime.now(UTC) - timedelta(seconds=2)
         storage.create_upload(upload_id, 100, {}, expires_at=past)
 
         # Any request triggers cleanup after processing
@@ -486,7 +486,7 @@ class TestTusServer:
         """PATCH response includes Upload-Expires header when upload has expiry."""
         server = TusServer(storage=storage, upload_expiry=3600)
         upload_id = str(uuid.uuid4())
-        future = datetime.now(timezone.utc) + timedelta(hours=1)
+        future = datetime.now(UTC) + timedelta(hours=1)
         storage.create_upload(upload_id, 100, {}, expires_at=future)
 
         headers = {
@@ -572,7 +572,7 @@ class TestTusServer:
         """HEAD on expired upload returns 410 Gone."""
         server = TusServer(storage=storage, upload_expiry=3600)
         upload_id = str(uuid.uuid4())
-        past = datetime.now(timezone.utc) - timedelta(seconds=1)
+        past = datetime.now(UTC) - timedelta(seconds=1)
         storage.create_upload(upload_id, 100, {}, expires_at=past)
 
         status, resp_headers, _ = server.handle_request(

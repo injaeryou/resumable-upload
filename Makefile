@@ -55,7 +55,7 @@ test:
 	$(RUN) pytest --cov=resumable_upload --cov-report=term --cov-report=html
 
 test-all-versions:
-	@echo "Testing on all Python versions (3.9, 3.10, 3.11, 3.12, 3.13, 3.14)..."
+	@echo "Testing on all Python versions (3.11, 3.12, 3.13, 3.14, 3.15)..."
 	@echo "This requires tox to be installed: pip install tox"
 	$(RUN) tox
 

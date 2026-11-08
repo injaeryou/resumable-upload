@@ -9,8 +9,8 @@ Requires google-cloud-storage: pip install resumable-upload[gcs]
 import contextlib
 import json
 import logging
-from datetime import datetime, timezone
-from typing import Any, Optional
+from datetime import UTC, datetime
+from typing import Any
 
 from resumable_upload.storage.base import Storage
 
@@ -86,7 +86,7 @@ class GCSStorage(Storage):
 
     # -- Info persistence ----------------------------------------------------
 
-    def _read_info(self, upload_id: str) -> Optional[dict]:
+    def _read_info(self, upload_id: str) -> dict | None:
         try:
             blob = self.gcs_bucket.blob(self._info_key(upload_id))
             raw = blob.download_as_bytes()
@@ -107,9 +107,9 @@ class GCSStorage(Storage):
     def create_upload(
         self,
         upload_id: str,
-        upload_length: Optional[int],
+        upload_length: int | None,
         metadata: dict[str, str],
-        expires_at: Optional[datetime] = None,
+        expires_at: datetime | None = None,
         is_partial: bool = False,
     ) -> None:
         info = {
@@ -117,7 +117,7 @@ class GCSStorage(Storage):
             "upload_length": upload_length,
             "offset": 0,
             "metadata": metadata,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "expires_at": expires_at.isoformat() if expires_at else None,
             "completed": False,
             "is_partial": is_partial,
@@ -126,7 +126,7 @@ class GCSStorage(Storage):
         }
         self._write_info(upload_id, info)
 
-    def get_upload(self, upload_id: str) -> Optional[dict[str, Any]]:
+    def get_upload(self, upload_id: str) -> dict[str, Any] | None:
         info = self._read_info(upload_id)
         if info is None:
             return None
@@ -136,7 +136,7 @@ class GCSStorage(Storage):
             try:
                 dt = datetime.fromisoformat(info["expires_at"])
                 if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
+                    dt = dt.replace(tzinfo=UTC)
                 expires_at = dt
             except (ValueError, AttributeError):
                 pass
@@ -394,7 +394,7 @@ class GCSStorage(Storage):
         }
 
     def get_expired_uploads(self) -> list[str]:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         expired = []
 
         prefix = f"{self.prefix}/" if self.prefix else ""
@@ -408,7 +408,7 @@ class GCSStorage(Storage):
                 if info.get("expires_at"):
                     dt = datetime.fromisoformat(info["expires_at"])
                     if dt.tzinfo is None:
-                        dt = dt.replace(tzinfo=timezone.utc)
+                        dt = dt.replace(tzinfo=UTC)
                     if dt < now:
                         expired.append(info["upload_id"])
             except (NotFound, json.JSONDecodeError, KeyError):
@@ -428,7 +428,7 @@ class GCSStorage(Storage):
         partial_ids: list[str],
         metadata: dict[str, str],
         *,
-        expires_at: Optional[datetime] = None,
+        expires_at: datetime | None = None,
     ) -> int:
         """Merge partial uploads into a final GCS object via ``compose``.
 
@@ -471,7 +471,7 @@ class GCSStorage(Storage):
                 "upload_length": total_length,
                 "offset": total_length,
                 "metadata": metadata,
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
                 "expires_at": expires_at.isoformat() if expires_at else None,
                 "completed": True,
                 "is_partial": False,

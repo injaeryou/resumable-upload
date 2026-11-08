@@ -1,7 +1,6 @@
 """SQLite-backed URL storage."""
 
 import sqlite3
-from typing import Optional
 
 from resumable_upload.url_storage.base import URLStorage
 
@@ -31,7 +30,7 @@ class SQLiteURLStorage(URLStorage):
         finally:
             conn.close()
 
-    def get_url(self, fingerprint: str) -> Optional[str]:
+    def get_url(self, fingerprint: str) -> str | None:
         conn = sqlite3.connect(self.db_path, timeout=self.timeout)
         try:
             cur = conn.execute("SELECT url FROM url_map WHERE fingerprint = ?", (fingerprint,))

@@ -25,7 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from resumable_upload.storage import Storage
@@ -105,7 +105,7 @@ class AsyncDictStorage(Storage):
         return bytes(self._blobs[upload_id])
 
     def _do_expired(self) -> list[str]:
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         return [
             uid
             for uid, rec in self._records.items()

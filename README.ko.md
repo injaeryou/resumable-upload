@@ -18,7 +18,7 @@
 - 🔁 **재시도 로직**: 지수 백오프를 사용한 내장 자동 재시도
 - 📊 **진행률 추적**: `UploadStats` 콜백으로 상세한 업로드 진행률 제공
 - 🌐 **웹 프레임워크 지원**: Flask, FastAPI, Django 통합
-- 🐍 **Python 3.9+**: Python 3.9부터 3.14까지 지원
+- 🐍 **Python 3.11+**: Python 3.11부터 3.15까지 지원
 - 🏪 **스토리지 백엔드**: 기본 SQLite, 선택 extras로 S3 · Google Cloud Storage · Azure Blob Storage (커스텀 백엔드로 확장 가능)
 - 🔐 **TLS 지원**: 인증서 검증 제어 및 mTLS 인증
 - 📝 **URL 스토리지**: 세션 간 업로드 URL 유지
@@ -310,7 +310,7 @@ make test-minimal      # 최소 테스트 (웹 프레임워크 제외)
 make test              # 전체 테스트
 make lint              # 린팅
 make format            # 코드 포맷팅
-make test-all-versions # 모든 Python 버전 테스트 (3.9-3.14, tox 필요)
+make test-all-versions # 모든 Python 버전 테스트 (3.11-3.15, tox 필요)
 make ci                # 전체 CI 검사 (린팅 + 포맷팅 + 테스트)
 make interop           # 구현체 간 호환성 테스트 (아래 참고)
 ```

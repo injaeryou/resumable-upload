@@ -4,7 +4,7 @@ Mixed into :class:`TusClient`. Lives in its own module so the client class
 file stays focused on upload orchestration.
 """
 
-from typing import Any, Optional, Union
+from typing import Any
 from urllib.error import HTTPError, URLError
 
 from resumable_upload.client import _protocol
@@ -105,7 +105,7 @@ class ProtocolMixin(_ClientAttrs):
                 status_code=e.code if isinstance(e, HTTPError) else None,
             ) from e
 
-    def get_server_info(self) -> dict[str, Union[str, list[str], Optional[int]]]:
+    def get_server_info(self) -> dict[str, str | list[str] | int | None]:
         """Get server information and capabilities via OPTIONS request.
 
         Returns:

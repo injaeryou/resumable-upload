@@ -1,14 +1,13 @@
 """URL storage abstract base class."""
 
 from abc import ABC, abstractmethod
-from typing import Optional
 
 
 class URLStorage(ABC):
     """Abstract interface for URL storage implementations."""
 
     @abstractmethod
-    def get_url(self, fingerprint: str) -> Optional[str]:
+    def get_url(self, fingerprint: str) -> str | None:
         """
         Retrieve upload URL for a given file fingerprint.
 

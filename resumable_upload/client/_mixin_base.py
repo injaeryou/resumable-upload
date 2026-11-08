@@ -7,7 +7,8 @@ the concrete ``TusClient.__init__``; this module only declares the shape.
 """
 
 import ssl
-from typing import IO, Any, Callable, Optional, Union
+from collections.abc import Callable
+from typing import IO, Any
 from urllib.request import Request, urlopen
 
 from resumable_upload.client.stats import UploadStats
@@ -28,41 +29,41 @@ class _ClientAttrs:
 
     url: str
     chunk_size: int
-    checksum: Union[bool, str]
+    checksum: bool | str
     verify_tls_cert: bool
     metadata_encoding: str
     store_url: bool
-    url_storage: Optional[URLStorage]
+    url_storage: URLStorage | None
     fingerprinter: Fingerprint
     headers: dict[str, str]
     max_retries: int
     retry_delay: float
     timeout: float
-    before_request: Optional[Callable[[str, str, dict[str, str]], None]]
-    after_response: Optional[Callable[[str, str, int], None]]
-    on_should_retry: Optional[Callable[[Exception, int], bool]]
+    before_request: Callable[[str, str, dict[str, str]], None] | None
+    after_response: Callable[[str, str, int], None] | None
+    on_should_retry: Callable[[Exception, int], bool] | None
     override_patch_method: bool
     add_request_id: bool
-    on_upload_url_available: Optional[Callable[[str], None]]
-    ssl_context: Optional[ssl.SSLContext]
+    on_upload_url_available: Callable[[str], None] | None
+    ssl_context: ssl.SSLContext | None
 
     def upload_file(
         self,
-        file_path: Optional[str] = None,
-        file_stream: Optional[IO] = None,
-        metadata: Optional[dict[str, str]] = None,
-        progress_callback: Optional[Callable[[UploadStats], None]] = None,
-        stop_at: Optional[int] = None,
+        file_path: str | None = None,
+        file_stream: IO | None = None,
+        metadata: dict[str, str] | None = None,
+        progress_callback: Callable[[UploadStats], None] | None = None,
+        stop_at: int | None = None,
         parallel_uploads: int = 1,
-        metadata_for_partial_uploads: Optional[dict[str, str]] = None,
+        metadata_for_partial_uploads: dict[str, str] | None = None,
     ) -> str:
         raise NotImplementedError
 
-    def get_file_size(self, file_source: Union[str, IO]) -> int:
+    def get_file_size(self, file_source: str | IO) -> int:
         raise NotImplementedError
 
     def _open(
-        self, method: str, url: str, headers: dict[str, str], data: Optional[bytes] = None
+        self, method: str, url: str, headers: dict[str, str], data: bytes | None = None
     ) -> Any:
         """``urlopen`` with the observability hooks around it.
 
@@ -86,8 +87,8 @@ class _ClientAttrs:
         self,
         file_size: int,
         metadata: dict[str, str],
-        initial_data: Optional[bytes] = None,
-        extra_headers: Optional[dict[str, str]] = None,
+        initial_data: bytes | None = None,
+        extra_headers: dict[str, str] | None = None,
         defer_length: bool = False,
     ) -> str:
         raise NotImplementedError
@@ -98,6 +99,6 @@ class _ClientAttrs:
     def create_final_upload(
         self,
         partial_urls: list[str],
-        metadata: Optional[dict[str, str]] = None,
+        metadata: dict[str, str] | None = None,
     ) -> str:
         raise NotImplementedError

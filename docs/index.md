@@ -22,7 +22,7 @@ A Python implementation of the [TUS resumable upload protocol](https://tus.io/) 
 - **Client Hooks** — `before_request`, `after_response`, `on_should_retry` for observability and retry gating
 - **Cross-Session Resume** — three URL-storage backends (`FileURLStorage`, `SQLiteURLStorage`, `InMemoryURLStorage`)
 - **`X-HTTP-Method-Override`** — POST tunneling of PATCH/DELETE/HEAD for environments that block those methods
-- **Python 3.9+** — tested on 3.9 through 3.14
+- **Python 3.11+** — tested on 3.11 through 3.15
 
 ## Installation
 

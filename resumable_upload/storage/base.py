@@ -4,7 +4,7 @@ import asyncio
 import io
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any, BinaryIO, Optional
+from typing import Any, BinaryIO
 
 
 class Storage(ABC):
@@ -30,9 +30,9 @@ class Storage(ABC):
     def create_upload(
         self,
         upload_id: str,
-        upload_length: Optional[int],
+        upload_length: int | None,
         metadata: dict[str, str],
-        expires_at: Optional[datetime] = None,
+        expires_at: datetime | None = None,
         is_partial: bool = False,
     ) -> None:
         """Create a new upload entry.
@@ -56,7 +56,7 @@ class Storage(ABC):
         raise NotImplementedError(f"{type(self).__name__} does not support deferred-length uploads")
 
     @abstractmethod
-    def get_upload(self, upload_id: str) -> Optional[dict[str, Any]]:
+    def get_upload(self, upload_id: str) -> dict[str, Any] | None:
         """Get upload information."""
         pass
 
@@ -146,8 +146,8 @@ class Storage(ABC):
         partial_ids: list[str],
         metadata: dict[str, str],
         *,
-        expires_at: Optional[datetime] = None,
-    ) -> Optional[int]:
+        expires_at: datetime | None = None,
+    ) -> int | None:
         """Create a final upload by concatenating completed partial uploads.
 
         Implementations should persist ``partial_ids`` on the final upload
@@ -188,9 +188,7 @@ class Storage(ABC):
         """
         return []
 
-    def try_assemble_final(
-        self, final_id: str, *, max_total: Optional[int] = None
-    ) -> Optional[int]:
+    def try_assemble_final(self, final_id: str, *, max_total: int | None = None) -> int | None:
         """Assemble a pending final upload if all its partials are complete.
 
         Returns the total byte length when assembly happened, or ``None``
@@ -215,9 +213,9 @@ class Storage(ABC):
     async def create_upload_async(
         self,
         upload_id: str,
-        upload_length: Optional[int],
+        upload_length: int | None,
         metadata: dict[str, str],
-        expires_at: Optional[datetime] = None,
+        expires_at: datetime | None = None,
         is_partial: bool = False,
     ) -> None:
         await asyncio.to_thread(
@@ -232,7 +230,7 @@ class Storage(ABC):
     async def set_upload_length_async(self, upload_id: str, upload_length: int) -> None:
         await asyncio.to_thread(self.set_upload_length, upload_id, upload_length)
 
-    async def get_upload_async(self, upload_id: str) -> Optional[dict[str, Any]]:
+    async def get_upload_async(self, upload_id: str) -> dict[str, Any] | None:
         return await asyncio.to_thread(self.get_upload, upload_id)
 
     async def update_offset_async(self, upload_id: str, offset: int) -> None:
@@ -272,9 +270,9 @@ class Storage(ABC):
         partial_ids: list[str],
         metadata: dict[str, str],
         *,
-        expires_at: Optional[datetime] = None,
+        expires_at: datetime | None = None,
         **kwargs: Any,
-    ) -> Optional[int]:
+    ) -> int | None:
         return await asyncio.to_thread(
             lambda: self.concatenate_uploads(
                 final_id,
@@ -289,8 +287,8 @@ class Storage(ABC):
         return await asyncio.to_thread(self.find_pending_finals_for_partial, partial_id)
 
     async def try_assemble_final_async(
-        self, final_id: str, *, max_total: Optional[int] = None
-    ) -> Optional[int]:
+        self, final_id: str, *, max_total: int | None = None
+    ) -> int | None:
         return await asyncio.to_thread(
             lambda: self.try_assemble_final(final_id, max_total=max_total)
         )

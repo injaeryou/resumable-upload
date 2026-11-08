@@ -6,9 +6,10 @@ Uses SHA-256 hash + file size to generate unique fingerprints for resumable uplo
 
 import hashlib
 import os
-from typing import IO, Callable, Union
+from collections.abc import Callable
+from typing import IO
 
-FileSource = Union[str, IO]
+FileSource = str | IO
 
 
 class Fingerprint:
@@ -21,7 +22,7 @@ class Fingerprint:
 
     BLOCK_SIZE = 65536  # 64KB blocks for hashing
 
-    def get_fingerprint(self, file_source: Union[str, IO]) -> str:
+    def get_fingerprint(self, file_source: str | IO) -> str:
         """
         Generate a unique fingerprint for a file.
 

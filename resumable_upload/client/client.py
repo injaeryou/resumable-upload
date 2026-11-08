@@ -2,7 +2,8 @@
 
 import os
 import ssl
-from typing import IO, Any, Callable, Optional, Union
+from collections.abc import Callable
+from typing import IO, Any
 from urllib.error import HTTPError, URLError
 from urllib.parse import urljoin
 
@@ -52,23 +53,23 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
     def __init__(
         self,
         url: str,
-        chunk_size: Union[int, float] = 1024 * 1024,
-        checksum: Union[bool, str] = True,
+        chunk_size: int | float = 1024 * 1024,
+        checksum: bool | str = True,
         verify_tls_cert: bool = True,
         metadata_encoding: str = "utf-8",
         store_url: bool = False,
-        url_storage: Optional[URLStorage] = None,
-        fingerprinter: Optional[Fingerprint] = None,
-        headers: Optional[dict[str, str]] = None,
+        url_storage: URLStorage | None = None,
+        fingerprinter: Fingerprint | None = None,
+        headers: dict[str, str] | None = None,
         max_retries: int = 3,
         retry_delay: float = 1.0,
         timeout: float = 30.0,
-        before_request: Optional[Callable[[str, str, dict[str, str]], None]] = None,
-        after_response: Optional[Callable[[str, str, int], None]] = None,
-        on_should_retry: Optional[Callable[[Exception, int], bool]] = None,
+        before_request: Callable[[str, str, dict[str, str]], None] | None = None,
+        after_response: Callable[[str, str, int], None] | None = None,
+        on_should_retry: Callable[[Exception, int], bool] | None = None,
         override_patch_method: bool = False,
         add_request_id: bool = False,
-        on_upload_url_available: Optional[Callable[[str], None]] = None,
+        on_upload_url_available: Callable[[str], None] | None = None,
     ):
         """Initialize TUS client.
 
@@ -120,7 +121,7 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
         self.on_upload_url_available = on_upload_url_available
         self.ssl_context = self._build_ssl_context()
 
-    def _build_ssl_context(self) -> Optional[ssl.SSLContext]:
+    def _build_ssl_context(self) -> ssl.SSLContext | None:
         """Build SSL context based on verify_tls_cert setting."""
         if not self.verify_tls_cert:
             ctx = ssl.create_default_context()
@@ -131,13 +132,13 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
 
     def upload_file(
         self,
-        file_path: Optional[str] = None,
-        file_stream: Optional[IO] = None,
-        metadata: Optional[dict[str, str]] = None,
-        progress_callback: Optional[Callable[[UploadStats], None]] = None,
-        stop_at: Optional[int] = None,
+        file_path: str | None = None,
+        file_stream: IO | None = None,
+        metadata: dict[str, str] | None = None,
+        progress_callback: Callable[[UploadStats], None] | None = None,
+        stop_at: int | None = None,
         parallel_uploads: int = 1,
-        metadata_for_partial_uploads: Optional[dict[str, str]] = None,
+        metadata_for_partial_uploads: dict[str, str] | None = None,
     ) -> str:
         """Upload a file to the server.
 
@@ -240,7 +241,7 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
                 add_request_id=self.add_request_id,
             )
 
-        uploader: Optional[Uploader] = None
+        uploader: Uploader | None = None
         if upload_url:
             # A stored URL the server has since expired/deleted: forget it and
             # start over, the way tus-js-client does.
@@ -276,10 +277,10 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
 
     def resume_upload(
         self,
-        file_path: Optional[str] = None,
+        file_path: str | None = None,
         upload_url: str = "",
-        file_stream: Optional[IO] = None,
-        progress_callback: Optional[Callable[[UploadStats], None]] = None,
+        file_stream: IO | None = None,
+        progress_callback: Callable[[UploadStats], None] | None = None,
     ) -> str:
         """Resume an interrupted upload.
 
@@ -356,8 +357,8 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
         self,
         file_size: int,
         metadata: dict[str, str],
-        initial_data: Optional[bytes] = None,
-        extra_headers: Optional[dict[str, str]] = None,
+        initial_data: bytes | None = None,
+        extra_headers: dict[str, str] | None = None,
         defer_length: bool = False,
     ) -> str:
         """Create a new upload on the server.
@@ -393,7 +394,7 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
 
         try:
             with self._open("POST", self.url, headers, data=body or None) as response:
-                location: Optional[str] = response.headers.get("Location")
+                location: str | None = response.headers.get("Location")
                 if not location:
                     raise TusCommunicationError("Server did not return Location header")
 
@@ -407,7 +408,7 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
                 f"Failed to create upload: {str(e)}",
             ) from e
 
-    def get_file_size(self, file_source: Union[str, IO]) -> int:
+    def get_file_size(self, file_source: str | IO) -> int:
         """
         Get the size of a file.
 
@@ -426,7 +427,7 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
             file_source.seek(current_pos)
             return size
 
-    def get_file_stream(self, file_source: Union[str, IO]) -> IO:
+    def get_file_stream(self, file_source: str | IO) -> IO:
         """
         Get a file stream from a file path or stream.
 
@@ -479,11 +480,11 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
 
     def create_uploader(
         self,
-        file_path: Optional[str] = None,
-        file_stream: Optional[IO] = None,
-        upload_url: Optional[str] = None,
-        metadata: Optional[dict[str, str]] = None,
-        chunk_size: Optional[Union[int, float]] = None,
+        file_path: str | None = None,
+        file_stream: IO | None = None,
+        upload_url: str | None = None,
+        metadata: dict[str, str] | None = None,
+        chunk_size: int | float | None = None,
     ) -> Uploader:
         """Create an Uploader instance for fine-grained upload control.
 
@@ -551,8 +552,8 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
 
     def find_previous_uploads(
         self,
-        file_path: Optional[str] = None,
-        file_stream: Optional[IO] = None,
+        file_path: str | None = None,
+        file_stream: IO | None = None,
     ) -> list[dict[str, Any]]:
         """Look up resumable uploads for the given file by fingerprint.
 
@@ -571,7 +572,7 @@ class TusClient(ProtocolMixin, ConcatenationMixin, ParallelUploadMixin):
 
     def create_deferred_upload(
         self,
-        metadata: Optional[dict[str, str]] = None,
+        metadata: dict[str, str] | None = None,
     ) -> str:
         """Create an upload without declaring its length up front.
 

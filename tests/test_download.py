@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 import shutil
 import tempfile
+from datetime import UTC
 
 import pytest
 
@@ -160,7 +161,7 @@ class TestDownloadEnabled:
         assert status == 404
 
     def test_expired_upload_410(self, storage):
-        from datetime import datetime, timedelta, timezone
+        from datetime import datetime, timedelta
 
         server = TusServer(
             storage=storage,
@@ -169,7 +170,7 @@ class TestDownloadEnabled:
             cleanup_interval=10**6,  # keep the expired row so GET sees it
         )
         uid = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
-        past = datetime.now(timezone.utc) - timedelta(hours=1)
+        past = datetime.now(UTC) - timedelta(hours=1)
         storage.create_upload(uid, 5, {}, expires_at=past)
         storage.write_chunk(uid, 0, b"hello")
         storage.update_offset(uid, 5)

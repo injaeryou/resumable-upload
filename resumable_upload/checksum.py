@@ -8,7 +8,7 @@ deps: only ``hashlib`` from the standard library.
 from __future__ import annotations
 
 import hashlib
-from typing import Callable
+from collections.abc import Callable
 
 _DEFAULT_ALGORITHMS: dict[str, Callable[[], hashlib._Hash]] = {
     "sha1": hashlib.sha1,

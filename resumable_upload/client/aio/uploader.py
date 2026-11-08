@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import asyncio
 import os
+from collections.abc import Callable
 from threading import Lock
-from typing import IO, Any, Callable
+from typing import IO, Any
 
 from resumable_upload.client import _protocol
 from resumable_upload.client.aio import _http
@@ -288,7 +289,7 @@ class AsyncUploader:
                         await asyncio.wait_for(self._stop_event.wait(), timeout=delay)
                         # Event was set → cancel requested
                         raise TusUploadFailed("Upload cancelled via stop_event") from e
-                    except asyncio.TimeoutError:
+                    except TimeoutError:
                         pass  # Wait elapsed; proceed to next attempt
                 else:
                     with self.stats_lock:

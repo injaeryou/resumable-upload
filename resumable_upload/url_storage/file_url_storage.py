@@ -5,7 +5,6 @@ import json
 import os
 import tempfile
 import threading
-from typing import Optional
 
 from resumable_upload.url_storage.base import URLStorage
 
@@ -79,7 +78,7 @@ class FileURLStorage(URLStorage):
         else:
             yield
 
-    def get_url(self, fingerprint: str) -> Optional[str]:
+    def get_url(self, fingerprint: str) -> str | None:
         """Retrieve upload URL for fingerprint."""
         with self._lock, self._file_lock(exclusive=False):
             data = self._load_data()

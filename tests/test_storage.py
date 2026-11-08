@@ -6,7 +6,7 @@ import sqlite3
 import tempfile
 import threading
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -156,7 +156,7 @@ class TestSQLiteStorage:
     def test_expires_at_stored_in_db(self, storage):
         """expires_at is stored and returned by get_upload."""
         upload_id = str(uuid.uuid4())
-        expires = datetime.now(timezone.utc) + timedelta(hours=1)
+        expires = datetime.now(UTC) + timedelta(hours=1)
         storage.create_upload(upload_id, 100, {}, expires_at=expires)
 
         upload = storage.get_upload(upload_id)
@@ -171,8 +171,8 @@ class TestSQLiteStorage:
         past_id = str(uuid.uuid4())
         no_expiry_id = str(uuid.uuid4())
 
-        future = datetime.now(timezone.utc) + timedelta(hours=1)
-        past = datetime.now(timezone.utc) - timedelta(seconds=1)
+        future = datetime.now(UTC) + timedelta(hours=1)
+        past = datetime.now(UTC) - timedelta(seconds=1)
 
         storage.create_upload(future_id, 100, {}, expires_at=future)
         storage.create_upload(past_id, 100, {}, expires_at=past)
@@ -187,8 +187,8 @@ class TestSQLiteStorage:
         """cleanup_expired_uploads deletes expired uploads and their files."""
         past_id = str(uuid.uuid4())
         future_id = str(uuid.uuid4())
-        past = datetime.now(timezone.utc) - timedelta(seconds=1)
-        future = datetime.now(timezone.utc) + timedelta(hours=1)
+        past = datetime.now(UTC) - timedelta(seconds=1)
+        future = datetime.now(UTC) + timedelta(hours=1)
 
         storage.create_upload(past_id, 100, {}, expires_at=past)
         storage.create_upload(future_id, 100, {}, expires_at=future)
@@ -304,7 +304,7 @@ class TestSQLiteStorage:
 
         # Verify column exists by using it
         upload_id = str(uuid.uuid4())
-        future = datetime.now(timezone.utc) + timedelta(hours=1)
+        future = datetime.now(UTC) + timedelta(hours=1)
         storage.create_upload(upload_id, 100, {}, expires_at=future)
 
         upload = storage.get_upload(upload_id)

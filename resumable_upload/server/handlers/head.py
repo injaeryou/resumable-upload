@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import base64
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from resumable_upload.server.headers import format_expiry
@@ -57,7 +57,7 @@ def _build_head_response(
         return server._error_response(404, "Upload not found")
 
     expires_at = upload.get("expires_at")
-    if expires_at and expires_at < datetime.now(timezone.utc):
+    if expires_at and expires_at < datetime.now(UTC):
         logger.warning("Upload expired: %s", upload_id)
         return server._error_response(410, "Upload has expired")
 
